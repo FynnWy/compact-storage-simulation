@@ -1,5 +1,8 @@
+# main.py
+
 from config.simulation_config import SimulationConfig
 from simulation.simulation_engine import SimulationEngine
+from utils.visualization import plot_3d_storage_grid, plot_hot_item_heatmap
 
 
 def print_state_summary(engine, label):
@@ -40,6 +43,14 @@ def main():
     print("\n--- CONSISTENCY CHECK ---")
     print(f"Same bin count: {same_bin_count}")
     print(f"Same grid size: {same_grid}")
+
+    # Visualizations
+    print("\nStarting visualizer...")
+    # 3D Ansicht Storage Grid
+    plot_3d_storage_grid(engine_top, title="3D View: Hot Items Top Strategy")
+    # Heatmaps
+    plot_hot_item_heatmap(engine_top, title="Heatmap: Hot Items Top Strategy")
+    plot_hot_item_heatmap(engine_side, title="Heatmap: Uniform Strategy")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,10 @@
+# simulation/simulation_engine.py
+
 import math
 import numpy as np
 
 from config.init_strategy import initialize_bins
-from requests.request_generator import RequestGenerator
+from requests_.request_generator import RequestGenerator
 from state.bin import Bin
 from state.request_queue import FutureRequestQueue
 from state.state import State
@@ -54,7 +56,8 @@ class SimulationEngine:
             bin_obj = Bin(
                 bin_id=bin_id,
                 stack_id=None,
-                stack_level=None,
+                # stack_level=None,
+                level=None,
                 status="not_locked",
             )
             bins.append(bin_obj)

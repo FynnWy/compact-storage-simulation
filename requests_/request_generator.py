@@ -1,6 +1,7 @@
+# requests_/request_generator.py
 import numpy as np
 import random
-from requests.request import Request
+from requests_.request import Request
 from config.bin_request_prob_strategy import (
     uniform_bin_sampling,
     zipf_bin_sampling

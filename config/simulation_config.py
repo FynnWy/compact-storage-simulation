@@ -1,8 +1,10 @@
+# config/simulation_config.py
+
 class SimulationConfig:
     def __init__(self):
         self.grid_width = 5
         self.grid_depth = 5
-        self.bin_num = 100
+        self.bin_num = 150
         self.num_robots = 3
         self.simulation_time = 100
         self.random_seed = 42
