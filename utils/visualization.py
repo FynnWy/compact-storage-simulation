@@ -1,10 +1,22 @@
 # utils/visualization.py
 
+import matplotlib
 import matplotlib.cm as cm
 import matplotlib.patches as mpatches
 import numpy as np
-import matplotlib
-matplotlib.use('Qt5Agg') 
+
+try:
+    # Prefer a native interactive backend on macOS.
+    matplotlib.use("MacOSX")
+except ImportError:
+    try:
+        # Common cross-platform fallback if Tk is available.
+        matplotlib.use("TkAgg")
+    except ImportError:
+        # Last-resort non-interactive backend.
+        # This will save the plot to a file instead of opening a window.
+        matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 
 def plot_3d_storage_grid(engine, title="Detailed Storage Grid"):
@@ -35,9 +47,9 @@ def plot_3d_storage_grid(engine, title="Detailed Storage Grid"):
                          color=color, 
                          edgecolor='black', 
                          linewidth=0.5,
-                         alpha=0.8)
+                         alpha=0.8
+                )
 
-    # Create a custom legend
     hot_patch = mpatches.Patch(color=color_hot, label='Hot Item (High Demand)')
     cold_patch = mpatches.Patch(color=color_cold, label='Cold Item (Low Demand)')
     ax.legend(handles=[hot_patch, cold_patch], loc='upper right', title="Bin Status")
@@ -46,9 +58,23 @@ def plot_3d_storage_grid(engine, title="Detailed Storage Grid"):
     ax.set_xlabel('Grid Width (X)')
     ax.set_ylabel('Grid Depth (Y)')
     ax.set_zlabel('Stack Level (Z)')
-    
+
     ax.view_init(elev=30, azim=45)
-    ax.set_box_aspect((width, depth, max(stack.height() for stack in engine.state.grid.stacks.values() if stack.height() > 0) or 1))
+
+    stack_heights = [
+        stack.height()
+        for stack in engine.state.grid.stacks.values()
+        if stack.height() > 0
+    ]
+    max_height = max(stack_heights, default=1)
+
+    ax.set_box_aspect((width, depth, max_height))
 
     plt.tight_layout()
-    plt.show()
+
+    if matplotlib.get_backend().lower() == "agg":
+        output_path = "storage_grid_3d.png"
+        plt.savefig(output_path, dpi=150)
+        print(f"Plot saved to {output_path} because no interactive Matplotlib backend is available.")
+    else:
+        plt.show()
