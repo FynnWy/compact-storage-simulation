@@ -118,6 +118,7 @@ def init_hot_items_top(grid, bins, hot_bin_ids=None, random_seed=None):
     # 2. Place HOT bins (The Top Layer)
     # Shuffle again so they aren't always on the same "first" stacks
     rng.shuffle(positions)
+    positions.sort(key=lambda pos: grid.get_stack(*pos).height())
     
     for i, bin_obj in enumerate(hot_bins):
         # Using modulo ensures that if you have 10 stacks and 5 hot items,

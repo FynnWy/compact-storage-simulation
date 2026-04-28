@@ -4,7 +4,10 @@ class SimulationConfig:
     def __init__(self):
         self.grid_width = 5
         self.grid_depth = 5
-        self.bin_num = 150
+        # Brauchen wir nicht auch eine maximale Grid Höhe?
+        # Müsste mindestens genug Umlagerfläche geben um einen ganzen Stack umzulagern
+        # self.grid_height = 5 # (+1 = 6 Level bei Side Access mit hochheben)
+        self.bin_num = 100
         self.num_robots = 3
         self.simulation_time = 100
         self.random_seed = 42
