@@ -6,7 +6,15 @@ class State:
         self.future_request_queue = future_request_queue
         self.event_queue = event_queue
 
+        self.t = 0
+
         self.initialized = False
+
+    def advance_time(self):
+        self.t += 1
+
+    def set_time(self, t):
+        self.t = t
 
     def mark_initialized(self):
         self.initialized = True
@@ -22,6 +30,3 @@ class State:
 
     def get_stack(self, x, y):
         return self.grid.get_stack(x, y)
-
-    def all_stacks(self):
-        return self.grid.all_stacks()

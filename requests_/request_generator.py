@@ -1,6 +1,7 @@
 # requests_/request_generator.py
 import numpy as np
 import random
+from events.event_types import EventType
 from requests_.request import Request
 from config.bin_request_prob_strategy import (
     uniform_bin_sampling,
@@ -57,6 +58,7 @@ class RequestGenerator:
 
         req = Request(
             request_id=self.request_id,
+            event_type=EventType.ARRIVAL,
             bin_id=bin_id,
             t_arrival=t,
             t_earliest=t_earliest,

@@ -6,7 +6,9 @@ import numpy as np
 from config.init_strategy import initialize_bins
 from requests_.request_generator import RequestGenerator
 from state.bin import Bin
+from state.event_queue import EventQueue
 from state.request_queue import FutureRequestQueue
+from state.robot import Robot
 from state.state import State
 from state.storage_grid import StorageGrid
 
@@ -23,12 +25,14 @@ class SimulationEngine:
 
     def _initialize_state(self):
         """
-        Erstellt Grid, Bins, Requests und initialisiert das Lager
+        Erstellt Grid, Bins, Roboter, Requests und initialisiert das Lager
         gemäß der gewählten Strategie.
         """
         grid = StorageGrid(self.config.grid_width, self.config.grid_depth)
         bins = self._create_bins(self.config.bin_num)
+        robots = self._create_robots(self.config.num_robots)
         future_request_queue = self._create_future_request_queue()
+        event_queue = EventQueue()
 
         self.hot_bin_ids = self._determine_hot_bin_ids()
 
@@ -43,7 +47,9 @@ class SimulationEngine:
         self.state = State(
             grid=grid,
             bins=bins,
+            robots=robots,
             future_request_queue=future_request_queue,
+            event_queue=event_queue,
         )
         self.state.mark_initialized()
 
@@ -62,6 +68,18 @@ class SimulationEngine:
             )
             bins.append(bin_obj)
         return bins
+
+    def _create_robots(self, num_robots):
+        """
+        Erstellt alle Roboter.
+
+        Roboter starten idle und ohne feste Position.
+        Ein Roboter kann pro Zeiteinheit eine Aktion ausführen.
+        """
+        robots = []
+        for robot_id in range(num_robots):
+            robots.append(Robot(robot_id=robot_id, position=None))
+        return robots
 
     def _create_future_request_queue(self):
         """
