@@ -10,6 +10,12 @@ class EventQueue:
     def pop(self):
         return heapq.heappop(self.queue)
 
+    def peek(self):
+        if self.is_empty():
+            return None
+
+        return self.queue[0]
+
     def is_empty(self):
         return len(self.queue) == 0
 

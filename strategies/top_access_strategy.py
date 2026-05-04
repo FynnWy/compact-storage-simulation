@@ -7,85 +7,85 @@ class TopAccessStrategy(BaseStrategy):
         """
         Generates a plan to retrieve and return a bin using top access.
 
+        Wichtig:
+        Diese Methode verändert NICHT den echten State.
+        Sie arbeitet nur auf lokalen Listen-Snapshots der betroffenen Stacks.
+
         Schritte:
         1. Finde Zielstack
-        2. Entferne blockierende Kisten
-        3. Entferne Zielkiste
-        4. Lege blockierende Kisten zurück
-        5. Lege Zielkiste zurück
+        2. Plane Umlagerung blockierender Kisten
+        3. Plane Entfernen der Zielkiste
+        4. Plane Rücklagerung blockierender Kisten
+        5. Plane Rücklagerung der Zielkiste
         6. request_complete wird automatisch von BaseStrategy angehängt
         """
         plan = []
 
         target_bin_id = request.target_box_id
 
-        # 1. finde Zielstack
-        target_stack, target_pos = self._find_bin(state, target_bin_id)
+        target_stack, target_level = self._find_bin(state, target_bin_id)
 
         if target_stack is None:
             raise ValueError(f"Bin {target_bin_id} not found")
 
-        buffer_stacks = self._get_buffer_stacks(state, target_stack)
+        simulated_target_bins = list(target_stack.bins)
+        simulated_buffers = {
+            stack.stack_id: list(stack.bins)
+            for stack in self._get_buffer_stacks(state, target_stack)
+        }
 
         temp_storage = []
 
-        # 2. entferne blockierende Kisten
         while True:
-            top_bin = target_stack.peek()
+            if not simulated_target_bins:
+                raise RuntimeError("Target stack unexpectedly empty during planning")
 
-            if top_bin is None:
-                raise RuntimeError("Stack unexpectedly empty")
+            top_bin = simulated_target_bins[-1]
 
             if top_bin.bin_id == target_bin_id:
                 break
 
-            # Ziel ist noch blockiert → relocate
-            buffer_stack = self._select_buffer_stack(buffer_stacks)
+            buffer_stack = self._select_buffer_stack(
+                state=state,
+                simulated_buffers=simulated_buffers,
+            )
 
             plan.append({
                 "type": "relocate",
                 "from_stack": target_stack.stack_id,
                 "to_stack": buffer_stack.stack_id,
-                "bin_id": top_bin.bin_id
+                "bin_id": top_bin.bin_id,
             })
 
+            simulated_target_bins.pop()
+            simulated_buffers[buffer_stack.stack_id].append(top_bin)
             temp_storage.append((top_bin, buffer_stack))
 
-            # virtuell ausführen (wichtig für Planung!)
-            target_stack.pop()
-            buffer_stack.push(top_bin)
-
-        # 3. Zielkiste entfernen
         plan.append({
             "type": "remove_target",
             "from_stack": target_stack.stack_id,
-            "bin_id": target_bin_id
+            "bin_id": target_bin_id,
         })
 
-        target_bin = target_stack.pop()
+        simulated_target_bins.pop()
 
-        # 4. Blockierende Kisten zurücklegen (reverse order!)
         for bin_obj, buffer_stack in reversed(temp_storage):
-
             plan.append({
                 "type": "return",
                 "from_stack": buffer_stack.stack_id,
                 "to_stack": target_stack.stack_id,
-                "bin_id": bin_obj.bin_id
+                "bin_id": bin_obj.bin_id,
             })
 
-            buffer_stack.pop()
-            target_stack.push(bin_obj)
+            simulated_buffers[buffer_stack.stack_id].pop()
+            simulated_target_bins.append(bin_obj)
 
-        # 5. Zielkiste zurücklegen
         plan.append({
             "type": "return",
             "from_stack": None,
             "to_stack": target_stack.stack_id,
-            "bin_id": target_bin_id
+            "bin_id": target_bin_id,
         })
-
-        target_stack.push(target_bin)
 
         return plan
 
@@ -95,14 +95,51 @@ class TopAccessStrategy(BaseStrategy):
 
     def _find_bin(self, state, bin_id):
         for stack in state.grid.all_stacks():
-            for bin_obj in stack.bins:
+            for level, bin_obj in enumerate(stack.bins):
                 if bin_obj.bin_id == bin_id:
-                    return stack, bin_obj.stack_pos
+                    return stack, level
+
         return None, None
 
     def _get_buffer_stacks(self, state, exclude_stack):
-        return [s for s in state.grid.all_stacks() if s != exclude_stack]
+        return [stack for stack in state.grid.all_stacks() if stack != exclude_stack]
 
-    def _select_buffer_stack(self, buffer_stacks):
-        # einfache Strategie: nimm ersten freien
-        return buffer_stacks[0]
+    def _select_buffer_stack(self, state, simulated_buffers):
+        """
+        Wählt den aktuell niedrigsten Buffer-Stack mit freier Kapazität.
+        """
+        max_stack_height = self._get_max_stack_height(state)
+
+        candidate_stacks = []
+
+        for stack in state.grid.all_stacks():
+            if stack.stack_id not in simulated_buffers:
+                continue
+
+            simulated_height = len(simulated_buffers[stack.stack_id])
+
+            if max_stack_height is not None and simulated_height >= max_stack_height:
+                continue
+
+            candidate_stacks.append(stack)
+
+        if not candidate_stacks:
+            raise RuntimeError("No buffer stack with free capacity available")
+
+        return min(
+            candidate_stacks,
+            key=lambda stack: len(simulated_buffers[stack.stack_id]),
+        )
+
+    def _get_max_stack_height(self, state):
+        config = getattr(state, "config", None)
+
+        if config is None:
+            raise RuntimeError("State has no config. Cannot determine max_stack_height.")
+
+        max_stack_height = getattr(config, "max_stack_height", None)
+
+        if max_stack_height is None:
+            raise RuntimeError("Config has no max_stack_height.")
+
+        return max_stack_height

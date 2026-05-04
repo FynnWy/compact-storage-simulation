@@ -36,13 +36,37 @@ class Scheduler:
         }
 
     def _select_next_request(self):
+        blocked_bin_ids = self.active_queue.get_assigned_target_bin_ids()
+
         if self.scheduler_strategy == "FIFO":
-            return self.active_queue.pop_next_fifo()
+            return self._pop_next_fifo_excluding(blocked_bin_ids)
 
         if self.scheduler_strategy == "EDF":
-            return self.active_queue.pop_next_edf()
+            return self._pop_next_edf_excluding(blocked_bin_ids)
 
         raise ValueError(f"Unknown scheduler_strategy: {self.scheduler_strategy}")
+
+    def _pop_next_fifo_excluding(self, blocked_bin_ids):
+        for request in list(self.active_queue.pending):
+            if request.target_box_id not in blocked_bin_ids:
+                self.active_queue.pending.remove(request)
+                return request
+
+        return None
+
+    def _pop_next_edf_excluding(self, blocked_bin_ids):
+        candidates = [
+            request
+            for request in self.active_queue.pending
+            if request.target_box_id not in blocked_bin_ids
+        ]
+
+        if not candidates:
+            return None
+
+        best_request = min(candidates, key=lambda request: request.latest_time)
+        self.active_queue.pending.remove(best_request)
+        return best_request
 
     def _find_idle_robot(self, state):
         for robot in state.robots:

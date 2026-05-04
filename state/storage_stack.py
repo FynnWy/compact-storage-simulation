@@ -9,7 +9,10 @@ class StorageStack:
         self.bins.append(bin_obj)
 
     def pop(self):
-        return self.bins.pop() if self.bins else None
+        if not self.bins:
+            return None
+
+        return self.bins.pop()
 
     def peek(self):
         return self.bins[-1] if self.bins else None

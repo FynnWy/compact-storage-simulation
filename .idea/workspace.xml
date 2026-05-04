@@ -4,25 +4,22 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fixed dependencies and updated">
-      <change afterPath="$PROJECT_DIR$/strategies/top_access_strategy.py" afterDir="false" />
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Most classes are defined, ready to connect them.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/init_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/init_strategy.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/config/simulation_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/simulation_config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/events/event.py" beforeDir="false" afterPath="$PROJECT_DIR$/events/event.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/events/event_types.py" beforeDir="false" afterPath="$PROJECT_DIR$/events/event_types.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/requests_/active_queue.py" beforeDir="false" afterPath="$PROJECT_DIR$/requests_/active_queue.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requests_/request.py" beforeDir="false" afterPath="$PROJECT_DIR$/requests_/request.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requests_/request_generator.py" beforeDir="false" afterPath="$PROJECT_DIR$/requests_/request_generator.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/constraint_manager.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/action_executer.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/action_executer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/constraint_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/constraint_manager.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/event_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_builder.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/metrics.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/metrics.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/request_handler.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/scheduler.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/request_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/request_handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/scheduler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/scheduler.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation/simulation_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/simulation_engine.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/state/state.py" beforeDir="false" afterPath="$PROJECT_DIR$/state/state.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategy/side_access_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/side_access_strategy.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategy/top_access_strategy.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/state/event_queue.py" beforeDir="false" afterPath="$PROJECT_DIR$/state/event_queue.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/state/storage_stack.py" beforeDir="false" afterPath="$PROJECT_DIR$/state/storage_stack.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/strategies/top_access_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/top_access_strategy.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -30,7 +27,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="40" />
+    <option name="cachedIndexableFilesCount" value="43" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -84,7 +81,7 @@
     &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
     &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
     &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;fynn__dev&quot;,
     &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
@@ -128,6 +125,7 @@
       <workItem from="1777385346042" duration="5501000" />
       <workItem from="1777536435581" duration="10645000" />
       <workItem from="1777568061336" duration="45000" />
+      <workItem from="1777906781130" duration="7171000" />
     </task>
     <task id="LOCAL-00001" summary="Initial project structure">
       <option name="closed" value="true" />
@@ -197,6 +195,6 @@
     <option name="LAST_COMMIT_MESSAGE" value="Fixed dependencies and updated" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/compact_storage_simulation$main.coverage" NAME="main Coverage Results" MODIFIED="1777391787403" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/compact_storage_simulation$main.coverage" NAME="main Coverage Results" MODIFIED="1777913813380" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>
