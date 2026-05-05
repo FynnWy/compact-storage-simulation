@@ -12,10 +12,16 @@ class SimulationConfig:
         self.simulation_time = 100
         self.random_seed = 42
 
+        """
+        Scheduling:
+        FIFO = First In First Out, ältester Request zuerst
+        EDF = Earliest Deadline First, Request mit kleinster latest_time zuerst
+        """
+        self.scheduler_strategy = "FIFO"
 
         """
         Request Generierung:
-        
+
         self.request_queue: request_generator (t_earliest, t_latest dort modifizierbar) aufrufen
         self.request_utilization: Wie viele Request im mittel pro ZE reinkommen
         self.request_arrival_strategy: wie viele Requests pro ZE reinkommen
@@ -26,16 +32,4 @@ class SimulationConfig:
             "Zipf" = Hot Items, realistischer - manche Kisten werden häufig angefragt
         self.zipf_parameter: Typische Werte: 0.8 (moderat) bis 1.5 (extrem)
         """
-
-        self.request_utilization = 2
-        self.request_arrival_strategy = "Poisson"
-        self.bin_request_prob_strategy = "Zipf"
-        # Zipf-Parameter (wenn bin_request_prob_strategy = "Zipf")
-        self.zipf_parameter = 0.8
-
-
-        """
-        Initale Verteilung der Kisten im Grid:
-        """
-        self.init_strategy = "uniform"
 
