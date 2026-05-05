@@ -30,6 +30,8 @@ class SimulationEngine:
 
         self.state = None
         self.hot_bin_ids = []
+        self._is_started = False
+        self._processed_events = 0
 
         self._initialize_state()
         self._initialize_simulation_components()
@@ -106,20 +108,57 @@ class SimulationEngine:
 
         debug=True gibt einen einfachen Event-Trace aus.
         max_events schützt vor Endlosschleifen.
+
+        Führt die Simulation bis simulation_time oder bis keine Events/Requests mehr existieren.
+
+        debug=True gibt einen einfachen Event-Trace aus.
+        max_events schützt vor Endlosschleifen.
         """
         self._validate_initial_state()
-
-        self.request_handler.add_ready_requests_to_event_queue()
 
         processed_events = 0
 
         while processed_events < max_events:
-            if self.state.t >= self.config.simulation_time:
+            event = self.step()
+
+            if event is None:
                 break
+
+            processed_events += 1
+
+            if debug:
+                print(f"[EVENT] {event}")
+
+        if processed_events >= max_events:
+            raise RuntimeError(
+                f"Simulation stopped after max_events={max_events}. "
+                f"Possible endless event loop."
+            )
+
+        return self.metrics.summary()
+
+    def step(self):
+        """
+        Verarbeitet genau ein Simulationsevent und gibt dieses Event zurück.
+
+        Diese Methode ist für interaktive Visualisierungen gedacht:
+        - Button-Klick -> step()
+        - Visualisierung entscheidet, ob nach diesem Event neu gezeichnet wird
+
+        Gibt None zurück, wenn die Simulation beendet ist.
+        """
+        if not self._is_started:
+            self._validate_initial_state()
+            self.request_handler.add_ready_requests_to_event_queue()
+            self._is_started = True
+
+        while True:
+            if self.state.t >= self.config.simulation_time:
+                return None
 
             if self.state.event_queue.is_empty():
                 if self.state.future_request_queue.is_empty():
-                    break
+                    return None
 
                 self.state.advance_time()
                 self.request_handler.add_ready_requests_to_event_queue()
@@ -140,48 +179,16 @@ class SimulationEngine:
 
                 continue
 
-            # Phase 1: Alle Nicht-Robot-Events der aktuellen Zeit verarbeiten
-            did_process_non_robot_event = False
+            event = self.event_handler.get_next_event()
+            self._processed_events += 1
 
-            while not self.state.event_queue.is_empty():
-                next_event = self.state.event_queue.peek()
-
-                if next_event.time != self.state.t:
-                    break
-
-                if next_event.event_type == EventType.ROBOT_ACTION:
-                    break
-
-                event = self.event_handler.get_next_event()
-                processed_events += 1
-                did_process_non_robot_event = True
-
-                if debug and event is not None:
-                    print(f"[EVENT] {event}")
-
+            if event is not None:
                 self._validate_runtime_state()
 
-            # Phase 2: Nach REQUEST_COMPLETE und ARRIVAL genau jetzt schedulen
-            if did_process_non_robot_event:
-                self.event_handler.schedule_available_robots(self.state.t)
-                continue
+                if event.event_type in {EventType.ARRIVAL, EventType.REQUEST_COMPLETE}:
+                    self.event_handler.schedule_available_robots(self.state.t)
 
-            # Phase 3: RobotAction der aktuellen Zeit verarbeiten
-            event = self.event_handler.get_next_event()
-            processed_events += 1
-
-            if debug and event is not None:
-                print(f"[EVENT] {event}")
-
-            self._validate_runtime_state()
-
-        if processed_events >= max_events:
-            raise RuntimeError(
-                f"Simulation stopped after max_events={max_events}. "
-                f"Possible endless event loop."
-            )
-
-        return self.metrics.summary()
+            return event
 
     def _validate_initial_state(self):
         """

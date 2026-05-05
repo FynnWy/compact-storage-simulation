@@ -12,6 +12,14 @@ class SimulationConfig:
         self.random_seed = 42
 
         """
+        Visualisierung:
+        False = Simulation läuft komplett ohne GUI durch.
+        True = Interaktive Visualisierung mit Next-Event-Button.
+        """
+        self.enable_visualization = True
+        self.visualization_type = "web"  # "matplotlib" oder "web"
+
+        """
         Initialisierung:
         random_distribution = alle Bins zufällig über alle Stack-Positionen verteilen.
         Hot Items werden hier NICHT speziell platziert.
