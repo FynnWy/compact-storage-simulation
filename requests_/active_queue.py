@@ -33,6 +33,19 @@ class ActiveQueue:
         return len(self.pending) == 0 and len(self.assigned) == 0
 
 
+    def get_assigned_target_bin_ids(self):
+        """
+        Gibt alle Bin-IDs zurück, die aktuell bereits einem Roboter zugewiesen sind.
+        Dadurch kann verhindert werden, dass dieselbe Bin parallel bearbeitet wird.
+        """
+        assigned_bin_ids = set()
+
+        for assignment in self.assigned.values():
+            request = assignment["request"]
+            assigned_bin_ids.add(request.target_box_id)
+
+        return assigned_bin_ids
+
     """
     Scheduler Strategien:
     """

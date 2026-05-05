@@ -19,6 +19,7 @@ class EventBuilder:
             time=request.arrival_time,
             event_type=request.event_type,
             payload=request,
+            priority=self._resolve_priority(request.event_type),
         )
 
     def build_events_from_plan(self, plan, request, robot, start_time):
@@ -44,23 +45,30 @@ class EventBuilder:
         """
         Baut ein einzelnes Event aus einer Plan-Action.
         """
+        event_type = self._resolve_event_type(action)
+
         return Event(
             time=time,
-            event_type=self._resolve_event_type(action),
+            event_type=event_type,
             payload={
                 "request": request,
                 "robot": robot,
                 "action": action,
             },
+            priority=self._resolve_priority(event_type),
         )
 
     def delay_event(self, event, current_time):
         """
         Verschiebt ein nicht ausführbares Event um delay_time nach hinten.
-        """
-        event.retry_count += 1
 
-        if event.retry_count > self.max_retries:
+        Wichtig:
+        Das ursprüngliche Event wird nicht mutiert, weil es bereits aus der Queue
+        gepoppt und verarbeitet wurde. Stattdessen wird ein neues Event erzeugt.
+        """
+        next_retry_count = event.retry_count + 1
+
+        if next_retry_count > self.max_retries:
             action = self.get_action_from_event(event)
             raise RuntimeError(
                 f"Event exceeded max retries ({self.max_retries}). "
@@ -69,8 +77,13 @@ class EventBuilder:
                 f"time={current_time}"
             )
 
-        event.time = current_time + self.delay_time
-        return event
+        return Event(
+            time=current_time + self.delay_time,
+            event_type=event.event_type,
+            payload=event.payload,
+            retry_count=next_retry_count,
+            priority=event.priority,
+        )
 
     def get_action_from_event(self, event):
         """
@@ -89,3 +102,17 @@ class EventBuilder:
             return EventType.REQUEST_COMPLETE
 
         return EventType.ROBOT_ACTION
+
+    # Zuerst werden alle REQUEST_COMPLETE-Events priorisiert,
+    # damit Roboter bei gleicher ZE zuerst frei gemacht werden.
+    def _resolve_priority(self, event_type):
+        if event_type == EventType.REQUEST_COMPLETE:
+            return 0
+
+        if event_type == EventType.ARRIVAL:
+            return 1
+
+        if event_type == EventType.ROBOT_ACTION:
+            return 2
+
+        return 99

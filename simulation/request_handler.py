@@ -1,6 +1,3 @@
-from events.event import Event
-
-
 class RequestHandler:
     def __init__(self, state, event_builder):
         self.state = state

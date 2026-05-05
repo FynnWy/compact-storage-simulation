@@ -1,4 +1,4 @@
-# utils/visualization.py
+# utils/visualization_3D.py
 
 import matplotlib
 import matplotlib.cm as cm
