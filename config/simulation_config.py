@@ -32,4 +32,8 @@ class SimulationConfig:
             "Zipf" = Hot Items, realistischer - manche Kisten werden häufig angefragt
         self.zipf_parameter: Typische Werte: 0.8 (moderat) bis 1.5 (extrem)
         """
+        self.request_utilization = 2.0  # Average requests per time unit
+        self.request_arrival_strategy = "Poisson"
+        self.bin_request_prob_strategy = "Uniform"
+        self.zipf_parameter = 0.9
 
