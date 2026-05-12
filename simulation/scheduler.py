@@ -1,3 +1,6 @@
+from simulation.robot_task import RobotTask
+
+
 class Scheduler:
     def __init__(self, active_queue, strategy, scheduler_strategy="FIFO"):
         self.active_queue = active_queue
@@ -8,7 +11,9 @@ class Scheduler:
         """
         Versucht, genau einen pending Request einem freien Roboter zuzuordnen.
 
-        Gibt ein Scheduling-Ergebnis zurück oder None, wenn nichts geplant werden kann.
+        Wichtig:
+        Es wird kein vollständiger Plan mehr erzeugt.
+        Stattdessen wird ein RobotTask erzeugt und genau die nächste Aktion geplant.
         """
         robot = self._find_idle_robot(state)
 
@@ -23,15 +28,18 @@ class Scheduler:
         if request is None:
             return None
 
-        robot.assign_task(request.request_id)
+        task = RobotTask(request)
+
+        robot.assign_task(task)
         self.active_queue.mark_assigned(request, robot)
 
-        plan = self.strategy.plan(state, request)
+        action = self.strategy.next_action(state, task)
 
         return {
             "request": request,
             "robot": robot,
-            "plan": plan,
+            "task": task,
+            "action": action,
             "start_time": current_time,
         }
 

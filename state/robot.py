@@ -17,14 +17,18 @@ class Robot:
     def set_status(self, status):
         self.status = status
 
-    def assign_task(self, request_id):
-        self.current_task = request_id
+    def assign_task(self, task):
+        self.current_task = task
         self.status = "busy"
 
     def clear_task(self):
         self.current_task = None
         self.status = "idle"
 
-
     def __repr__(self):
-        return f"Robot(id={self.robot_id}, status={self.status}, task={self.current_task})"
+        task_id = None
+
+        if self.current_task is not None:
+            task_id = getattr(self.current_task, "request_id", self.current_task)
+
+        return f"Robot(id={self.robot_id}, status={self.status}, task={task_id})"

@@ -97,6 +97,32 @@ class EventHandler:
             self.metrics.record_target_bin_removed(self.state, action, request)
 
         self.executor.execute(event, self.state)
+        self._schedule_next_action_for_same_task(event)
+
+    def _schedule_next_action_for_same_task(self, event):
+        robot = event.payload.get("robot")
+
+        if robot is None:
+            raise RuntimeError("Cannot schedule next action: event has no robot")
+
+        task = robot.current_task
+
+        if task is None:
+            return
+
+        next_action = self.scheduler.strategy.next_action(self.state, task)
+
+        if next_action is None:
+            return
+
+        next_event = self.event_builder.build_event_from_action(
+            action=next_action,
+            request=task.request,
+            robot=robot,
+            time=self.state.t + self.event_builder.action_duration,
+        )
+
+        self.event_queue.push(next_event)
 
     def _handle_request_complete(self, event):
         payload = event.payload
@@ -109,7 +135,10 @@ class EventHandler:
     def schedule_available_robots(self, current_time):
         """
         Scheduled so viele Requests, wie freie Roboter und pending Requests vorhanden sind.
-        Wird von der SimulationEngine nach Completion-/Arrival-Phase aufgerufen.
+
+        Neuer Flow:
+        Pro Scheduling wird genau ein RobotTask erzeugt und genau eine erste Action
+        als Event in die Queue gelegt.
         """
         while self.active_queue.has_unassigned_requests():
             scheduling_result = self.scheduler.try_schedule(self.state, current_time)
@@ -117,12 +146,16 @@ class EventHandler:
             if scheduling_result is None:
                 return
 
-            events = self.event_builder.build_events_from_plan(
-                plan=scheduling_result["plan"],
+            action = scheduling_result["action"]
+
+            if action is None:
+                return
+
+            event = self.event_builder.build_event_from_action(
+                action=action,
                 request=scheduling_result["request"],
                 robot=scheduling_result["robot"],
-                start_time=scheduling_result["start_time"],
+                time=scheduling_result["start_time"],
             )
 
-            for event in events:
-                self.event_queue.push(event)
+            self.event_queue.push(event)

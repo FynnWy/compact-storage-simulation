@@ -1,23 +1,129 @@
 from strategies.base_strategy import BaseStrategy
+from simulation.robot_task import RobotTask
 
 
 class TopAccessStrategy(BaseStrategy):
 
-    def _create_plan(self, state, request):
+    def next_action(self, state, task):
         """
-        Generates a plan to retrieve and return a bin using top access.
+        Plant genau die nächste fachlich sinnvolle Aktion für einen aktiven Task.
 
         Wichtig:
-        Diese Methode verändert NICHT den echten State.
-        Sie arbeitet nur auf lokalen Listen-Snapshots der betroffenen Stacks.
+        - Diese Methode verändert nicht den Lager-State.
+        - Sie erzeugt keine Events.
+        - Sie schreibt keine Metriken.
+        - Sie entscheidet nur, welche einzelne Action als Nächstes sinnvoll ist.
+        """
+        if task.phase == RobotTask.PHASE_RETRIEVE_TARGET:
+            return self._next_retrieve_target_action(state, task)
 
-        Schritte:
-        1. Finde Zielstack
-        2. Plane Umlagerung blockierender Kisten
-        3. Plane Entfernen der Zielkiste
-        4. Plane Rücklagerung blockierender Kisten
-        5. Plane Rücklagerung der Zielkiste
-        6. request_complete wird automatisch von BaseStrategy angehängt
+        if task.phase == RobotTask.PHASE_RESTORE_BLOCKERS:
+            return self._next_restore_blockers_action(state, task)
+
+        if task.phase == RobotTask.PHASE_RETURN_TARGET:
+            return self._next_return_target_action(task)
+
+        if task.phase == RobotTask.PHASE_COMPLETE:
+            return self._next_complete_action(task)
+
+        raise ValueError(f"Unknown task phase: {task.phase}")
+
+    def _next_retrieve_target_action(self, state, task):
+        target_bin_id = task.target_bin_id
+        target_stack, target_level = self._find_bin(state, target_bin_id)
+
+        if target_stack is None:
+            target_bin = state.get_bin_by_id(target_bin_id)
+
+            if target_bin is not None and target_bin.get_status() == "at_pickstation":
+                task.target_removed = True
+                task.phase = RobotTask.PHASE_RESTORE_BLOCKERS
+                return self.next_action(state, task)
+
+            raise RuntimeError(f"Target bin {target_bin_id} not found in storage or pickstation")
+
+        if task.target_stack_id is None:
+            task.target_stack_id = target_stack.stack_id
+
+        top_bin = target_stack.peek()
+
+        if top_bin is None:
+            raise RuntimeError(
+                f"Target stack {target_stack.stack_id} unexpectedly empty "
+                f"while retrieving bin {target_bin_id}"
+            )
+
+        if top_bin.bin_id == target_bin_id:
+            task.target_removed = True
+            task.phase = RobotTask.PHASE_RESTORE_BLOCKERS
+
+            return {
+                "type": "remove_target",
+                "from_stack": target_stack.stack_id,
+                "bin_id": target_bin_id,
+            }
+
+        buffer_stack = self._select_relocation_stack(
+            state=state,
+            exclude_stack=target_stack,
+        )
+
+        task.remember_relocation(
+            bin_id=top_bin.bin_id,
+            from_stack=target_stack.stack_id,
+            buffer_stack=buffer_stack.stack_id,
+        )
+
+        return {
+            "type": "relocate",
+            "from_stack": target_stack.stack_id,
+            "to_stack": buffer_stack.stack_id,
+            "bin_id": top_bin.bin_id,
+        }
+
+    def _next_restore_blockers_action(self, state, task):
+        relocation = task.pop_last_relocation()
+
+        if relocation is not None:
+            return {
+                "type": "return",
+                "from_stack": relocation["buffer_stack"],
+                "to_stack": relocation["from_stack"],
+                "bin_id": relocation["bin_id"],
+            }
+
+        task.phase = RobotTask.PHASE_RETURN_TARGET
+        return self.next_action(state, task)
+
+    def _next_return_target_action(self, task):
+        if task.target_stack_id is None:
+            raise RuntimeError(
+                f"Cannot return target bin {task.target_bin_id}: "
+                f"task.target_stack_id is unknown"
+            )
+
+        task.phase = RobotTask.PHASE_COMPLETE
+
+        return {
+            "type": "return",
+            "from_stack": None,
+            "to_stack": task.target_stack_id,
+            "bin_id": task.target_bin_id,
+        }
+
+    def _next_complete_action(self, task):
+        return {
+            "type": "request_complete",
+            "request_id": task.request_id,
+            "bin_id": task.target_bin_id,
+        }
+
+    def _create_plan(self, state, request):
+        """
+        Legacy-Komplettplanung.
+
+        Der neue Next-Step-Flow nutzt diese Methode nicht mehr.
+        Sie bleibt vorerst erhalten, damit ältere Aufrufe nicht sofort brechen.
         """
         plan = []
 
@@ -103,6 +209,32 @@ class TopAccessStrategy(BaseStrategy):
 
     def _get_buffer_stacks(self, state, exclude_stack):
         return [stack for stack in state.grid.all_stacks() if stack != exclude_stack]
+
+    def _select_relocation_stack(self, state, exclude_stack):
+        """
+        Einfache Platzwahl für temporäre Ablage blockierender Bins.
+
+        Bewusst nicht als Heuristik bezeichnet:
+        Diese Funktion kapselt nur die aktuelle Relocation-Selection und kann
+        später durch bessere Auswahlverfahren ersetzt werden.
+        """
+        max_stack_height = self._get_max_stack_height(state)
+
+        candidate_stacks = []
+
+        for stack in state.grid.all_stacks():
+            if stack == exclude_stack:
+                continue
+
+            if max_stack_height is not None and stack.height() >= max_stack_height:
+                continue
+
+            candidate_stacks.append(stack)
+
+        if not candidate_stacks:
+            raise RuntimeError("No relocation stack with free capacity available")
+
+        return min(candidate_stacks, key=lambda stack: stack.height())
 
     def _select_buffer_stack(self, state, simulated_buffers):
         """
