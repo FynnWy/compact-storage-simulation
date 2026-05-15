@@ -47,6 +47,7 @@ class EventHandler:
             "EventHandler._advance_time_until should not be used. "
             "Time advancement is handled by SimulationEngine."
         )
+
     def handle(self, event):
         """
         Liest den Event-Typ und führt die dazugehörige Logik aus.
@@ -101,12 +102,81 @@ class EventHandler:
 
         self.executor.execute(event, self.state)
         self._update_robot_position_after_action(event)
+        self._update_task_after_successful_action(event)
 
         if action.get("type") == "remove_target":
             self._start_pickstation_service_and_release_robot(event)
             return
 
         self._schedule_next_action_for_same_task(event)
+
+    def _update_task_after_successful_action(self, event):
+        """
+        Aktualisiert den fachlichen Task-Fortschritt erst nach erfolgreicher Ausführung.
+
+        Dadurch geht keine Rücklagerungsinformation verloren, wenn eine geplante
+        Action blockiert, verzögert oder nicht ausführbar ist.
+        """
+        robot = event.payload.get("robot")
+
+        if robot is None:
+            return
+
+        task = robot.current_task
+
+        if task is None:
+            return
+
+        action = self.event_builder.get_action_from_event(event)
+        action_type = action.get("type")
+
+        if action_type == "relocate":
+            task.remember_relocation(
+                bin_id=action.get("bin_id"),
+                from_stack=action.get("from_stack"),
+                buffer_stack=action.get("to_stack"),
+            )
+            return
+
+        if action_type == "remove_target":
+            task.target_removed = True
+            return
+
+        if action_type == "return":
+            self._update_task_after_successful_return(task, action)
+            return
+
+    def _update_task_after_successful_return(self, task, action):
+        return_kind = action.get("return_kind")
+
+        if return_kind == "blocker":
+            task.mark_last_relocation_restored(
+                bin_id=action.get("bin_id"),
+                from_stack=action.get("from_stack"),
+                to_stack=action.get("to_stack"),
+            )
+            return
+
+        if return_kind == "target":
+            if action.get("bin_id") != task.target_bin_id:
+                raise RuntimeError(
+                    f"Cannot mark target returned for task {task.request_id}: "
+                    f"action bin {action.get('bin_id')} is not target bin {task.target_bin_id}"
+                )
+
+            if action.get("to_stack") != task.target_stack_id:
+                raise RuntimeError(
+                    f"Cannot mark target returned for task {task.request_id}: "
+                    f"action to_stack {action.get('to_stack')} is not target stack "
+                    f"{task.target_stack_id}"
+                )
+
+            task.mark_target_returned()
+            return
+
+        raise RuntimeError(
+            f"Return action for task {task.request_id} has unknown return_kind: {return_kind}"
+        )
 
     def _start_pickstation_service_and_release_robot(self, event):
         robot = event.payload.get("robot")
@@ -190,6 +260,21 @@ class EventHandler:
         payload = event.payload
         robot = payload["robot"]
         request = payload["request"]
+
+        task = robot.current_task
+
+        if task is None:
+            raise RuntimeError(
+                f"Cannot complete request {request.request_id}: robot has no current task"
+            )
+
+        if task.request_id != request.request_id:
+            raise RuntimeError(
+                f"Cannot complete request {request.request_id}: "
+                f"robot task belongs to request {task.request_id}"
+            )
+
+        task.require_consistently_completed(self.state)
 
         self.active_queue.mark_completed(request)
         robot.clear_task()

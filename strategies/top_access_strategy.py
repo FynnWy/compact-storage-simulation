@@ -70,12 +70,6 @@ class TopAccessStrategy(BaseStrategy):
             exclude_stack=target_stack,
         )
 
-        task.remember_relocation(
-            bin_id=top_bin.bin_id,
-            from_stack=target_stack.stack_id,
-            buffer_stack=buffer_stack.stack_id,
-        )
-
         return {
             "type": "relocate",
             "from_stack": target_stack.stack_id,
@@ -84,11 +78,12 @@ class TopAccessStrategy(BaseStrategy):
         }
 
     def _next_restore_blockers_action(self, state, task):
-        relocation = task.pop_last_relocation()
+        relocation = task.peek_last_relocation()
 
         if relocation is not None:
             return {
                 "type": "return",
+                "return_kind": "blocker",
                 "from_stack": relocation["buffer_stack"],
                 "to_stack": relocation["from_stack"],
                 "bin_id": relocation["bin_id"],
@@ -115,10 +110,9 @@ class TopAccessStrategy(BaseStrategy):
                 f"task.target_stack_id is unknown"
             )
 
-        task.mark_target_returned()
-
         return {
             "type": "return",
+            "return_kind": "target",
             "from_stack": None,
             "to_stack": task.target_stack_id,
             "bin_id": task.target_bin_id,
