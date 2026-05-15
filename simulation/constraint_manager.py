@@ -20,11 +20,15 @@ class ConstraintManager:
     def can_execute_with_reason(self, action, state):
         """
         Gibt (can_execute, reason) zurück.
-
-        reason ist besonders für Debugging wichtig, um hohe retry_count-Werte
-        nachvollziehen zu können.
         """
         self._validate_basic_action(action)
+
+        # INV-2: Bin darf nicht gleichzeitig in_transit und zugegriffen werden
+        bin_id = action.get("bin_id")
+        if bin_id is not None:
+            bin_obj = state.get_bin_by_id(bin_id)
+            if bin_obj is not None and bin_obj.in_transit:
+                return False, f"action blocked: bin {bin_id} is currently in_transit"
 
         action_type = action.get("type")
 
@@ -39,9 +43,17 @@ class ConstraintManager:
 
         raise ValueError(f"Unknown physical action type: {action_type}")
 
-    # ------------------------------------------------------------------
-    # Action-specific checks
-    # ------------------------------------------------------------------
+    def _check_not_in_transit(self, bin_id, state):
+        """
+        Gibt eine Fehlermeldung zurück, wenn die Bin gerade in Transit ist,
+        sonst None.
+        """
+        bin_obj = state.get_bin_by_id(bin_id)
+
+        if bin_obj is not None and getattr(bin_obj, "in_transit", False):
+            return f"action blocked: bin {bin_id} is currently in_transit"
+
+        return None
 
     def _can_relocate_with_reason(self, action, state):
         from_stack = self._get_stack_by_id(state, action.get("from_stack"))

@@ -1,13 +1,6 @@
 class RobotTask:
     """
     Hält den fachlichen Fortschritt eines aktiven Requests.
-
-    Wichtig:
-    Die Strategie darf immer nur die nächste Aktion planen.
-    Dafür muss sie wissen, was für diesen Request bereits passiert ist:
-    - ursprünglicher Zielstack
-    - ausgelagerte blockierende Bins
-    - aktuelle Phase
     """
 
     PHASE_RETRIEVE_TARGET = "retrieve_target"
@@ -29,6 +22,10 @@ class RobotTask:
         # LIFO: zuletzt ausgelagerte Bin wird zuerst zurückgelegt.
         self.temp_storage = []
 
+        # Requests, die an der Pickstation gemeinsam mit diesem Task abgearbeitet werden.
+        # Jeder Eintrag ist ein Request-Objekt.
+        self.batched_requests = []
+
     @property
     def request_id(self):
         return self.request.request_id
@@ -36,6 +33,27 @@ class RobotTask:
     @property
     def target_bin_id(self):
         return self.request.target_box_id
+
+    def add_batched_request(self, request):
+        """
+        Fügt einen weiteren Request hinzu, der dieselbe Target-Bin benötigt
+        und an der Pickstation gemeinsam bedient wird.
+        """
+        if request.request_id == self.request_id:
+            raise RuntimeError(
+                f"Cannot batch request {request.request_id} with itself"
+            )
+
+        if request.request_id in {r.request_id for r in self.batched_requests}:
+            return  # Idempotenz: kein Doppeleintrag
+
+        self.batched_requests.append(request)
+
+    def all_requests(self):
+        """
+        Gibt alle Requests zurück, die dieser Task abarbeitet (primär + gebatcht).
+        """
+        return [self.request] + list(self.batched_requests)
 
     def remember_relocation(self, bin_id, from_stack, buffer_stack):
         self.temp_storage.append({
@@ -47,10 +65,6 @@ class RobotTask:
     def peek_last_relocation(self):
         """
         Gibt die nächste zurückzulagernde Relocation zurück, ohne sie zu entfernen.
-
-        Wichtig:
-        Die Strategie darf beim Planen keine Task-Information verlieren.
-        Entfernt wird der Eintrag erst nach erfolgreicher Ausführung der Return-Action.
         """
         if not self.temp_storage:
             return None
@@ -60,8 +74,6 @@ class RobotTask:
     def mark_last_relocation_restored(self, bin_id, from_stack, to_stack):
         """
         Markiert genau die zuletzt ausgelagerte Bin als erfolgreich zurückgelagert.
-
-        Diese Methode darf erst nach erfolgreicher physischer Return-Action aufgerufen werden.
         """
         relocation = self.peek_last_relocation()
 
@@ -91,6 +103,42 @@ class RobotTask:
 
         self.temp_storage.pop()
 
+    def release_blocker_ownership(self, bin_id):
+        """
+        Gibt die Ownership einer blockierenden Bin auf (Ownership-Transfer, R-B3).
+
+        Darf nur aufgerufen werden, wenn ein anderer Task die Bin übernimmt.
+        Entfernt den Eintrag aus temp_storage, sodass dieser Task sie nicht
+        mehr zurücklegen muss.
+
+        Gibt den Relocation-Eintrag zurück, damit der übernehmende Task ihn
+        ggf. verwenden kann.
+        """
+        for i, reloc in enumerate(self.temp_storage):
+            if reloc["bin_id"] == bin_id:
+                return self.temp_storage.pop(i)
+
+        raise RuntimeError(
+            f"Cannot release ownership of bin {bin_id} from task {self.request_id}: "
+            f"bin not found in temp_storage"
+        )
+
+    def update_return_stack_for_blocker(self, bin_id, new_to_stack):
+        """
+        Aktualisiert den Ziel-Stack für die Rücklagerung einer blockierenden Bin.
+
+        Notwendig, wenn der ursprüngliche Ziel-Stack inzwischen blockiert ist (R-D2).
+        """
+        for reloc in self.temp_storage:
+            if reloc["bin_id"] == bin_id:
+                reloc["from_stack"] = new_to_stack
+                return
+
+        raise RuntimeError(
+            f"Cannot update return stack for bin {bin_id} in task {self.request_id}: "
+            f"bin not found in temp_storage"
+        )
+
     def pop_last_relocation(self):
         if not self.temp_storage:
             return None
@@ -105,13 +153,8 @@ class RobotTask:
 
     def mark_waiting_at_pickstation(self):
         """
-        Variante B:
-        Die Target-Bin ist an der Pickstation angekommen.
-        Der Roboter darf entkoppelt werden, der Task bleibt aber aktiv
-        und wartet auf das Ende der Pickstation-Bearbeitung.
-
-        Wichtig:
-        Während dieser Phase darf der Task noch nicht fortgesetzt werden.
+        Variante B: Target-Bin ist an der Pickstation.
+        Roboter wird entkoppelt, Task bleibt aktiv.
         """
         self.target_removed = True
         self.target_at_pickstation = True
@@ -119,10 +162,8 @@ class RobotTask:
 
     def mark_pickstation_completed(self):
         """
-        Die Pickstation-Bearbeitung ist abgeschlossen.
-
-        Danach wird nicht direkt die Target-Bin zurückgelegt.
-        Zuerst müssen eventuell ausgelagerte blockierende Bins zurück.
+        Pickstation-Bearbeitung abgeschlossen.
+        Zuerst Blocker zurücklegen, dann Target-Bin.
         """
         self.pickstation_completed = True
 
@@ -136,14 +177,6 @@ class RobotTask:
     def can_complete_consistently(self, state):
         """
         Prüft die formale Abschlussinvariante eines Requests.
-
-        Ein Request ist nur vollständig abgeschlossen, wenn:
-        - die Target-Bin entnommen wurde,
-        - die Target-Bin an der Pickstation war,
-        - die Pickstation-Bearbeitung abgeschlossen ist,
-        - alle blockierenden Bins zurückgelagert wurden,
-        - die Target-Bin zurückgelagert wurde,
-        - die Target-Bin oben auf dem ursprünglichen Zielstack liegt.
         """
         if self.target_stack_id is None:
             return False, "target_stack_id is unknown"
@@ -214,6 +247,7 @@ class RobotTask:
             f"target_at_pickstation={self.target_at_pickstation}, "
             f"pickstation_completed={self.pickstation_completed}, "
             f"target_returned={self.target_returned}, "
-            f"temp_storage={len(self.temp_storage)}"
+            f"temp_storage={len(self.temp_storage)}, "
+            f"batched_requests={len(self.batched_requests)}"
             f")"
         )

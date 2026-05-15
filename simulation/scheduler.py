@@ -13,7 +13,8 @@ class Scheduler:
 
         Reihenfolge:
         1. Wartende aktive Tasks fortsetzen.
-        2. Falls kein wartender Task vorhanden ist, neuen Request zuweisen.
+        2. Opportunistisch: Requests, deren Bin bereits oben zugänglich ist.
+        3. Neuen Request nach Scheduler-Strategie (FIFO/EDF).
         """
         robot = self._find_idle_robot(state)
 
@@ -32,7 +33,12 @@ class Scheduler:
         if not self.active_queue.has_unassigned_requests():
             return None
 
-        request = self._select_next_request()
+        # Opportunistisch: Bin liegt bereits oben und ist frei erreichbar (R-E1)
+        opportunistic = self._try_schedule_opportunistic(state, robot, current_time)
+        if opportunistic is not None:
+            return opportunistic
+
+        request = self._select_next_request(state)
 
         if request is None:
             return None
@@ -75,8 +81,93 @@ class Scheduler:
             "start_time": current_time,
         }
 
-    def _select_next_request(self):
-        blocked_bin_ids = self.active_queue.get_assigned_target_bin_ids()
+    def _try_schedule_opportunistic(self, state, robot, current_time):
+        """
+        Prüft, ob ein pending Request eine Target-Bin hat, die bereits oben
+        auf ihrem Stack liegt und frei (nicht reserviert) ist.
+
+        Falls ja: Dieser Request wird bevorzugt, weil kein Relocation-Aufwand entsteht.
+        Spart Blocker-Räumen, wenn die Bin bereits zugänglich ist (R-E1).
+
+        Erweitert um: Blocker-Bins, die im Buffer liegen und deren
+        eigentlicher Owner sie zurücklegen müsste, können übernommen werden.
+        """
+        reserved = self.active_queue.get_all_reserved_bin_ids()
+
+        for request in list(self.active_queue.pending):
+            bin_id = request.target_box_id
+
+            if bin_id in reserved:
+                # Prüfen: Ist die Bin als Blocker reserviert und im Buffer zugänglich?
+                owner_task = self.active_queue.get_blocker_owner(bin_id)
+                if owner_task is not None:
+                    # Opportunistischer Transfer: Request B übernimmt Blocker-Bin von Task A
+                    bin_obj = state.get_bin_by_id(bin_id)
+                    if bin_obj is not None:
+                        stack = self._get_stack_for_bin(state, bin_obj)
+                        if stack is not None:
+                            top_bin = stack.peek()
+                            if top_bin is not None and top_bin.bin_id == bin_id:
+                                # Bin liegt oben im Buffer → Transfer durchführen
+                                self.active_queue.pending.remove(request)
+                                task = RobotTask(request)
+                                robot.assign_task(task)
+                                self.active_queue.mark_assigned(request, robot)
+
+                                # Ownership-Transfer: Task A gibt Bin ab, Task B übernimmt
+                                owner_task.release_blocker_ownership(bin_id)
+
+                                action = self.strategy.next_action(state, task)
+                                return {
+                                    "request": request,
+                                    "robot": robot,
+                                    "task": task,
+                                    "action": action,
+                                    "start_time": current_time,
+                                }
+                continue
+
+            # Normale opportunistische Bedienung: Bin liegt oben und ist frei
+            bin_obj = state.get_bin_by_id(bin_id)
+            if bin_obj is None:
+                continue
+
+            stack = self._get_stack_for_bin(state, bin_obj)
+            if stack is None:
+                continue
+
+            top_bin = stack.peek()
+            if top_bin is not None and top_bin.bin_id == bin_id:
+                # Bin liegt bereits oben – opportunistisch vorziehen
+                self.active_queue.pending.remove(request)
+                task = RobotTask(request)
+                robot.assign_task(task)
+                self.active_queue.mark_assigned(request, robot)
+                action = self.strategy.next_action(state, task)
+                return {
+                    "request": request,
+                    "robot": robot,
+                    "task": task,
+                    "action": action,
+                    "start_time": current_time,
+                }
+
+        return None
+
+    def _get_accessible_bin_ids(self, state):
+        """
+        Gibt Bin-IDs zurück, die aktuell oben auf einem Stack liegen
+        und keinen Eigentümer haben (also sofort bedienbar sind).
+        """
+        accessible = set()
+        for stack in state.grid.all_stacks():
+            top_bin = stack.peek()
+            if top_bin is not None and not top_bin.in_transit:
+                accessible.add(top_bin.bin_id)
+        return accessible
+
+    def _select_next_request(self, state):
+        blocked_bin_ids = self.active_queue.get_all_reserved_bin_ids()
 
         if self.scheduler_strategy == "FIFO":
             return self._pop_next_fifo_excluding(blocked_bin_ids)
@@ -112,5 +203,20 @@ class Scheduler:
         for robot in state.robots:
             if robot.status == "idle":
                 return robot
+
+        return None
+
+    def _get_stack_for_bin(self, state, bin_obj):
+        stack_id = bin_obj.get_stack()
+        if stack_id is None:
+            return None
+
+        if isinstance(stack_id, tuple):
+            x, y = stack_id
+            return state.grid.get_stack(x, y)
+
+        for stack in state.grid.all_stacks():
+            if stack.stack_id == stack_id:
+                return stack
 
         return None

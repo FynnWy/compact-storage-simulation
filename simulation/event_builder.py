@@ -80,11 +80,18 @@ class EventBuilder:
 
         return self.cost_model.action_duration(action, state, robot)
 
-    def calculate_pickstation_service_duration(self):
-        if self.cost_model is None:
-            return 1
+    def calculate_pickstation_service_duration(self, batch_count=1):
+        """
+        Berechnet die Servicezeit an der Pickstation.
 
-        return self.cost_model.pickstation_service_duration()
+        batch_count: Anzahl der Requests, die an dieser Pickstation gemeinsam
+                     bedient werden (primärer Request + gebatchte Requests).
+                     Die Servicezeit steigt linear mit der Batch-Größe.
+        """
+        if self.cost_model is None:
+            return max(1, batch_count)
+
+        return self.cost_model.pickstation_service_duration(batch_count=batch_count)
 
     def get_final_robot_position(self, action):
         if self.cost_model is None:

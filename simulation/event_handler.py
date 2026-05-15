@@ -26,11 +26,6 @@ class EventHandler:
         self.event_builder = event_builder
 
     def get_next_event(self):
-        """
-        Holt das nächste Event aus der EventQueue und verarbeitet danach das Event.
-
-        Die Zeitsynchronisation passiert zentral in der SimulationEngine.
-        """
         if self.event_queue.is_empty():
             return None
 
@@ -39,19 +34,12 @@ class EventHandler:
         return event
 
     def _advance_time_until(self, target_time):
-        """
-        Deprecated:
-        Zeitsynchronisation passiert zentral in der SimulationEngine.
-        """
         raise RuntimeError(
             "EventHandler._advance_time_until should not be used. "
             "Time advancement is handled by SimulationEngine."
         )
 
     def handle(self, event):
-        """
-        Liest den Event-Typ und führt die dazugehörige Logik aus.
-        """
         if event.event_type == EventType.ARRIVAL:
             request = event.payload
             self.active_queue.add(request)
@@ -96,27 +84,81 @@ class EventHandler:
             self.event_queue.push(delayed_event)
             return
 
+        # in_transit setzen VOR Ausführung
+        self._mark_bin_in_transit(action, state=self.state, in_transit=True)
+
         if action.get("type") == "remove_target":
             request = event.payload.get("request")
-            self.metrics.record_target_bin_removed(self.state, action, request)
+            self.metrics.record_target_bin_at_pickstation(self.state, action, request)
 
         self.executor.execute(event, self.state)
+
+        # in_transit zurücksetzen NACH erfolgreicher Ausführung
+        self._mark_bin_in_transit(action, state=self.state, in_transit=False)
+
         self._update_robot_position_after_action(event)
         self._update_task_after_successful_action(event)
 
         if action.get("type") == "remove_target":
+            self._attach_batched_requests_to_task(event)
             self._start_pickstation_service_and_release_robot(event)
             return
 
         self._schedule_next_action_for_same_task(event)
 
-    def _update_task_after_successful_action(self, event):
+    def _mark_bin_in_transit(self, action, state, in_transit):
         """
-        Aktualisiert den fachlichen Task-Fortschritt erst nach erfolgreicher Ausführung.
+        Markiert die betroffene Bin als in_transit (vor Ausführung)
+        bzw. hebt die Markierung auf (nach Ausführung).
 
-        Dadurch geht keine Rücklagerungsinformation verloren, wenn eine geplante
-        Action blockiert, verzögert oder nicht ausführbar ist.
+        INV-2: Eine Bin ist entweder physisch zugänglich ODER in_transit.
         """
+        bin_id = action.get("bin_id")
+        if bin_id is None:
+            return
+
+        bin_obj = state.get_bin_by_id(bin_id)
+        if bin_obj is None:
+            return
+
+        if in_transit:
+            bin_obj.mark_in_transit()
+        else:
+            bin_obj.mark_transit_done()
+
+    def _attach_batched_requests_to_task(self, event):
+        """
+        Stufe 3 – Batching (R-A2 / R-E2):
+
+        Wenn die Target-Bin gerade zur Pickstation gebracht wird, prüfen wir,
+        ob andere Requests auf dieselbe Bin gewartet haben (Batch-Warteliste).
+
+        Falls ja: Diese Requests werden dem Task als batched_requests hinzugefügt.
+        Sie werden an der Pickstation gemeinsam abgearbeitet.
+        Die Pickstation-Servicezeit wird entsprechend verlängert.
+        Jeder Request erhält seinen eigenen Completion-Zeitpunkt in den Metriken.
+        """
+        robot = event.payload.get("robot")
+        if robot is None:
+            return
+
+        task = robot.current_task
+        if task is None:
+            return
+
+        bin_id = task.target_bin_id
+        batched = self.active_queue.pop_batch_waitlist_for_bin(bin_id)
+
+        for request in batched:
+            task.add_batched_request(request)
+            # Sofort als "an Pickstation" metrisch erfassen
+            self.metrics.record_target_bin_at_pickstation(
+                self.state,
+                {"type": "remove_target", "bin_id": bin_id},
+                request,
+            )
+
+    def _update_task_after_successful_action(self, event):
         robot = event.payload.get("robot")
 
         if robot is None:
@@ -131,11 +173,14 @@ class EventHandler:
         action_type = action.get("type")
 
         if action_type == "relocate":
+            bin_id = action.get("bin_id")
             task.remember_relocation(
-                bin_id=action.get("bin_id"),
+                bin_id=bin_id,
                 from_stack=action.get("from_stack"),
                 buffer_stack=action.get("to_stack"),
             )
+            # Blocker-Ownership registrieren, damit andere Tasks diese Bin nicht anfordern
+            self.active_queue.register_blocker_ownership(bin_id, task)
             return
 
         if action_type == "remove_target":
@@ -155,6 +200,8 @@ class EventHandler:
                 from_stack=action.get("from_stack"),
                 to_stack=action.get("to_stack"),
             )
+            # Blocker-Ownership freigeben, jetzt darf die Bin wieder angefragt werden
+            self.active_queue.release_blocker_ownership(bin_id)
             return
 
         if return_kind == "target":
@@ -191,7 +238,11 @@ class EventHandler:
 
         task.mark_waiting_at_pickstation()
 
-        service_duration = self.event_builder.calculate_pickstation_service_duration()
+        # Servicezeit skaliert mit der Anzahl gebatchter Requests
+        batch_count = len(task.batched_requests) + 1  # +1 für den primären Request
+        service_duration = self.event_builder.calculate_pickstation_service_duration(
+            batch_count=batch_count,
+        )
 
         pickstation_complete_event = self.event_builder.build_pickstation_complete_event(
             task=task,
@@ -210,6 +261,11 @@ class EventHandler:
 
         task.mark_pickstation_completed()
         self.active_queue.mark_pickstation_task_completed(task)
+
+        # Metriken für alle gebatchten Requests erfassen
+        completion_time = self.state.t
+        for batched_request in task.batched_requests:
+            self.metrics.record_full_completion(completion_time, batched_request)
 
     def _schedule_next_action_for_same_task(self, event):
         robot = event.payload.get("robot")
@@ -276,6 +332,10 @@ class EventHandler:
 
         task.require_consistently_completed(self.state)
 
+        completion_time = self.state.t
+
+        # Hauptrequest abschließen
+        self.metrics.record_full_completion(completion_time, task.request)
         self.active_queue.mark_completed(request)
         robot.clear_task()
 

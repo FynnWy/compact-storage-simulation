@@ -24,7 +24,8 @@ class TopAccessStrategy(BaseStrategy):
             return self._next_wait_for_pickstation_action(task)
 
         if task.phase == RobotTask.PHASE_RETURN_TARGET:
-            return self._next_return_target_action(task)
+            # BUGFIX: state muss übergeben werden, da _next_return_target_action(state, task) erwartet.
+            return self._next_return_target_action(state, task)
 
         if task.phase == RobotTask.PHASE_COMPLETE:
             return self._next_complete_action(task)
@@ -81,11 +82,28 @@ class TopAccessStrategy(BaseStrategy):
         relocation = task.peek_last_relocation()
 
         if relocation is not None:
+            to_stack_id = relocation["from_stack"]
+
+            # R-D2: Ziel-Stack für Rücklagerung validieren – ist er zugänglich?
+            to_stack = self._get_stack_by_id(state, to_stack_id)
+
+            if to_stack is not None and not self._is_stack_accessible_for_return(state, to_stack):
+                # Ziel-Stack ist blockiert → alternativen Stack wählen und Eintrag aktualisieren
+                alt_stack = self._select_relocation_stack(
+                    state=state,
+                    exclude_stack=to_stack,
+                )
+                task.update_return_stack_for_blocker(
+                    bin_id=relocation["bin_id"],
+                    new_to_stack=alt_stack.stack_id,
+                )
+                to_stack_id = alt_stack.stack_id
+
             return {
                 "type": "return",
                 "return_kind": "blocker",
                 "from_stack": relocation["buffer_stack"],
-                "to_stack": relocation["from_stack"],
+                "to_stack": to_stack_id,
                 "bin_id": relocation["bin_id"],
             }
 
@@ -97,18 +115,47 @@ class TopAccessStrategy(BaseStrategy):
         return self.next_action(state, task)
 
     def _next_wait_for_pickstation_action(self, task):
-        if not task.pickstation_completed:
-            return None
-
-        task.phase = RobotTask.PHASE_RESTORE_BLOCKERS
+        """
+        Während PHASE_WAIT_FOR_PICKSTATION kann der Task keine Aktion ausführen.
+        Er wartet darauf, dass das PICKSTATION_COMPLETE-Event den Task fortsetzt.
+        """
         return None
 
-    def _next_return_target_action(self, task):
+    def _next_return_target_action(self, state, task):
+        """
+        R-D3: Prüft, ob der ursprüngliche Ziel-Stack für die Target-Bin noch zugänglich ist.
+        """
         if task.target_stack_id is None:
             raise RuntimeError(
                 f"Cannot return target bin {task.target_bin_id}: "
                 f"task.target_stack_id is unknown"
             )
+
+        target_stack = self._get_stack_by_id(state, task.target_stack_id)
+
+        if target_stack is None:
+            raise RuntimeError(
+                f"Cannot return target bin {task.target_bin_id}: "
+                f"target stack {task.target_stack_id} not found"
+            )
+
+        top_bin = target_stack.peek()
+        max_height = self._get_max_stack_height(state)
+
+        # Stack ist voll oder wird von einer fremden Bin belegt → freispielen
+        if top_bin is not None and top_bin.bin_id != task.target_bin_id:
+            if max_height is not None and target_stack.height() >= max_height:
+                # Oberste (fremde) Bin räumen, damit Platz entsteht
+                alt_stack = self._select_relocation_stack(
+                    state=state,
+                    exclude_stack=target_stack,
+                )
+                return {
+                    "type": "relocate",
+                    "from_stack": target_stack.stack_id,
+                    "to_stack": alt_stack.stack_id,
+                    "bin_id": top_bin.bin_id,
+                }
 
         return {
             "type": "return",
@@ -213,6 +260,37 @@ class TopAccessStrategy(BaseStrategy):
                     return stack, level
 
         return None, None
+
+    def _is_stack_accessible_for_return(self, state, stack):
+        """
+        Prüft, ob ein Stack für eine Rücklagerung zugänglich ist.
+
+        Ein Stack ist nicht zugänglich, wenn:
+        - er gesperrt (locked) ist, oder
+        - er die maximale Höhe bereits erreicht hat.
+        """
+        if stack.is_locked():
+            return False
+
+        max_height = self._get_max_stack_height(state)
+        if max_height is not None and stack.height() >= max_height:
+            return False
+
+        return True
+
+    def _get_stack_by_id(self, state, stack_id):
+        if stack_id is None:
+            return None
+
+        if isinstance(stack_id, tuple):
+            x, y = stack_id
+            return state.grid.get_stack(x, y)
+
+        for stack in state.grid.all_stacks():
+            if stack.stack_id == stack_id:
+                return stack
+
+        return None
 
     def _get_buffer_stacks(self, state, exclude_stack):
         return [stack for stack in state.grid.all_stacks() if stack != exclude_stack]
