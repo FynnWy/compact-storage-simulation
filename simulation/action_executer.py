@@ -44,6 +44,13 @@ class ActionExecutor:
     def _execute_remove_target(self, action, state):
         """
         Entfernt die Ziel-Bin aus ihrem Stack.
+
+        Wichtig:
+        Dieses Event repräsentiert den Abschluss der gesamten Aktion:
+        - Ziel-Bin wurde gegriffen
+        - Ziel-Bin wurde zur Pickstation transportiert
+        - Ziel-Bin wurde an der Pickstation abgegeben
+
         Die Bin befindet sich danach virtuell an der Pickstation.
         """
         from_stack = self._get_stack_by_id(state, action.get("from_stack"))

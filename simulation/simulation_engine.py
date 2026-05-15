@@ -6,6 +6,7 @@ import numpy as np
 from config.init_strategy import initialize_bins
 from requests_.active_queue import ActiveQueue
 from requests_.request_generator import RequestGenerator
+from simulation.action_cost_model import ActionCostModel
 from simulation.action_executer import ActionExecutor
 from simulation.constraint_manager import ConstraintManager
 from simulation.event_builder import EventBuilder
@@ -73,7 +74,16 @@ class SimulationEngine:
         Verdrahtet alle Komponenten für den eigentlichen DES-Lauf.
         """
         self.active_queue = ActiveQueue()
-        self.event_builder = EventBuilder()
+
+        self.cost_model = ActionCostModel(
+            config=self.config,
+            rng=self.rng,
+        )
+
+        self.event_builder = EventBuilder(
+            cost_model=self.cost_model,
+        )
+
         self.request_handler = RequestHandler(
             state=self.state,
             event_builder=self.event_builder,
@@ -101,41 +111,6 @@ class SimulationEngine:
             executor=self.executor,
             event_builder=self.event_builder,
         )
-
-    def run(self, debug=False, max_events=10000):
-        """
-        Führt die Simulation bis simulation_time oder bis keine Events/Requests mehr existieren.
-
-        debug=True gibt einen einfachen Event-Trace aus.
-        max_events schützt vor Endlosschleifen.
-
-        Führt die Simulation bis simulation_time oder bis keine Events/Requests mehr existieren.
-
-        debug=True gibt einen einfachen Event-Trace aus.
-        max_events schützt vor Endlosschleifen.
-        """
-        self._validate_initial_state()
-
-        processed_events = 0
-
-        while processed_events < max_events:
-            event = self.step()
-
-            if event is None:
-                break
-
-            processed_events += 1
-
-            if debug:
-                print(f"[EVENT] {event}")
-
-        if processed_events >= max_events:
-            raise RuntimeError(
-                f"Simulation stopped after max_events={max_events}. "
-                f"Possible endless event loop."
-            )
-
-        return self.metrics.summary()
 
     def step(self):
         """
@@ -185,7 +160,11 @@ class SimulationEngine:
             if event is not None:
                 self._validate_runtime_state()
 
-                if event.event_type in {EventType.ARRIVAL, EventType.REQUEST_COMPLETE}:
+                if event.event_type in {
+                    EventType.ARRIVAL,
+                    EventType.REQUEST_COMPLETE,
+                    EventType.PICKSTATION_COMPLETE,
+                }:
                     self.event_handler.schedule_available_robots(self.state.t)
 
             return event

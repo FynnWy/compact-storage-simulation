@@ -20,6 +20,9 @@ class TopAccessStrategy(BaseStrategy):
         if task.phase == RobotTask.PHASE_RESTORE_BLOCKERS:
             return self._next_restore_blockers_action(state, task)
 
+        if task.phase == RobotTask.PHASE_WAIT_FOR_PICKSTATION:
+            return self._next_wait_for_pickstation_action(task)
+
         if task.phase == RobotTask.PHASE_RETURN_TARGET:
             return self._next_return_target_action(task)
 
@@ -36,7 +39,7 @@ class TopAccessStrategy(BaseStrategy):
             target_bin = state.get_bin_by_id(target_bin_id)
 
             if target_bin is not None and target_bin.get_status() == "at_pickstation":
-                task.target_removed = True
+                task.target_at_pickstation = True
                 task.phase = RobotTask.PHASE_RESTORE_BLOCKERS
                 return self.next_action(state, task)
 
@@ -55,7 +58,6 @@ class TopAccessStrategy(BaseStrategy):
 
         if top_bin.bin_id == target_bin_id:
             task.target_removed = True
-            task.phase = RobotTask.PHASE_RESTORE_BLOCKERS
 
             return {
                 "type": "remove_target",
@@ -92,8 +94,19 @@ class TopAccessStrategy(BaseStrategy):
                 "bin_id": relocation["bin_id"],
             }
 
+        if not task.pickstation_completed:
+            task.phase = RobotTask.PHASE_WAIT_FOR_PICKSTATION
+            return None
+
         task.phase = RobotTask.PHASE_RETURN_TARGET
         return self.next_action(state, task)
+
+    def _next_wait_for_pickstation_action(self, task):
+        if not task.pickstation_completed:
+            return None
+
+        task.phase = RobotTask.PHASE_RESTORE_BLOCKERS
+        return None
 
     def _next_return_target_action(self, task):
         if task.target_stack_id is None:
@@ -102,7 +115,7 @@ class TopAccessStrategy(BaseStrategy):
                 f"task.target_stack_id is unknown"
             )
 
-        task.phase = RobotTask.PHASE_COMPLETE
+        task.mark_target_returned()
 
         return {
             "type": "return",

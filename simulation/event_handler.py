@@ -4,16 +4,16 @@ from events.event_types import EventType
 class EventHandler:
 
     def __init__(
-        self,
-        state,
-        active_queue,
-        event_queue,
-        request_handler,
-        metrics,
-        constraint_manager,
-        scheduler,
-        executor,
-        event_builder,
+            self,
+            state,
+            active_queue,
+            event_queue,
+            request_handler,
+            metrics,
+            constraint_manager,
+            scheduler,
+            executor,
+            event_builder,
     ):
         self.state = state
         self.active_queue = active_queue
@@ -58,6 +58,9 @@ class EventHandler:
         elif event.event_type == EventType.ROBOT_ACTION:
             self._handle_robot_action(event)
 
+        elif event.event_type == EventType.PICKSTATION_COMPLETE:
+            self._handle_pickstation_complete(event)
+
         elif event.event_type == EventType.REQUEST_COMPLETE:
             self._handle_request_complete(event)
 
@@ -97,7 +100,46 @@ class EventHandler:
             self.metrics.record_target_bin_removed(self.state, action, request)
 
         self.executor.execute(event, self.state)
+        self._update_robot_position_after_action(event)
+
+        if action.get("type") == "remove_target":
+            self._start_pickstation_service_and_release_robot(event)
+            return
+
         self._schedule_next_action_for_same_task(event)
+
+    def _start_pickstation_service_and_release_robot(self, event):
+        robot = event.payload.get("robot")
+
+        if robot is None:
+            raise RuntimeError("Cannot start pickstation service: event has no robot")
+
+        task = robot.current_task
+
+        if task is None:
+            raise RuntimeError("Cannot start pickstation service: robot has no task")
+
+        task.mark_waiting_at_pickstation()
+
+        service_duration = self.event_builder.calculate_pickstation_service_duration()
+
+        pickstation_complete_event = self.event_builder.build_pickstation_complete_event(
+            task=task,
+            time=self.state.t + service_duration,
+        )
+        self.event_queue.push(pickstation_complete_event)
+
+        self.active_queue.add_pickstation_task(task)
+        robot.clear_task()
+
+    def _handle_pickstation_complete(self, event):
+        task = event.payload.get("task")
+
+        if task is None:
+            raise RuntimeError("Cannot handle pickstation completion: event has no task")
+
+        task.mark_pickstation_completed()
+        self.active_queue.mark_pickstation_task_completed(task)
 
     def _schedule_next_action_for_same_task(self, event):
         robot = event.payload.get("robot")
@@ -113,16 +155,36 @@ class EventHandler:
         next_action = self.scheduler.strategy.next_action(self.state, task)
 
         if next_action is None:
+            self.active_queue.add_waiting_task(task)
+            robot.clear_task()
             return
+
+        duration = self.event_builder.calculate_action_duration(
+            action=next_action,
+            state=self.state,
+            robot=robot,
+        )
 
         next_event = self.event_builder.build_event_from_action(
             action=next_action,
             request=task.request,
             robot=robot,
-            time=self.state.t + self.event_builder.action_duration,
+            time=self.state.t + duration,
         )
 
         self.event_queue.push(next_event)
+
+    def _update_robot_position_after_action(self, event):
+        robot = event.payload.get("robot")
+
+        if robot is None:
+            return
+
+        action = self.event_builder.get_action_from_event(event)
+        final_position = self.event_builder.get_final_robot_position(action)
+
+        if final_position is not None:
+            robot.set_position(final_position)
 
     def _handle_request_complete(self, event):
         payload = event.payload
@@ -134,13 +196,9 @@ class EventHandler:
 
     def schedule_available_robots(self, current_time):
         """
-        Scheduled so viele Requests, wie freie Roboter und pending Requests vorhanden sind.
-
-        Neuer Flow:
-        Pro Scheduling wird genau ein RobotTask erzeugt und genau eine erste Action
-        als Event in die Queue gelegt.
+        Scheduled so viele Requests oder wartende Tasks, wie freie Roboter vorhanden sind.
         """
-        while self.active_queue.has_unassigned_requests():
+        while True:
             scheduling_result = self.scheduler.try_schedule(self.state, current_time)
 
             if scheduling_result is None:
@@ -151,11 +209,19 @@ class EventHandler:
             if action is None:
                 return
 
+            robot = scheduling_result["robot"]
+
+            duration = self.event_builder.calculate_action_duration(
+                action=action,
+                state=self.state,
+                robot=robot,
+            )
+
             event = self.event_builder.build_event_from_action(
                 action=action,
                 request=scheduling_result["request"],
-                robot=scheduling_result["robot"],
-                time=scheduling_result["start_time"],
+                robot=robot,
+                time=scheduling_result["start_time"] + duration,
             )
 
             self.event_queue.push(event)

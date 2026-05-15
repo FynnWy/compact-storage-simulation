@@ -9,16 +9,25 @@ class Scheduler:
 
     def try_schedule(self, state, current_time):
         """
-        Versucht, genau einen pending Request einem freien Roboter zuzuordnen.
+        Versucht, genau einen Task oder Request einem freien Roboter zuzuordnen.
 
-        Wichtig:
-        Es wird kein vollständiger Plan mehr erzeugt.
-        Stattdessen wird ein RobotTask erzeugt und genau die nächste Aktion geplant.
+        Reihenfolge:
+        1. Wartende aktive Tasks fortsetzen.
+        2. Falls kein wartender Task vorhanden ist, neuen Request zuweisen.
         """
         robot = self._find_idle_robot(state)
 
         if robot is None:
             return None
+
+        waiting_task_result = self._try_schedule_waiting_task(
+            state=state,
+            robot=robot,
+            current_time=current_time,
+        )
+
+        if waiting_task_result is not None:
+            return waiting_task_result
 
         if not self.active_queue.has_unassigned_requests():
             return None
@@ -37,6 +46,29 @@ class Scheduler:
 
         return {
             "request": request,
+            "robot": robot,
+            "task": task,
+            "action": action,
+            "start_time": current_time,
+        }
+
+    def _try_schedule_waiting_task(self, state, robot, current_time):
+        if not self.active_queue.has_waiting_tasks():
+            return None
+
+        task = self.active_queue.pop_waiting_task()
+        robot.assign_task(task)
+        self.active_queue.mark_task_assigned(task, robot)
+
+        action = self.strategy.next_action(state, task)
+
+        if action is None:
+            robot.clear_task()
+            self.active_queue.add_waiting_task(task)
+            return None
+
+        return {
+            "request": task.request,
             "robot": robot,
             "task": task,
             "action": action,

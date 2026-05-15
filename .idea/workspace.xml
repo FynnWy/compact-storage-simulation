@@ -4,14 +4,17 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Added responsive 2D UI for localhost">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/simulation_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/simulation_config.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/events/event_types.py" beforeDir="false" afterPath="$PROJECT_DIR$/events/event_types.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/requests_/active_queue.py" beforeDir="false" afterPath="$PROJECT_DIR$/requests_/active_queue.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/action_executer.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/action_executer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/event_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_builder.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/robot_task.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/robot_task.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation/scheduler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/scheduler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/state/robot.py" beforeDir="false" afterPath="$PROJECT_DIR$/state/robot.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategies/base_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/base_strategy.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategies/side_access_strategy.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/simulation_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/simulation_engine.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/strategies/top_access_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/top_access_strategy.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -20,7 +23,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="48" />
+    <option name="cachedIndexableFilesCount" value="49" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -137,7 +140,8 @@
       <workItem from="1777988654864" duration="5599000" />
       <workItem from="1778143731273" duration="539000" />
       <workItem from="1778235658551" duration="1276000" />
-      <workItem from="1778584281113" duration="4783000" />
+      <workItem from="1778584281113" duration="7739000" />
+      <workItem from="1778845162086" duration="1719000" />
     </task>
     <task id="LOCAL-00001" summary="Initial project structure">
       <option name="closed" value="true" />
@@ -187,7 +191,15 @@
       <option name="project" value="LOCAL" />
       <updated>1777999959233</updated>
     </task>
-    <option name="localTasksCounter" value="7" />
+    <task id="LOCAL-00007" summary="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning">
+      <option name="closed" value="true" />
+      <created>1778594817340</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1778594817343</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -222,7 +234,8 @@
     <MESSAGE value="Fixed dependencies and updated" />
     <MESSAGE value="Establish connections between key classes, execute initial smoke tests and resolve related bugs" />
     <MESSAGE value="Added responsive 2D UI for localhost" />
-    <option name="LAST_COMMIT_MESSAGE" value="Added responsive 2D UI for localhost" />
+    <MESSAGE value="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning" />
+    <option name="LAST_COMMIT_MESSAGE" value="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$web_visualizer.coverage" NAME="web_visualizer Coverage Results" MODIFIED="1777992567636" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/utils" />

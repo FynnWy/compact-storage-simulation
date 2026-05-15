@@ -3,8 +3,8 @@ from events.event_types import EventType
 
 
 class EventBuilder:
-    def __init__(self, action_duration=1, delay_time=1, max_retries=100):
-        self.action_duration = action_duration
+    def __init__(self, cost_model=None, delay_time=1, max_retries=100):
+        self.cost_model = cost_model
         self.delay_time = delay_time
         self.max_retries = max_retries
 
@@ -24,7 +24,9 @@ class EventBuilder:
 
     def build_events_from_plan(self, plan, request, robot, start_time):
         """
-        Wandelt einen Strategy-Plan in konkrete Events um.
+        Legacy: Wandelt einen Strategy-Plan in konkrete Events um.
+
+        Der neue Next-Step-Flow nutzt diese Methode nicht mehr.
         """
         events = []
         current_time = start_time
@@ -37,13 +39,16 @@ class EventBuilder:
                 time=current_time,
             )
             events.append(event)
-            current_time += self.action_duration
+            current_time += 1
 
         return events
 
     def build_event_from_action(self, action, request, robot, time):
         """
-        Baut ein einzelnes Event aus einer Plan-Action.
+        Baut ein einzelnes Event aus einer Action.
+
+        Wichtig:
+        time ist der Zeitpunkt, zu dem die Aktion abgeschlossen ist.
         """
         event_type = self._resolve_event_type(action)
 
@@ -57,6 +62,35 @@ class EventBuilder:
             },
             priority=self._resolve_priority(event_type),
         )
+
+    def build_pickstation_complete_event(self, task, time):
+        return Event(
+            time=time,
+            event_type=EventType.PICKSTATION_COMPLETE,
+            payload={
+                "task": task,
+                "request": task.request,
+            },
+            priority=self._resolve_priority(EventType.PICKSTATION_COMPLETE),
+        )
+
+    def calculate_action_duration(self, action, state, robot):
+        if self.cost_model is None:
+            return 1
+
+        return self.cost_model.action_duration(action, state, robot)
+
+    def calculate_pickstation_service_duration(self):
+        if self.cost_model is None:
+            return 1
+
+        return self.cost_model.pickstation_service_duration()
+
+    def get_final_robot_position(self, action):
+        if self.cost_model is None:
+            return None
+
+        return self.cost_model.final_robot_position(action)
 
     def delay_event(self, event, current_time):
         """
@@ -103,16 +137,19 @@ class EventBuilder:
 
         return EventType.ROBOT_ACTION
 
-    # Zuerst werden alle REQUEST_COMPLETE-Events priorisiert,
+    # Zuerst werden REQUEST_COMPLETE-Events priorisiert,
     # damit Roboter bei gleicher ZE zuerst frei gemacht werden.
     def _resolve_priority(self, event_type):
         if event_type == EventType.REQUEST_COMPLETE:
             return 0
 
-        if event_type == EventType.ARRIVAL:
+        if event_type == EventType.PICKSTATION_COMPLETE:
             return 1
 
-        if event_type == EventType.ROBOT_ACTION:
+        if event_type == EventType.ARRIVAL:
             return 2
+
+        if event_type == EventType.ROBOT_ACTION:
+            return 3
 
         return 99
