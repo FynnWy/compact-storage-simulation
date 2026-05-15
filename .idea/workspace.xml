@@ -4,16 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Work Package 4 finished: Formally ensure the return process">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Work Package 5 finished: Implemented complex request consistency, batching and robust return handling">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requests_/active_queue.py" beforeDir="false" afterPath="$PROJECT_DIR$/requests_/active_queue.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/constraint_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/constraint_manager.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/event_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_builder.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/metrics.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/metrics.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/robot_task.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/robot_task.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/scheduler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/scheduler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/state/bin.py" beforeDir="false" afterPath="$PROJECT_DIR$/state/bin.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/simulation_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/simulation_engine.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/strategies/top_access_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/top_access_strategy.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -84,6 +77,7 @@
     "Python.web_visualizer.executor": "Run",
     "RunOnceActivity.MCP Project settings loaded": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "ai.playground.ignore.import.keys.banner.in.settings": "true",
@@ -141,7 +135,7 @@
       <workItem from="1778235658551" duration="1276000" />
       <workItem from="1778584281113" duration="7739000" />
       <workItem from="1778845162086" duration="8724000" />
-      <workItem from="1778856850432" duration="2039000" />
+      <workItem from="1778856850432" duration="4043000" />
     </task>
     <task id="LOCAL-00001" summary="Initial project structure">
       <option name="closed" value="true" />
@@ -215,7 +209,15 @@
       <option name="project" value="LOCAL" />
       <updated>1778849201647</updated>
     </task>
-    <option name="localTasksCounter" value="10" />
+    <task id="LOCAL-00010" summary="Work Package 5 finished: Implemented complex request consistency, batching and robust return handling">
+      <option name="closed" value="true" />
+      <created>1778859207373</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1778859207373</updated>
+    </task>
+    <option name="localTasksCounter" value="11" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -253,7 +255,8 @@
     <MESSAGE value="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning" />
     <MESSAGE value="Work Package 2 and 3 finished: Adjusted movement costs and implemented pick station service with decoupled roboters" />
     <MESSAGE value="Work Package 4 finished: Formally ensure the return process" />
-    <option name="LAST_COMMIT_MESSAGE" value="Work Package 4 finished: Formally ensure the return process" />
+    <MESSAGE value="Work Package 5 finished: Implemented complex request consistency, batching and robust return handling" />
+    <option name="LAST_COMMIT_MESSAGE" value="Work Package 5 finished: Implemented complex request consistency, batching and robust return handling" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$web_visualizer.coverage" NAME="web_visualizer Coverage Results" MODIFIED="1777992567636" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/utils" />

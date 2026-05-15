@@ -21,6 +21,7 @@ from state.robot import Robot
 from state.state import State
 from state.storage_grid import StorageGrid
 from strategies.top_access_strategy import TopAccessStrategy
+from strategies.relocation_selection import RelocationSelection
 from events.event_types import EventType
 
 
@@ -92,7 +93,15 @@ class SimulationEngine:
         self.executor = ActionExecutor()
         self.metrics = Metrics()
 
-        strategy = TopAccessStrategy()
+        # Relocation-Selection mit Kostenmodell und ActiveQueue verdrahten
+        relocation_selector = RelocationSelection(
+            cost_model=self.cost_model,
+            active_queue=self.active_queue,
+        )
+
+        strategy = TopAccessStrategy(
+            relocation_selector=relocation_selector,
+        )
 
         self.scheduler = Scheduler(
             active_queue=self.active_queue,

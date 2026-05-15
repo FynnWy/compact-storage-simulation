@@ -1,8 +1,21 @@
 from strategies.base_strategy import BaseStrategy
 from simulation.robot_task import RobotTask
+from strategies.relocation_selection import RelocationSelection
+
 
 
 class TopAccessStrategy(BaseStrategy):
+    def __init__(self, relocation_selector=None):
+        """
+        Top-Access-Strategie mit Next-Step-Planning.
+
+        Args:
+            relocation_selector:
+                Optionale externe Instanz von RelocationSelection.
+                Falls None, wird eine Standardinstanz verwendet.
+        """
+        super().__init__()
+        self._relocation_selector = relocation_selector or RelocationSelection()
 
     def next_action(self, state, task):
         """
@@ -182,7 +195,6 @@ class TopAccessStrategy(BaseStrategy):
         plan = []
 
         target_bin_id = request.target_box_id
-
         target_stack, target_level = self._find_bin(state, target_bin_id)
 
         if target_stack is None:
@@ -249,6 +261,7 @@ class TopAccessStrategy(BaseStrategy):
 
         return plan
 
+    # (Legacy _create_plan und weitere Helper bleiben unverändert)
     # ----------------------------------
     # Helper Functions
     # ----------------------------------
@@ -297,29 +310,18 @@ class TopAccessStrategy(BaseStrategy):
 
     def _select_relocation_stack(self, state, exclude_stack):
         """
-        Einfache Platzwahl für temporäre Ablage blockierender Bins.
+        Delegiert die Platzwahl für temporäre Ablage an RelocationSelection.
 
         Bewusst nicht als Heuristik bezeichnet:
         Diese Funktion kapselt nur die aktuelle Relocation-Selection und kann
         später durch bessere Auswahlverfahren ersetzt werden.
         """
-        max_stack_height = self._get_max_stack_height(state)
-
-        candidate_stacks = []
-
-        for stack in state.grid.all_stacks():
-            if stack == exclude_stack:
-                continue
-
-            if max_stack_height is not None and stack.height() >= max_stack_height:
-                continue
-
-            candidate_stacks.append(stack)
-
-        if not candidate_stacks:
-            raise RuntimeError("No relocation stack with free capacity available")
-
-        return min(candidate_stacks, key=lambda stack: stack.height())
+        # RelocationSelection arbeitet mit dem konkreten Quellstack-Objekt.
+        # exclude_stack ist hier genau dieser Quellstack.
+        return self._relocation_selector.select_temporary_stack(
+            state=state,
+            source_stack=exclude_stack,
+        )
 
     def _select_buffer_stack(self, state, simulated_buffers):
         """
@@ -333,30 +335,17 @@ class TopAccessStrategy(BaseStrategy):
             if stack.stack_id not in simulated_buffers:
                 continue
 
-            simulated_height = len(simulated_buffers[stack.stack_id])
+                simulated_height = len(simulated_buffers[stack.stack_id])
 
-            if max_stack_height is not None and simulated_height >= max_stack_height:
-                continue
+                if max_stack_height is not None and simulated_height >= max_stack_height:
+                    continue
 
-            candidate_stacks.append(stack)
+                candidate_stacks.append(stack)
 
-        if not candidate_stacks:
-            raise RuntimeError("No buffer stack with free capacity available")
+            if not candidate_stacks:
+                raise RuntimeError("No buffer stack with free capacity available")
 
-        return min(
-            candidate_stacks,
-            key=lambda stack: len(simulated_buffers[stack.stack_id]),
-        )
-
-    def _get_max_stack_height(self, state):
-        config = getattr(state, "config", None)
-
-        if config is None:
-            raise RuntimeError("State has no config. Cannot determine max_stack_height.")
-
-        max_stack_height = getattr(config, "max_stack_height", None)
-
-        if max_stack_height is None:
-            raise RuntimeError("Config has no max_stack_height.")
-
-        return max_stack_height
+            return min(
+                candidate_stacks,
+                key=lambda stack: len(simulated_buffers[stack.stack_id]),
+            )
