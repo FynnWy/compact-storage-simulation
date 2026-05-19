@@ -4,9 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Work Package 6 finished: Simple Relocation logic for blocking bins">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/bin_request_prob_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/bin_request_prob_strategy.py" afterDir="false" />
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Work Package 7 finished: New bin request probability distribution (ABC) implemented">
+      <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/metrics.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/metrics.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -135,7 +135,7 @@
       <workItem from="1778584281113" duration="7739000" />
       <workItem from="1778845162086" duration="8724000" />
       <workItem from="1778856850432" duration="4198000" />
-      <workItem from="1779190192906" duration="539000" />
+      <workItem from="1779190192906" duration="1167000" />
     </task>
     <task id="LOCAL-00001" summary="Initial project structure">
       <option name="closed" value="true" />
@@ -225,7 +225,15 @@
       <option name="project" value="LOCAL" />
       <updated>1778861111798</updated>
     </task>
-    <option name="localTasksCounter" value="12" />
+    <task id="LOCAL-00012" summary="Work Package 7 finished: New bin request probability distribution (ABC) implemented">
+      <option name="closed" value="true" />
+      <created>1779190872037</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1779190872038</updated>
+    </task>
+    <option name="localTasksCounter" value="13" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -265,7 +273,8 @@
     <MESSAGE value="Work Package 4 finished: Formally ensure the return process" />
     <MESSAGE value="Work Package 5 finished: Implemented complex request consistency, batching and robust return handling" />
     <MESSAGE value="Work Package 6 finished: Simple Relocation logic for blocking bins" />
-    <option name="LAST_COMMIT_MESSAGE" value="Work Package 6 finished: Simple Relocation logic for blocking bins" />
+    <MESSAGE value="Work Package 7 finished: New bin request probability distribution (ABC) implemented" />
+    <option name="LAST_COMMIT_MESSAGE" value="Work Package 7 finished: New bin request probability distribution (ABC) implemented" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$web_visualizer.coverage" NAME="web_visualizer Coverage Results" MODIFIED="1777992567636" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/utils" />
