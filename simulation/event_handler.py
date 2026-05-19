@@ -46,6 +46,9 @@ class EventHandler:
 
         elif event.event_type == EventType.ROBOT_ACTION:
             self._handle_robot_action(event)
+        
+        elif event.event_type == EventType.ROBOT_MOVE:
+            self._handle_robot_move(event)
 
         elif event.event_type == EventType.PICKSTATION_COMPLETE:
             self._handle_pickstation_complete(event)
@@ -55,6 +58,74 @@ class EventHandler:
 
         else:
             raise ValueError(f"Unknown event_type: {event.event_type}")
+
+    def _handle_robot_move(self, event):
+        """
+        Verarbeitet einen einzelnen Bewegungsschritt eines Roboters.
+        
+        Flow:
+        1. Prüfen ob Zielposition verfügbar ist (Reservierung)
+        2. Roboter bewegt sich zum nächsten Wegpunkt
+        3. Alte Reservierung freigeben
+        4. Prüfen ob Ziel erreicht
+        5. Falls nein: Nächstes ROBOT_MOVE Event erzeugen
+        """
+        robot = event.payload.get("robot")
+        
+        if robot is None:
+            raise RuntimeError("Cannot handle robot move: event has no robot")
+        
+        # NEU: Prüfen ob nächste Position noch reserviert ist
+        next_waypoint = robot.get_next_waypoint()
+        
+        if next_waypoint is None:
+            # Pfad bereits abgeschlossen
+            return
+        
+        # Reservierung prüfen (Sicherheitsprüfung)
+        if not self.state.reservation_table.is_free(
+            *next_waypoint, self.state.t, exclude_robot=robot.robot_id
+        ):
+            # Blockiert - Event verzögern und neu versuchen
+            print(
+                f"[WARNING] Robot {robot.robot_id} blocked at {next_waypoint} "
+                f"at time {self.state.t}, retrying..."
+            )
+            
+            delayed_event = self.event_builder.delay_event(
+                event=event,
+                current_time=self.state.t,
+            )
+            self.event_queue.push(delayed_event)
+            return
+        
+        # Alte Position freigeben (falls vorhanden)
+        old_position = robot.get_position()
+        if old_position is not None:
+            self.state.reservation_table.release(
+                robot.robot_id, *old_position, self.state.t - 1
+            )
+        
+        # Roboter zum nächsten Wegpunkt bewegen
+        try:
+            new_position = robot.advance_to_next_waypoint()
+        except RuntimeError as e:
+            print(f"[WARNING] Robot {robot.robot_id} move failed: {e}")
+            return
+        
+        # Prüfen ob Ziel erreicht
+        if robot.has_reached_destination():
+            # Ziel erreicht - Pfad-Reservierungen freigeben
+            self.state.reservation_table.release_all(robot.robot_id)
+            return
+        
+        # Noch nicht am Ziel - nächstes ROBOT_MOVE Event erzeugen
+        move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
+        next_move_event = self.event_builder.build_robot_move_event(
+            robot=robot,
+            time=self.state.t + move_cost,
+        )
+        self.event_queue.push(next_move_event)
 
     def _handle_robot_action(self, event):
         action = self.event_builder.get_action_from_event(event)
@@ -237,21 +308,82 @@ class EventHandler:
             raise RuntimeError("Cannot start pickstation service: robot has no task")
 
         task.mark_waiting_at_pickstation()
-
-        # Servicezeit skaliert mit der Anzahl gebatchter Requests
-        batch_count = len(task.batched_requests) + 1  # +1 für den primären Request
+        
+        # NEU: Pickstation aus State ermitteln
+        robot_position = robot.get_position()
+        if robot_position is None:
+            robot_position = (0, 0)
+        
+        pickstation = self.state.get_nearest_pickstation(robot_position)
+        if pickstation is None:
+            raise RuntimeError(
+                f"Cannot start pickstation service: no pickstation available "
+                f"for robot {robot.robot_id}"
+            )
+        
+        # Task zur Pickstation-Queue hinzufügen
+        pickstation.enqueue(task, self.state.t)
+        
+        # Task aus assigned entfernen (wird später wieder zugewiesen)
+        self.active_queue.add_pickstation_task(task)
+        
+        # Roboter freigeben
+        robot.clear_task()
+        
+        # Prüfen ob Pickstation sofort Service starten kann
+        self._try_start_pickstation_service(pickstation)
+    
+    def _try_start_pickstation_service(self, pickstation):
+        """
+        Versucht, nächsten Task an der Pickstation zu starten.
+        
+        Wird aufgerufen:
+        - Wenn ein neuer Task zur Queue hinzugefügt wird
+        - Wenn ein Service abgeschlossen wurde
+        """
+        if not pickstation.has_capacity():
+            return  # Pickstation ist voll
+        
+        if pickstation.queue_length() == 0:
+            return  # Keine wartenden Tasks
+        
+        # Nächsten Task aus Queue holen
+        queue_strategy = self.state.config.pickstation_queue_strategy
+        result = pickstation.dequeue(
+            strategy=queue_strategy,
+            scheduler=self.scheduler if queue_strategy == "PRIORITY" else None,
+        )
+        
+        if result is None:
+            return
+        
+        task, arrival_time = result
+        
+        # Wartezeit tracken
+        wait_time = self.state.t - arrival_time
+        pickstation.record_wait_time(wait_time)
+        
+        # Service starten
+        pickstation.start_service(task)
+        
+        # Task in der Pickstation speichern (für spätere Referenz)
+        task.assigned_pickstation = pickstation.station_id
+        
+        # Servicezeit berechnen (skaliert mit Batch-Größe)
+        batch_count = len(task.batched_requests) + 1
         service_duration = self.event_builder.calculate_pickstation_service_duration(
             batch_count=batch_count,
         )
-
+        
+        # Servicezeit tracken
+        pickstation.record_service_time(service_duration)
+        
+        # PICKSTATION_COMPLETE Event erstellen
         pickstation_complete_event = self.event_builder.build_pickstation_complete_event(
             task=task,
             time=self.state.t + service_duration,
         )
         self.event_queue.push(pickstation_complete_event)
-
-        self.active_queue.add_pickstation_task(task)
-        robot.clear_task()
 
     def _handle_pickstation_complete(self, event):
         task = event.payload.get("task")
@@ -269,41 +401,13 @@ class EventHandler:
         # (siehe _handle_request_complete).
         # Metrik 1 (Arrival → Pickstation) wurde bereits bei remove_target
         # bzw. beim Batching erfasst.
-
-    def _schedule_next_action_for_same_task(self, event):
-        robot = event.payload.get("robot")
-
-        if robot is None:
-            raise RuntimeError("Cannot schedule next action: event has no robot")
-
-        task = robot.current_task
-
-        if task is None:
-            return
-
-        next_action = self.scheduler.strategy.next_action(self.state, task)
-
-        if next_action is None:
-            self.active_queue.add_waiting_task(task)
-            robot.clear_task()
-            return
-
-        duration = self.event_builder.calculate_action_duration(
-            action=next_action,
-            state=self.state,
-            robot=robot,
-        )
-
-        next_event = self.event_builder.build_event_from_action(
-            action=next_action,
-            request=task.request,
-            robot=robot,
-            time=self.state.t + duration,
-        )
-
-        self.event_queue.push(next_event)
-
+        
     def _update_robot_position_after_action(self, event):
+        """
+        Aktualisiert Roboter-Position nach erfolgreicher Aktion.
+        
+        Wird nach relocate/remove_target/return aufgerufen.
+        """
         robot = event.payload.get("robot")
 
         if robot is None:
@@ -316,6 +420,14 @@ class EventHandler:
             robot.set_position(final_position)
 
     def _handle_request_complete(self, event):
+        """
+        Behandelt vollständigen Abschluss eines Requests.
+        
+        Wird aufgerufen, wenn:
+        - Target-Bin zurückgelegt wurde
+        - Alle Blocker-Bins zurückgelegt wurden
+        - Lagerzustand konsistent ist
+        """
         payload = event.payload
         robot = payload["robot"]
         request = payload["request"]
@@ -353,6 +465,152 @@ class EventHandler:
         self.active_queue.mark_completed(request)
         robot.clear_task()
 
+    def _schedule_next_action_for_same_task(self, event):
+        robot = event.payload.get("robot")
+
+        if robot is None:
+            raise RuntimeError("Cannot schedule next action: event has no robot")
+
+        task = robot.current_task
+
+        if task is None:
+            return
+
+        next_action = self.scheduler.strategy.next_action(self.state, task)
+
+        if next_action is None:
+            self.active_queue.add_waiting_task(task)
+            robot.clear_task()
+            return
+
+        # Pfad berechnen und Bewegungs-Events erzeugen
+        target_position = self._get_target_position_for_action(next_action)
+        
+        if target_position is None:
+            # Keine Bewegung erforderlich
+            duration = self.event_builder.calculate_action_duration(
+                action=next_action,
+                state=self.state,
+                robot=robot,
+            )
+
+            next_event = self.event_builder.build_event_from_action(
+                action=next_action,
+                request=task.request,
+                robot=robot,
+                time=self.state.t + duration,
+            )
+
+            self.event_queue.push(next_event)
+            return
+        
+        # Pfad berechnen
+        current_position = robot.get_position()
+        if current_position is None:
+            current_position = target_position
+            robot.set_position(current_position)
+
+        path = self.event_builder.cost_model.calculate_path(
+            from_position=current_position,
+            to_position=target_position,
+            robot=robot,  # NEU
+            state=self.state,  # NEU
+            current_time=self.state.t,  # NEU
+        )
+        
+        if not path:
+            # Roboter ist bereits am Ziel
+            duration = self.event_builder.calculate_action_duration(
+                action=next_action,
+                state=self.state,
+                robot=robot,
+            )
+
+            next_event = self.event_builder.build_event_from_action(
+                action=next_action,
+                request=task.request,
+                robot=robot,
+                time=self.state.t + duration,
+            )
+
+            self.event_queue.push(next_event)
+            return
+        
+        # Pfad-Events erzeugen (mit state für Reservierung)
+        path_events = self.event_builder.build_path_events(
+            robot=robot,
+            path=path,
+            target_action=next_action,
+            request=task.request,
+            start_time=self.state.t,
+            state=self.state,  # NEU: state übergeben
+        )
+        
+        # NEU: Prüfen ob Pfad reserviert werden konnte
+        if path_events is None:
+            # Reservierung fehlgeschlagen - Task in Warteschlange
+            print(
+                f"[BLOCKED] Cannot reserve path for robot {robot.robot_id}, "
+                f"task {task.request_id} moved to waiting queue"
+            )
+            self.active_queue.add_waiting_task(task)
+            robot.clear_task()
+            return
+        
+        for path_event in path_events:
+            self.event_queue.push(path_event)
+    
+    def _get_target_position_for_action(self, action):
+        """
+        Bestimmt Zielposition für eine Aktion.
+        
+        Args:
+            action: Action-Dict
+        
+        Returns:
+            (x, y) | None
+        """
+        action_type = action.get("type")
+        
+        if action_type in ("relocate", "remove_target"):
+            stack_id = action.get("from_stack")
+            return self._resolve_position(stack_id)
+        
+        if action_type == "return":
+            # Bei Return: entweder from_stack oder Pickstation
+            from_stack_id = action.get("from_stack")
+            if from_stack_id is None:
+                # Von Pickstation - Roboter muss zur Pickstation
+                if self.state.pickstations:
+                    return self.state.pickstations[0].position
+                return self.event_builder.cost_model.config.pickstation_position
+            
+            return self._resolve_position(from_stack_id)
+        
+        if action_type == "request_complete":
+            # Keine Bewegung erforderlich
+            return None
+        
+        return None
+    
+    def _resolve_position(self, stack_id):
+        """Wandelt stack_id in (x, y) Position um."""
+        if stack_id is None:
+            return None
+        
+        if isinstance(stack_id, tuple) and len(stack_id) == 2:
+            return stack_id
+        
+        if isinstance(stack_id, str) and stack_id.startswith("S_"):
+            parts = stack_id.split("_")
+            if len(parts) == 3:
+                try:
+                    return (int(parts[1]), int(parts[2]))
+                except ValueError:
+                    return None
+        
+        return None
+
     def schedule_available_robots(self, current_time):
         """
         Scheduled so viele Requests oder wartende Tasks, wie freie Roboter vorhanden sind.
@@ -369,18 +627,84 @@ class EventHandler:
                 return
 
             robot = scheduling_result["robot"]
+            request = scheduling_result["request"]
+            
+            # NEU: Prüfen ob Bewegung erforderlich
+            requires_movement = scheduling_result.get("requires_movement", False)
+            
+            if not requires_movement:
+                # Keine Bewegung - direkt Action ausführen
+                duration = self.event_builder.calculate_action_duration(
+                    action=action,
+                    state=self.state,
+                    robot=robot,
+                )
 
-            duration = self.event_builder.calculate_action_duration(
-                action=action,
-                state=self.state,
-                robot=robot,
+                event = self.event_builder.build_event_from_action(
+                    action=action,
+                    request=request,
+                    robot=robot,
+                    time=scheduling_result["start_time"] + duration,
+                )
+
+                self.event_queue.push(event)
+                continue
+            
+            # Bewegung erforderlich - Pfad berechnen
+            target_position = self._get_target_position_for_action(action)
+            current_position = robot.get_position()
+            
+            if current_position is None:
+                # Roboter hat noch keine Position - setze auf Ziel
+                current_position = target_position
+                robot.set_position(current_position)
+            
+            path = self.event_builder.cost_model.calculate_path(
+                from_position=current_position,
+                to_position=target_position,
+                robot=robot,  # NEU
+                state=self.state,  # NEU
+                current_time=self.state.t,  # NEU
             )
+            
+            if not path:
+                # Roboter ist bereits am Ziel - direkt Action ausführen
+                duration = self.event_builder.calculate_action_duration(
+                    action=action,
+                    state=self.state,
+                    robot=robot,
+                )
 
-            event = self.event_builder.build_event_from_action(
-                action=action,
-                request=scheduling_result["request"],
+                event = self.event_builder.build_event_from_action(
+                    action=action,
+                    request=request,
+                    robot=robot,
+                    time=scheduling_result["start_time"] + duration,
+                )
+
+                self.event_queue.push(event)
+                continue
+            
+            # Pfad-Events erzeugen und zur Queue hinzufügen
+            path_events = self.event_builder.build_path_events(
                 robot=robot,
-                time=scheduling_result["start_time"] + duration,
+                path=path,
+                target_action=action,
+                request=request,
+                start_time=scheduling_result["start_time"],
+                state=self.state,  # NEU: state übergeben
             )
-
-            self.event_queue.push(event)
+            
+            # NEU: Prüfen ob Pfad reserviert werden konnte
+            if path_events is None:
+                # Reservierung fehlgeschlagen - Request bleibt pending
+                print(
+                    f"[BLOCKED] Cannot reserve path for robot {robot.robot_id}, "
+                    f"request {request.request_id} stays pending"
+                )
+                robot.clear_task()
+                self.active_queue.pending.appendleft(request)
+                continue
+            
+            for path_event in path_events:
+                self.event_queue.push(path_event)

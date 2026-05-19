@@ -23,7 +23,10 @@ from state.storage_grid import StorageGrid
 from strategies.top_access_strategy import TopAccessStrategy
 from strategies.relocation_selection import RelocationSelection
 from events.event_types import EventType
-
+from state.pickstation import Pickstation
+from traffic.reservation_table import ReservationTable
+from traffic.traffic_manager import TrafficManager
+from traffic.highway_rules import HighwayRules
 
 class SimulationEngine:
     def __init__(self, config):
@@ -37,17 +40,42 @@ class SimulationEngine:
 
         self._initialize_state()
         self._initialize_simulation_components()
-
+    
     def _initialize_state(self):
         """
-        Erstellt Grid, Bins, Roboter, Requests und initialisiert das Lager
+        Erstellt Grid, Bins, Roboter, Requests, Pickstations und initialisiert das Lager
         gemäß der gewählten Strategie.
         """
         grid = StorageGrid(self.config.grid_width, self.config.grid_depth)
         bins = self._create_bins(self.config.bin_num)
         robots = self._create_robots(self.config.num_robots)
+        pickstations = self._create_pickstations()
         future_request_queue = self._create_future_request_queue()
         event_queue = EventQueue()
+        
+        # ReservationTable erstellen
+        reservation_table = ReservationTable(
+            grid_width=self.config.grid_width,
+            grid_depth=self.config.grid_depth,
+            time_horizon=self.config.simulation_time,
+        )
+        
+        # NEU: Highway-Regeln erstellen (falls aktiviert)
+        highway_rules = None
+        if self.config.enable_highway_system:
+            highway_rules = HighwayRules(
+                grid_width=self.config.grid_width,
+                grid_depth=self.config.grid_depth,
+                pattern=self.config.highway_pattern,
+            )
+            highway_rules.wrong_direction_penalty = self.config.highway_wrong_direction_penalty
+        
+        # TrafficManager mit Highway-Regeln erstellen
+        traffic_manager = TrafficManager(
+            grid=grid,
+            reservation_table=reservation_table,
+            highway_rules=highway_rules
+        )
 
         self.hot_bin_ids = self._determine_hot_bin_ids()
 
@@ -66,6 +94,9 @@ class SimulationEngine:
             robots=robots,
             future_request_queue=future_request_queue,
             event_queue=event_queue,
+            pickstations=pickstations,
+            reservation_table=reservation_table,
+            traffic_manager=traffic_manager
         )
         self.state.config = self.config
         self.state.mark_initialized()
@@ -83,8 +114,9 @@ class SimulationEngine:
 
         self.event_builder = EventBuilder(
             cost_model=self.cost_model,
+            config=self.config,  # NEU: Config übergeben
         )
-
+        
         self.request_handler = RequestHandler(
             state=self.state,
             event_builder=self.event_builder,
@@ -124,12 +156,6 @@ class SimulationEngine:
     def step(self):
         """
         Verarbeitet genau ein Simulationsevent und gibt dieses Event zurück.
-
-        Diese Methode ist für interaktive Visualisierungen gedacht:
-        - Button-Klick -> step()
-        - Visualisierung entscheidet, ob nach diesem Event neu gezeichnet wird
-
-        Gibt None zurück, wenn die Simulation beendet ist.
         """
         if not self._is_started:
             self._validate_initial_state()
@@ -146,6 +172,29 @@ class SimulationEngine:
 
                 self.state.advance_time()
                 self.request_handler.add_ready_requests_to_event_queue()
+                
+                # Periodisches Cleanup der ReservationTable (alle 10 ZE)
+                if self.state.t % 10 == 0:
+                    self.state.reservation_table.cleanup_before(self.state.t)
+                    
+                    # NEU: Periodisches Deadlock-Check (alle 10 ZE)
+                    victim_id = self.state.traffic_manager.check_and_resolve_deadlock(
+                        robots=self.state.robots,
+                        scheduler=self.scheduler,
+                        current_time=self.state.t,
+                    )
+                    
+                    if victim_id is not None:
+                        # Roboter neu planen lassen
+                        for robot in self.state.robots:
+                            if robot.robot_id == victim_id:
+                                self.state.traffic_manager.release_robot_reservations(robot)
+                                # Task in Warteschlange
+                                if robot.current_task is not None:
+                                    self.active_queue.add_waiting_task(robot.current_task)
+                                    robot.clear_task()
+                                break
+                
                 continue
 
             next_event = self.state.event_queue.peek()
@@ -157,10 +206,25 @@ class SimulationEngine:
                 )
 
             if next_event.time > self.state.t:
-                while self.state.t < next_event.time:
+                # ZEIT VORWÄRTS: aber nicht stumpf bis next_event.time,
+                # sondern so lange, bis ein Event mit time <= state.t existiert.
+                target_time = next_event.time
+
+                while self.state.t < target_time:
                     self.state.advance_time()
                     self.request_handler.add_ready_requests_to_event_queue()
+                    
+                    # NEU: Auch hier Cleanup, falls Zeit vorwärts springt
+                    if self.state.t % 10 == 0:
+                        self.state.reservation_table.cleanup_before(self.state.t)
 
+                    # Nach neuen Arrivals kann jetzt ein früheres Event fällig sein
+                    current_next = self.state.event_queue.peek()
+                    if current_next is not None and current_next.time <= self.state.t:
+                        # Wir haben jetzt ein Event, das "dran" ist
+                        break
+
+                # Zurück zum Schleifenanfang: next_event neu bestimmen
                 continue
 
             event = self.event_handler.get_next_event()
@@ -328,3 +392,41 @@ class SimulationEngine:
 
     def is_ready(self):
         return self.state is not None and self.state.is_initialized()
+
+    def _create_pickstations(self):
+        """
+        Erstellt alle Pickstations basierend auf Config.
+        
+        Platzierung:
+        - Pickstations werden am linken Rand außerhalb des Grids platziert
+        - Position: (-1, y) wobei y gleichmäßig verteilt wird
+        
+        Returns:
+            list[Pickstation]
+        """
+        pickstations = []
+        
+        num_stations = self.config.num_pickstations
+        capacity = self.config.pickstation_capacity
+        grid_depth = self.config.grid_depth
+        
+        for i in range(num_stations):
+            station_id = f"PS_{i}"
+            
+            # Gleichmäßige Verteilung entlang der linken Seite
+            if num_stations == 1:
+                y_position = grid_depth // 2
+            else:
+                y_position = int(i * (grid_depth - 1) / (num_stations - 1))
+            
+            position = (-1, y_position)
+            
+            pickstation = Pickstation(
+                station_id=station_id,
+                position=position,
+                capacity=capacity,
+            )
+            
+            pickstations.append(pickstation)
+        
+        return pickstations

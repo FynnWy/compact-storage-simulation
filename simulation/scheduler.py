@@ -2,6 +2,12 @@ from simulation.robot_task import RobotTask
 
 
 class Scheduler:
+    # NEU: Prioritätsdefinitionen
+    PRIORITY_PICKSTATION_DELIVERY = 1  # Höchste: Bin zur Pickstation bringen
+    PRIORITY_DIGGING = 2               # Mittel: Blocker räumen
+    PRIORITY_RETURN_STORAGE = 3        # Niedrig: Zurücklagerung
+    PRIORITY_IDLE = 4                  # Niedrigste: Idle
+    
     def __init__(self, active_queue, strategy, scheduler_strategy="FIFO"):
         self.active_queue = active_queue
         self.strategy = strategy
@@ -50,13 +56,24 @@ class Scheduler:
 
         action = self.strategy.next_action(state, task)
 
+        # NEU: Prüfen ob Bewegung erforderlich ist
+        # Dies wird im EventHandler genauer behandelt, hier nur Metadaten sammeln
         return {
             "request": request,
             "robot": robot,
             "task": task,
             "action": action,
             "start_time": current_time,
+            "requires_movement": self._action_requires_movement(action),
         }
+    
+    def _action_requires_movement(self, action):
+        """Prüft ob Aktion Roboter-Bewegung erfordert."""
+        if action is None:
+            return False
+        
+        action_type = action.get("type")
+        return action_type in ("relocate", "remove_target", "return")
 
     def _try_schedule_waiting_task(self, state, robot, current_time):
         if not self.active_queue.has_waiting_tasks():
@@ -206,6 +223,29 @@ class Scheduler:
 
         return None
 
+    def _get_task_priority(self, task):
+        """
+        Bestimmt Priorität eines Tasks für Queue-Scheduling.
+        
+        Wird verwendet für:
+        - Pickstation-Queue (wenn PRIORITY-Strategie aktiv)
+        - Deadlock-Resolution (später in Phase 5)
+        
+        Returns:
+            int: Prioritätswert (niedriger = höhere Priorität)
+        """
+        from simulation.robot_task import RobotTask
+        
+        if task.phase == RobotTask.PHASE_RETRIEVE_TARGET:
+            if task.target_removed:
+                return self.PRIORITY_PICKSTATION_DELIVERY
+            return self.PRIORITY_DIGGING
+        
+        if task.phase in (RobotTask.PHASE_RESTORE_BLOCKERS, RobotTask.PHASE_RETURN_TARGET):
+            return self.PRIORITY_RETURN_STORAGE
+        
+        return self.PRIORITY_IDLE
+    
     def _get_stack_for_bin(self, state, bin_obj):
         stack_id = bin_obj.get_stack()
         if stack_id is None:

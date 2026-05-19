@@ -335,17 +335,43 @@ class TopAccessStrategy(BaseStrategy):
             if stack.stack_id not in simulated_buffers:
                 continue
 
-                simulated_height = len(simulated_buffers[stack.stack_id])
+            simulated_height = len(simulated_buffers[stack.stack_id])
 
-                if max_stack_height is not None and simulated_height >= max_stack_height:
-                    continue
+            if max_stack_height is not None and simulated_height >= max_stack_height:
+                continue
 
-                candidate_stacks.append(stack)
+            candidate_stacks.append(stack)
 
-            if not candidate_stacks:
-                raise RuntimeError("No buffer stack with free capacity available")
+        if not candidate_stacks:
+            raise RuntimeError("No buffer stack with free capacity available")
 
-            return min(
-                candidate_stacks,
-                key=lambda stack: len(simulated_buffers[stack.stack_id]),
-            )
+        return min(
+            candidate_stacks,
+            key=lambda stack: len(simulated_buffers[stack.stack_id]),
+        )
+
+    def _get_max_stack_height(self, state):
+        """
+        Sucht defensiv die maximale Stapelhöhe.
+
+        Unterstützte Varianten:
+        - state.max_stack_height
+        - state.config.max_stack_height
+        - state.config.stack_height
+        - state.config.stack_capacity
+
+        Gibt None zurück, wenn keine Begrenzung gefunden wird.
+        """
+        # Direkt am State
+        if hasattr(state, "max_stack_height"):
+            return state.max_stack_height
+
+        config = getattr(state, "config", None)
+        if config is None:
+            return None
+
+        for attr_name in ("max_stack_height", "stack_height", "stack_capacity"):
+            if hasattr(config, attr_name):
+                return getattr(config, attr_name)
+
+        return None

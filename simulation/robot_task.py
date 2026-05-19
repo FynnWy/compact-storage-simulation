@@ -18,6 +18,9 @@ class RobotTask:
         self.target_at_pickstation = False
         self.pickstation_completed = False
         self.target_returned = False
+        
+        # NEU: Referenz zur zugewiesenen Pickstation
+        self.assigned_pickstation = None
 
         # LIFO: zuletzt ausgelagerte Bin wird zuerst zurückgelegt.
         self.temp_storage = []

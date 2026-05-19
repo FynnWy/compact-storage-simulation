@@ -32,6 +32,11 @@ class ActionCostModel:
         raise ValueError(f"Unknown action type for duration calculation: {action_type}")
 
     def pickstation_service_duration(self):
+        """
+        Gibt Basis-Servicezeit für EINE Bin an der Pickstation zurück.
+        
+        Bei Batching wird dieser Wert mit der Batch-Größe multipliziert.
+        """
         minimum = self.config.pickstation_service_time_min
         maximum = self.config.pickstation_service_time_max
 
@@ -161,7 +166,92 @@ class ActionCostModel:
         return self.config.drop_cost
 
     def _pickstation_position(self):
+        """
+        Gibt Pickstation-Position zurück.
+        
+        Neu: Nutzt erste verfügbare Pickstation aus State, falls vorhanden.
+        Fallback: Config-Position (Backward-Compatibility).
+        """
+        # Versuche Pickstation aus State zu holen
+        state = getattr(self, '_cached_state', None)
+        if state is not None and hasattr(state, 'pickstations') and state.pickstations:
+            # Nutze erste Pickstation als Default
+            return state.pickstations[0].position
+        
+        # Fallback auf Config
         return self.config.pickstation_position
+    
+    def calculate_path(self, from_position, to_position, robot=None, state=None, current_time=0):
+        """
+        Berechnet Pfad zwischen zwei Positionen.
+        
+        NEU: Nutzt TrafficManager falls vorhanden, sonst einfacher Manhattan-Pfad.
+        
+        Args:
+            from_position: (x, y) Startposition
+            to_position: (x, y) Zielposition
+            robot: Optional - Robot-Instanz (für TrafficManager)
+            state: Optional - State-Instanz (für TrafficManager)
+            current_time: Optional - Aktueller Zeitpunkt
+        
+        Returns:
+            list[(x, y)]: Liste von Wegpunkten (ohne Start)
+        """
+        if from_position is None or to_position is None:
+            return []
+        
+        if from_position == to_position:
+            return []
+        
+        # NEU: Nutze TrafficManager falls vorhanden
+        if (state is not None and 
+            hasattr(state, 'traffic_manager') and 
+            state.traffic_manager is not None and
+            robot is not None):
+            
+            path = state.traffic_manager.request_path(
+                robot=robot,
+                target=to_position,
+                current_time=current_time,
+            )
+            
+            if path is not None:
+                return path
+            
+            # Fallback auf einfachen Pfad falls TrafficManager fehlschlägt
+            print(f"[WARNING] TrafficManager failed for robot {robot.robot_id}, using simple path")
+        
+        # Fallback: Einfacher Manhattan-Pfad
+        path = [from_position]
+        current_x, current_y = from_position
+        target_x, target_y = to_position
+        
+        # Erst horizontal bewegen
+        while current_x != target_x:
+            if current_x < target_x:
+                current_x += 1
+            else:
+                current_x -= 1
+            path.append((current_x, current_y))
+        
+        # Dann vertikal bewegen
+        while current_y != target_y:
+            if current_y < target_y:
+                current_y += 1
+            else:
+                current_y -= 1
+            path.append((current_x, current_y))
+        
+        # Startposition nicht im Pfad
+        return path[1:]
+
+        return (
+                self._travel_from_robot_to(robot, from_position)
+                + self._arm_cost_for_source_stack(action, state)
+                + self._grip_cost()
+                + self._travel_between(from_position, pickstation_position)
+                + self._drop_cost()
+        )
 
     def _get_stack_by_id(self, state, stack_id):
         if stack_id is None:

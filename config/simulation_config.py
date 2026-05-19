@@ -55,15 +55,54 @@ class SimulationConfig:
         self.drop_cost = 1
 
         """
-        Pickstation-Servicezeit.
-        Eine Target-Bin verweilt nach Ankunft an der Pickstation
-        für eine zufällige Dauer in diesem Intervall.
+        Pickstation-Konfiguration.
+        
+        num_pickstations:
+            Anzahl der Pickstations im System.
+            Jede Pickstation wird automatisch am linken Rand des Grids platziert.
+        
+        pickstation_capacity:
+            Wie viele Bins gleichzeitig an einer Pickstation bearbeitet werden können.
+            Typischerweise 1 (eine Bin pro Station).
+        
+        pickstation_queue_strategy:
+            "FCFS" = First-Come-First-Served (Standard)
+            "PRIORITY" = Tasks mit höherer Priorität werden bevorzugt
+        
+        pickstation_service_time_min/max:
+            Bearbeitungszeit-Intervall an der Pickstation.
         """
+        self.num_pickstations = 1
+        self.pickstation_capacity = 1
+        self.pickstation_queue_strategy = "FCFS"  # "FCFS" oder "PRIORITY"
+        
         self.pickstation_service_time_min = 4
         self.pickstation_service_time_max = 6
 
-        """
-        Vereinfachte Pickstation-Position.
-        Später kann das durch echte Pickstation-Objekte ersetzt werden.
-        """
+        # DEPRECATED: Diese wird durch Pickstation-Objekte ersetzt
+        # Bleibt vorerst für Backward-Compatibility
         self.pickstation_position = (-1, 0)
+
+
+        """
+        Highway-System (optional).
+
+        enable_highway_system:
+            Aktiviert/Deaktiviert das Highway-System.
+            Default: False (deaktiviert)
+
+        highway_pattern:
+            Pattern für bevorzugte Fahrtrichtungen.
+            Optionen:
+            - "ring": Ringförmiges Einbahnstraßensystem
+            - "rows": Alternierende horizontale Reihen
+            - "lanes": Vertikale Bahnen
+            - "none": Keine Beschränkungen
+
+        highway_wrong_direction_penalty:
+            Strafkosten für Fahrt gegen bevorzugte Richtung.
+            Höhere Werte = stärkere Bevorzugung der Highway-Richtungen.
+        """
+        self.enable_highway_system = False
+        self.highway_pattern = "ring"  # "ring", "rows", "lanes", "none"
+        self.highway_wrong_direction_penalty = 5

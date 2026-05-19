@@ -3,10 +3,11 @@ from events.event_types import EventType
 
 
 class EventBuilder:
-    def __init__(self, cost_model=None, delay_time=1, max_retries=100):
+    def __init__(self, cost_model=None, delay_time=1, max_retries=100, config=None):
         self.cost_model = cost_model
         self.delay_time = delay_time
         self.max_retries = max_retries
+        self.config = config
 
     def build_arrival_event(self, request):
         """
@@ -74,6 +75,98 @@ class EventBuilder:
             priority=self._resolve_priority(EventType.PICKSTATION_COMPLETE),
         )
 
+    def build_robot_move_event(self, robot, time):
+        """
+        Baut ein ROBOT_MOVE Event für einen einzelnen Bewegungsschritt.
+        
+        Args:
+            robot: Robot-Instanz
+            time: Zeitpunkt, zu dem die Bewegung abgeschlossen ist
+        
+        Returns:
+            Event
+        """
+        return Event(
+            time=time,
+            event_type=EventType.ROBOT_MOVE,
+            payload={
+                "robot": robot,
+            },
+            priority=self._resolve_priority(EventType.ROBOT_MOVE),
+        )
+    
+    def build_path_events(self, robot, path, target_action, request, start_time, state=None):
+        """
+        Baut eine Sequenz von ROBOT_MOVE Events für einen kompletten Pfad.
+        
+        NEU: Reserviert den Pfad in der ReservationTable.
+        
+        Args:
+            robot: Robot-Instanz
+            path: Liste von (x, y) Wegpunkten
+            target_action: Aktion, die nach Erreichen des Ziels ausgeführt wird
+            request: Request-Objekt
+            start_time: Startzeitpunkt
+            state: State-Objekt (für ReservationTable)
+        
+        Returns:
+            list[Event]: Sequenz von ROBOT_MOVE + ROBOT_ACTION Events
+            oder None bei Reservierungskonflikt
+        """
+        if not path:
+            return []
+        
+        # NEU: Pfad reservieren
+        if state is not None and state.reservation_table is not None:
+            success, conflict = state.reservation_table.reserve_path(
+                robot_id=robot.robot_id,
+                path=path,
+                start_time=start_time,
+            )
+            
+            if not success:
+                # Reservierung fehlgeschlagen
+                print(
+                    f"[WARNING] Cannot reserve path for robot {robot.robot_id}: "
+                    f"conflict at {conflict.get('position')} at time {conflict.get('time')} "
+                    f"(blocked by robot {conflict.get('blocking_robot')})"
+                )
+                return None
+        
+        events = []
+        
+        # Pfad im Roboter speichern
+        robot.set_path(path, target_action)
+        
+        # ROBOT_MOVE Event für jeden Schritt
+        current_time = start_time
+        for i in range(len(path)):
+            current_time += self.config.move_cost_per_grid_step if hasattr(self, 'config') and self.config else 1
+            
+            move_event = self.build_robot_move_event(
+                robot=robot,
+                time=current_time,
+            )
+            events.append(move_event)
+        
+        # Nach dem letzten Move: ROBOT_ACTION für die eigentliche Aktion
+        if target_action is not None:
+            action_duration = self.calculate_action_duration(
+                action=target_action,
+                state=state,
+                robot=robot,
+            )
+            
+            action_event = self.build_event_from_action(
+                action=target_action,
+                request=request,
+                robot=robot,
+                time=current_time + action_duration,
+            )
+            events.append(action_event)
+        
+        return events
+
     def calculate_action_duration(self, action, state, robot):
         if self.cost_model is None:
             return 1
@@ -91,7 +184,8 @@ class EventBuilder:
         if self.cost_model is None:
             return max(1, batch_count)
 
-        return self.cost_model.pickstation_service_duration(batch_count=batch_count)
+        base_duration = self.cost_model.pickstation_service_duration()
+        return base_duration * batch_count
 
     def get_final_robot_position(self, action):
         if self.cost_model is None:
@@ -158,5 +252,9 @@ class EventBuilder:
 
         if event_type == EventType.ROBOT_ACTION:
             return 3
+        
+        # NEU: ROBOT_MOVE hat niedrigere Priorität als Actions
+        if event_type == EventType.ROBOT_MOVE:
+            return 4
 
         return 99
