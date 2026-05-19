@@ -201,7 +201,7 @@ class EventHandler:
                 to_stack=action.get("to_stack"),
             )
             # Blocker-Ownership freigeben, jetzt darf die Bin wieder angefragt werden
-            self.active_queue.release_blocker_ownership(bin_id)
+            self.active_queue.release_blocker_ownership(action.get("bin_id"))
             return
 
         if return_kind == "target":
@@ -262,10 +262,13 @@ class EventHandler:
         task.mark_pickstation_completed()
         self.active_queue.mark_pickstation_task_completed(task)
 
-        # Metriken für alle gebatchten Requests erfassen
-        completion_time = self.state.t
-        for batched_request in task.batched_requests:
-            self.metrics.record_full_completion(completion_time, batched_request)
+        # WICHTIG:
+        # Hier KEINE vollständige Fertigstellung mehr zählen.
+        # Die vollständige Completion erfolgt erst, wenn der Task
+        # alle Bins zurückgelagert hat und konsistent abgeschlossen ist
+        # (siehe _handle_request_complete).
+        # Metrik 1 (Arrival → Pickstation) wurde bereits bei remove_target
+        # bzw. beim Batching erfasst.
 
     def _schedule_next_action_for_same_task(self, event):
         robot = event.payload.get("robot")
@@ -330,12 +333,23 @@ class EventHandler:
                 f"robot task belongs to request {task.request_id}"
             )
 
+        # Sicherstellen, dass der Task wirklich vollständig und konsistent ist:
+        # - Target-Bin zurückgelegt
+        # - alle Blocker-Bins zurückgelegt
+        # - Lagerzustand konsistent
         task.require_consistently_completed(self.state)
 
         completion_time = self.state.t
 
-        # Hauptrequest abschließen
+        # Hauptrequest abschließen (Metrik 3)
         self.metrics.record_full_completion(completion_time, task.request)
+
+        # Gebatchte Requests erhalten denselben Vollständigkeitszeitpunkt.
+        # Sie wurden alle an derselben Bin bedient, und die physische
+        # Rücklagerung wird vom gemeinsamen Task getragen.
+        for batched_request in task.batched_requests:
+            self.metrics.record_full_completion(completion_time, batched_request)
+
         self.active_queue.mark_completed(request)
         robot.clear_task()
 

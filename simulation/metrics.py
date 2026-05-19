@@ -15,7 +15,7 @@ class Metrics:
         # Neue Metriken (Arbeitspaket 17/18)
         # Metrik 1: Arrival → Pickstation-Ankunft
         self._arrival_to_pickstation = []
-        # Metrik 2: Arrival → vollständige Fertigstellung (Hauptmetrik)
+        # Metrik 3 (Hauptmetrik): Arrival → vollständige Fertigstellung
         self._arrival_to_full_completion = []
 
     def record_target_bin_at_pickstation(self, state, action, request=None):
@@ -78,7 +78,7 @@ class Metrics:
 
     def record_full_completion(self, completion_time, request):
         """
-        Metrik 2 (Hauptmetrik): Arrival → vollständige Fertigstellung.
+        Metrik 3 (Hauptmetrik): Arrival → vollständige Fertigstellung.
 
         Vollständig = Target-Bin zurückgelagert, Blocker zurück, Lager konsistent.
         Wird separat für jeden Request (inkl. gebatchte) aufgerufen.
