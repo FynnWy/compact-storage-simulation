@@ -27,34 +27,26 @@ class EventHandler:
 
     def get_next_event(self):
         """
-        Holt das nächste Event aus der EventQueue, synchronisiert die Simulationszeit
-        und verarbeitet danach das Event.
+        Holt das nächste Event aus der EventQueue und verarbeitet danach das Event.
+
+        Die Zeitsynchronisation passiert zentral in der SimulationEngine.
         """
         if self.event_queue.is_empty():
             return None
 
         event = self.event_queue.pop()
-
-        self._advance_time_until(event.time)
-
         self.handle(event)
         return event
 
     def _advance_time_until(self, target_time):
         """
-        Erhöht die Simulationszeit schrittweise bis zur Zeit des nächsten Events.
-        Bei jeder neuen Zeiteinheit werden neu angekommene Requests in die
-        EventQueue gelegt.
+        Deprecated:
+        Zeitsynchronisation passiert zentral in der SimulationEngine.
         """
-        if target_time < self.state.t:
-            raise ValueError(
-                f"Event time {target_time} is smaller than current simulation time {self.state.t}."
-            )
-
-        while self.state.t < target_time:
-            self.state.advance_time()
-            self.request_handler.add_ready_requests_to_event_queue()
-
+        raise RuntimeError(
+            "EventHandler._advance_time_until should not be used. "
+            "Time advancement is handled by SimulationEngine."
+        )
     def handle(self, event):
         """
         Liest den Event-Typ und führt die dazugehörige Logik aus.
@@ -62,7 +54,6 @@ class EventHandler:
         if event.event_type == EventType.ARRIVAL:
             request = event.payload
             self.active_queue.add(request)
-            self._try_schedule_and_enqueue_plan(event.time)
 
         elif event.event_type == EventType.ROBOT_ACTION:
             self._handle_robot_action(event)
@@ -75,8 +66,25 @@ class EventHandler:
 
     def _handle_robot_action(self, event):
         action = self.event_builder.get_action_from_event(event)
+        can_execute, reason = self.constraint_manager.can_execute_with_reason(
+            action,
+            self.state,
+        )
 
-        if not self.constraint_manager.can_execute(action, self.state):
+        if not can_execute:
+            request = event.payload.get("request")
+            robot = event.payload.get("robot")
+
+            print(
+                "[BLOCKED] "
+                f"t={self.state.t}, "
+                f"retry={event.retry_count}, "
+                f"robot={robot.robot_id if robot is not None else None}, "
+                f"request={request.request_id if request is not None else None}, "
+                f"action={action}, "
+                f"reason={reason}"
+            )
+
             delayed_event = self.event_builder.delay_event(
                 event=event,
                 current_time=self.state.t,
@@ -98,21 +106,23 @@ class EventHandler:
         self.active_queue.mark_completed(request)
         robot.clear_task()
 
-        if self.active_queue.has_unassigned_requests():
-            self._try_schedule_and_enqueue_plan(event.time)
+    def schedule_available_robots(self, current_time):
+        """
+        Scheduled so viele Requests, wie freie Roboter und pending Requests vorhanden sind.
+        Wird von der SimulationEngine nach Completion-/Arrival-Phase aufgerufen.
+        """
+        while self.active_queue.has_unassigned_requests():
+            scheduling_result = self.scheduler.try_schedule(self.state, current_time)
 
-    def _try_schedule_and_enqueue_plan(self, current_time):
-        scheduling_result = self.scheduler.try_schedule(self.state, current_time)
+            if scheduling_result is None:
+                return
 
-        if scheduling_result is None:
-            return
+            events = self.event_builder.build_events_from_plan(
+                plan=scheduling_result["plan"],
+                request=scheduling_result["request"],
+                robot=scheduling_result["robot"],
+                start_time=scheduling_result["start_time"],
+            )
 
-        events = self.event_builder.build_events_from_plan(
-            plan=scheduling_result["plan"],
-            request=scheduling_result["request"],
-            robot=scheduling_result["robot"],
-            start_time=scheduling_result["start_time"],
-        )
-
-        for event in events:
-            self.event_queue.push(event)
+            for event in events:
+                self.event_queue.push(event)

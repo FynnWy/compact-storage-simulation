@@ -4,13 +4,28 @@ class SimulationConfig:
     def __init__(self):
         self.grid_width = 5
         self.grid_depth = 5
-        # Brauchen wir nicht auch eine maximale Grid Höhe?
-        # Müsste mindestens genug Umlagerfläche geben um einen ganzen Stack umzulagern
-        # self.grid_height = 5 # (+1 = 6 Level bei Side Access mit hochheben)
+        self.max_stack_height = 6
+
         self.bin_num = 100
         self.num_robots = 3
         self.simulation_time = 100
         self.random_seed = 42
+
+        """
+        Visualisierung:
+        False = Simulation läuft komplett ohne GUI durch.
+        True = Interaktive Visualisierung mit Next-Event-Button.
+        """
+        self.enable_visualization = True
+        self.visualization_type = "web"  # "matplotlib" oder "web"
+
+        """
+        Initialisierung:
+        random_distribution = alle Bins zufällig über alle Stack-Positionen verteilen.
+        Hot Items werden hier NICHT speziell platziert.
+        Hot Items entstehen nur über bin_request_prob_strategy.
+        """
+        self.init_strategy = "random_distribution"
 
         """
         Scheduling:
@@ -32,8 +47,4 @@ class SimulationConfig:
             "Zipf" = Hot Items, realistischer - manche Kisten werden häufig angefragt
         self.zipf_parameter: Typische Werte: 0.8 (moderat) bis 1.5 (extrem)
         """
-        self.request_utilization = 2.0  # Average requests per time unit
-        self.request_arrival_strategy = "Poisson"
-        self.bin_request_prob_strategy = "Uniform"
-        self.zipf_parameter = 0.9
 
