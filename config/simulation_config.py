@@ -106,3 +106,33 @@ class SimulationConfig:
         self.enable_highway_system = False
         self.highway_pattern = "ring"  # "ring", "rows", "lanes", "none"
         self.highway_wrong_direction_penalty = 5
+
+        # ------------------------------------------------------------
+        # Strategie-Konfiguration (WP0)
+        # ------------------------------------------------------------
+
+        # Reordering-Strategie für Blocking-Bins
+        # "LOFI"       = Last-Out-First-In (Baseline)
+        # "ABC"        = Klassenbasiertes Reordering (A oben)
+        # "POPULARITY" = tatsächliche Zugriffshäufigkeit
+        self.reordering_strategy = "LOFI"
+
+        # Placement-Strategie für Target-Bin-Rücklagerung
+        # "ORIGINAL"   = zurück auf Original-Stack (aktueller Zustand)
+        # "RANDOM"     = zufälliger Stack mit Kapazität (CIRS-Baseline)
+        # "ABC"        = Zonen nach ABC-Klasse
+        # "POPULARITY" = Distanz + erwartete Grabtiefe gewichtet
+        self.placement_strategy = "ORIGINAL"
+
+        # ABC-Klassifizierung basierend auf Zipf-Verteilung (über bin_id)
+        # Beispiel bei 100 Bins:
+        #   - Top 20% (0-19): A
+        #   - Nächste 30% (20-49): B
+        #   - Rest (50-99): C
+        self.abc_threshold_a = 0.2  # Top 20% = A-Items
+        self.abc_threshold_b = 0.5  # Nächste 30% = B-Items (kumulativ 50%)
+
+        # Gewichtung für Popularity-Placement
+        # Wird später genutzt, um Distanz vs. Tiefe zu balancieren.
+        self.popularity_distance_weight = 0.5
+        self.popularity_depth_weight = 0.5

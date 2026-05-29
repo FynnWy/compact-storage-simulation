@@ -86,6 +86,9 @@ class SimulationEngine:
             hot_bin_ids=self.hot_bin_ids,
             random_seed=self.config.random_seed,
             max_stack_height=self.config.max_stack_height,
+            # NEU: ABC-Thresholds aus Config an Initialisierung übergeben
+            abc_threshold_a=self.config.abc_threshold_a,
+            abc_threshold_b=self.config.abc_threshold_b,
         )
 
         self.state = State(
@@ -131,8 +134,14 @@ class SimulationEngine:
             active_queue=self.active_queue,
         )
 
+        # NEU: Strategie-Konfiguration aus SimulationConfig auslesen
+        reordering_strategy = getattr(self.config, "reordering_strategy", "LOFI")
+        placement_strategy = getattr(self.config, "placement_strategy", "ORIGINAL")
+
         strategy = TopAccessStrategy(
             relocation_selector=relocation_selector,
+            reordering_strategy=reordering_strategy,
+            placement_strategy=placement_strategy,
         )
 
         self.scheduler = Scheduler(

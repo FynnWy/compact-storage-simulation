@@ -5,7 +5,7 @@ from strategies.relocation_selection import RelocationSelection
 
 
 class TopAccessStrategy(BaseStrategy):
-    def __init__(self, relocation_selector=None):
+    def __init__(self, relocation_selector=None, reordering_strategy="LOFI", placement_strategy="ORIGINAL"):
         """
         Top-Access-Strategie mit Next-Step-Planning.
 
@@ -13,9 +13,18 @@ class TopAccessStrategy(BaseStrategy):
             relocation_selector:
                 Optionale externe Instanz von RelocationSelection.
                 Falls None, wird eine Standardinstanz verwendet.
+            reordering_strategy:
+                Name der Blocking-Bin-Reordering-Strategie ("LOFI", "ABC", "POPULARITY").
+                WP0: nur Konfiguration, die Logik folgt in späteren WPs.
+            placement_strategy:
+                Name der Target-Bin-Placement-Strategie
+                ("ORIGINAL", "RANDOM", "ABC", "POPULARITY").
+                WP0: nur Konfiguration, die Logik folgt in späteren WPs.
         """
         super().__init__()
         self._relocation_selector = relocation_selector or RelocationSelection()
+        self.reordering_strategy = reordering_strategy
+        self.placement_strategy = placement_strategy
 
     def next_action(self, state, task):
         """

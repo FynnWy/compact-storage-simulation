@@ -162,6 +162,13 @@ class EventHandler:
             request = event.payload.get("request")
             self.metrics.record_target_bin_at_pickstation(self.state, action, request)
 
+            # Access-Count Tracking: Jeder erfolgreiche Retrieval zählt
+            bin_id = action.get("bin_id")
+            if bin_id is not None:
+                bin_obj = self.state.get_bin_by_id(bin_id)
+                if bin_obj is not None:
+                    bin_obj.increment_access_count()
+
         self.executor.execute(event, self.state)
 
         # in_transit zurücksetzen NACH erfolgreicher Ausführung
