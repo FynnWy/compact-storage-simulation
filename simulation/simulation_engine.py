@@ -22,6 +22,7 @@ from state.state import State
 from state.storage_grid import StorageGrid
 from strategies.top_access_strategy import TopAccessStrategy
 from strategies.relocation_selection import RelocationSelection
+from strategies.placement_target_selector import PlacementSelector
 from events.event_types import EventType
 from state.pickstation import Pickstation
 from traffic.reservation_table import ReservationTable
@@ -138,10 +139,17 @@ class SimulationEngine:
         reordering_strategy = getattr(self.config, "reordering_strategy", "LOFI")
         placement_strategy = getattr(self.config, "placement_strategy", "ORIGINAL")
 
+        # NEU: PlacementSelector für Target-Bin-Rücklagerung (CIRS / Baseline / Erweiterungen)
+        placement_selector = PlacementSelector(
+            config=self.config,
+            rng=self.rng,
+        )
+
         strategy = TopAccessStrategy(
             relocation_selector=relocation_selector,
             reordering_strategy=reordering_strategy,
             placement_strategy=placement_strategy,
+            placement_selector=placement_selector,
         )
 
         self.scheduler = Scheduler(

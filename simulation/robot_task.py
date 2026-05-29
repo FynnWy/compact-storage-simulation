@@ -22,6 +22,10 @@ class RobotTask:
         # NEU: Referenz zur zugewiesenen Pickstation
         self.assigned_pickstation = None
 
+        # NEU: Tatsächlicher Rückgabe-Stack der Target-Bin
+        # (kann vom ursprünglichen target_stack_id abweichen, z.B. bei RANDOM-Placement)
+        self.actual_return_stack_id = None
+
         # LIFO: zuletzt ausgelagerte Bin wird zuerst zurückgelegt.
         self.temp_storage = []
 
@@ -250,6 +254,7 @@ class RobotTask:
             f"target_at_pickstation={self.target_at_pickstation}, "
             f"pickstation_completed={self.pickstation_completed}, "
             f"target_returned={self.target_returned}, "
+            f"actual_return_stack_id={self.actual_return_stack_id}, "
             f"temp_storage={len(self.temp_storage)}, "
             f"batched_requests={len(self.batched_requests)}"
             f")"

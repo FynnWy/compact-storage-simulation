@@ -1,11 +1,18 @@
 from strategies.base_strategy import BaseStrategy
-from simulation.robot_task import RobotTask
 from strategies.relocation_selection import RelocationSelection
+from strategies.placement_target_selector import PlacementSelector
+from simulation.robot_task import RobotTask
 
 
 
 class TopAccessStrategy(BaseStrategy):
-    def __init__(self, relocation_selector=None, reordering_strategy="LOFI", placement_strategy="ORIGINAL"):
+    def __init__(
+        self,
+        relocation_selector=None,
+        reordering_strategy="LOFI",
+        placement_strategy="ORIGINAL",
+        placement_selector=None,
+    ):
         """
         Top-Access-Strategie mit Next-Step-Planning.
 
@@ -20,11 +27,20 @@ class TopAccessStrategy(BaseStrategy):
                 Name der Target-Bin-Placement-Strategie
                 ("ORIGINAL", "RANDOM", "ABC", "POPULARITY").
                 WP0: nur Konfiguration, die Logik folgt in späteren WPs.
+            placement_selector:
+                Optionale Instanz von PlacementSelector.
+                Falls None, wird eine Default-Instanz ohne Config erstellt
+                (sollte in der Praxis aber immer über SimulationEngine injiziert werden).
         """
         super().__init__()
         self._relocation_selector = relocation_selector or RelocationSelection()
         self.reordering_strategy = reordering_strategy
         self.placement_strategy = placement_strategy
+        self._placement_selector = placement_selector
+        # Fallback, falls jemand TopAccessStrategy direkt ohne Selector konstruiert.
+        # In der regulären Simulation wird eine korrekt konfigurierte Instanz injiziert.
+        if self._placement_selector is None:
+            self._placement_selector = PlacementSelector(config=None)
 
     def next_action(self, state, task):
         """
@@ -145,7 +161,15 @@ class TopAccessStrategy(BaseStrategy):
 
     def _next_return_target_action(self, state, task):
         """
-        R-D3: Prüft, ob der ursprüngliche Ziel-Stack für die Target-Bin noch zugänglich ist.
+        R-D3 (erweitert):
+        Wählt den Rückgabe-Stack für die Target-Bin gemäß placement_strategy.
+
+        - ORIGINAL:
+            Target-Bin wird auf den ursprünglichen Stack zurückgelegt
+            (sofern dieser existiert, nicht gesperrt ist und Kapazität hat).
+        - RANDOM:
+            Target-Bin wird auf einen zufälligen Stack mit freier Kapazität gelegt
+            (CIRS / AutoStore-Baseline).
         """
         if task.target_stack_id is None:
             raise RuntimeError(
@@ -153,37 +177,40 @@ class TopAccessStrategy(BaseStrategy):
                 f"task.target_stack_id is unknown"
             )
 
-        target_stack = self._get_stack_by_id(state, task.target_stack_id)
+        # Target-Bin muss an der Pickstation sein
+        bin_obj = state.get_bin_by_id(task.target_bin_id)
+        if bin_obj is None:
+            raise RuntimeError(
+                f"Cannot return target bin {task.target_bin_id}: bin not found in state"
+            )
+
+        if bin_obj.get_status() != "at_pickstation":
+            # ConstraintManager würde das auch abfangen, aber hier ist es klarer
+            raise RuntimeError(
+                f"Cannot return target bin {task.target_bin_id}: "
+                f"expected status 'at_pickstation', got '{bin_obj.get_status()}'"
+            )
+
+        # Ziel-Stack über PlacementSelector bestimmen
+        target_stack = self._placement_selector.select_return_stack(
+            state=state,
+            bin_obj=bin_obj,
+            original_stack_id=task.target_stack_id,
+        )
 
         if target_stack is None:
             raise RuntimeError(
-                f"Cannot return target bin {task.target_bin_id}: "
-                f"target stack {task.target_stack_id} not found"
+                f"PlacementSelector returned None for target bin {task.target_bin_id}"
             )
 
-        top_bin = target_stack.peek()
-        max_height = self._get_max_stack_height(state)
-
-        # Stack ist voll oder wird von einer fremden Bin belegt → freispielen
-        if top_bin is not None and top_bin.bin_id != task.target_bin_id:
-            if max_height is not None and target_stack.height() >= max_height:
-                # Oberste (fremde) Bin räumen, damit Platz entsteht
-                alt_stack = self._select_relocation_stack(
-                    state=state,
-                    exclude_stack=target_stack,
-                )
-                return {
-                    "type": "relocate",
-                    "from_stack": target_stack.stack_id,
-                    "to_stack": alt_stack.stack_id,
-                    "bin_id": top_bin.bin_id,
-                }
+        # Für Metriken/Debugging merken, wohin die Bin tatsächlich gelegt wurde
+        task.actual_return_stack_id = target_stack.stack_id
 
         return {
             "type": "return",
             "return_kind": "target",
-            "from_stack": None,
-            "to_stack": task.target_stack_id,
+            "from_stack": None,  # Rückgabe von der Pickstation
+            "to_stack": target_stack.stack_id,
             "bin_id": task.target_bin_id,
         }
 
