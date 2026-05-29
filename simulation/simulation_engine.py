@@ -22,7 +22,8 @@ from state.state import State
 from state.storage_grid import StorageGrid
 from strategies.top_access_strategy import TopAccessStrategy
 from strategies.relocation_selection import RelocationSelection
-from strategies.placement_target_selector import PlacementSelector
+from strategies.target_bin_placement_selector import PlacementSelector
+from strategies.reordering_blocking_bins_selector import ReorderingSelector
 from events.event_types import EventType
 from state.pickstation import Pickstation
 from traffic.reservation_table import ReservationTable
@@ -145,11 +146,17 @@ class SimulationEngine:
             rng=self.rng,
         )
 
+        # NEU: ReorderingSelector für Blocking-Bin-Reordering (LOFI / ABC)
+        reordering_selector = ReorderingSelector(
+            config=self.config,
+        )
+
         strategy = TopAccessStrategy(
             relocation_selector=relocation_selector,
             reordering_strategy=reordering_strategy,
             placement_strategy=placement_strategy,
             placement_selector=placement_selector,
+            reordering_selector=reordering_selector,
         )
 
         self.scheduler = Scheduler(

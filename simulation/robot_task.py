@@ -33,6 +33,9 @@ class RobotTask:
         # Jeder Eintrag ist ein Request-Objekt.
         self.batched_requests = []
 
+        # NEU: Flag, ob Blocking-Bins bereits für die Rücklagerung umsortiert wurden
+        self.blockers_reordered = False
+
     @property
     def request_id(self):
         return self.request.request_id
@@ -181,13 +184,58 @@ class RobotTask:
         self.target_returned = True
         self.phase = self.PHASE_COMPLETE
 
+    def reorder_blockers_for_return(self, state, reordering_selector):
+        """
+        Sortiert die Blocking-Bins in temp_storage für die Rücklagerung
+        mithilfe der übergebenen Reordering-Strategie.
+
+        Args:
+            state:
+                Aktueller Simulationszustand (für Bin-Lookups).
+            reordering_selector:
+                Instanz von ReorderingSelector.
+        """
+        if self.blockers_reordered:
+            return
+
+        if not self.temp_storage:
+            self.blockers_reordered = True
+            return
+
+        # Blocking-Bins in Auslagerungsreihenfolge (erste = zuerst ausgelagert = lag oben)
+        blocker_bins = []
+        for reloc in self.temp_storage:
+            bin_obj = state.get_bin_by_id(reloc["bin_id"])
+            if bin_obj is None:
+                raise RuntimeError(
+                    f"Cannot reorder blockers: bin {reloc['bin_id']} not found in state"
+                )
+            blocker_bins.append(bin_obj)
+
+        # Von Strategie sortieren lassen (Rücklagerungsreihenfolge)
+        ordered_blockers = reordering_selector.reorder_blockers(blocker_bins)
+
+        # Mapping Bin-ID -> Zielindex in der Rücklagerungsreihenfolge
+        order_index = {bin_obj.bin_id: idx for idx, bin_obj in enumerate(ordered_blockers)}
+
+        # temp_storage entsprechend der neuen Reihenfolge sortieren
+        try:
+            self.temp_storage.sort(key=lambda reloc: order_index[reloc["bin_id"]])
+        except KeyError as exc:
+            raise RuntimeError(
+                f"Cannot reorder blockers for task {self.request_id}: "
+                f"missing order index for bin {exc}"
+            ) from exc
+
+        self.blockers_reordered = True
+
     def can_complete_consistently(self, state):
         """
         Prüft die formale Abschlussinvariante eines Requests.
         """
         if self.target_stack_id is None:
             return False, "target_stack_id is unknown"
-
+        
         if not self.target_removed:
             return False, "target was not removed"
 

@@ -1,6 +1,6 @@
 from strategies.base_strategy import BaseStrategy
 from strategies.relocation_selection import RelocationSelection
-from strategies.placement_target_selector import PlacementSelector
+from strategies.target_bin_placement_selector import PlacementSelector
 from simulation.robot_task import RobotTask
 
 
@@ -12,6 +12,7 @@ class TopAccessStrategy(BaseStrategy):
         reordering_strategy="LOFI",
         placement_strategy="ORIGINAL",
         placement_selector=None,
+        reordering_selector=None,
     ):
         """
         Top-Access-Strategie mit Next-Step-Planning.
@@ -31,12 +32,15 @@ class TopAccessStrategy(BaseStrategy):
                 Optionale Instanz von PlacementSelector.
                 Falls None, wird eine Default-Instanz ohne Config erstellt
                 (sollte in der Praxis aber immer über SimulationEngine injiziert werden).
+            reordering_selector:
+                Optionale Instanz von ReorderingSelector für Blocking-Bin-Reordering.
         """
         super().__init__()
         self._relocation_selector = relocation_selector or RelocationSelection()
         self.reordering_strategy = reordering_strategy
         self.placement_strategy = placement_strategy
         self._placement_selector = placement_selector
+        self._reordering_selector = reordering_selector
         # Fallback, falls jemand TopAccessStrategy direkt ohne Selector konstruiert.
         # In der regulären Simulation wird eine korrekt konfigurierte Instanz injiziert.
         if self._placement_selector is None:
@@ -62,7 +66,6 @@ class TopAccessStrategy(BaseStrategy):
             return self._next_wait_for_pickstation_action(task)
 
         if task.phase == RobotTask.PHASE_RETURN_TARGET:
-            # BUGFIX: state muss übergeben werden, da _next_return_target_action(state, task) erwartet.
             return self._next_return_target_action(state, task)
 
         if task.phase == RobotTask.PHASE_COMPLETE:
@@ -117,6 +120,17 @@ class TopAccessStrategy(BaseStrategy):
         }
 
     def _next_restore_blockers_action(self, state, task):
+        # NEU: Vor der ersten Rücklagerung Blocker ggf. umsortieren
+        if not task.blockers_reordered and task.has_blockers_to_restore():
+            if self._reordering_selector is None:
+                # Defensive: Ohne ReorderingSelector bleibt aktuelles Verhalten (LOFI)
+                task.blockers_reordered = True
+            else:
+                task.reorder_blockers_for_return(
+                    state=state,
+                    reordering_selector=self._reordering_selector,
+                )
+
         relocation = task.peek_last_relocation()
 
         if relocation is not None:
