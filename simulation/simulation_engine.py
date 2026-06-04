@@ -12,6 +12,7 @@ from simulation.constraint_manager import ConstraintManager
 from simulation.event_builder import EventBuilder
 from simulation.event_handler import EventHandler
 from simulation.metrics import Metrics
+from metrics.distribution_metrics import DistributionMetrics
 from simulation.request_handler import RequestHandler
 from simulation.scheduler import Scheduler
 from state.bin import Bin
@@ -39,6 +40,9 @@ class SimulationEngine:
         self.hot_bin_ids = []
         self._is_started = False
         self._processed_events = 0
+
+        # WP5/RQ3: Letzter Snapshot-Zeitpunkt
+        self._last_distribution_snapshot_time = None
 
         self._initialize_state()
         self._initialize_simulation_components()
@@ -130,6 +134,18 @@ class SimulationEngine:
         self.executor = ActionExecutor()
         self.metrics = Metrics()
 
+        # WP4: ConvergenceDetector an Config anpassen (falls vorhanden)
+        if hasattr(self.config, "convergence_window_size"):
+            self.metrics.convergence_detector.window_size = self.config.convergence_window_size
+        if hasattr(self.config, "convergence_threshold"):
+            self.metrics.convergence_detector.threshold = self.config.convergence_threshold
+
+        # WP5/RQ3: DistributionMetrics für Verteilungs-Snapshots
+        self.distribution_metrics = DistributionMetrics(
+            state=self.state,
+            config=self.config,
+        )
+
         # Relocation-Selection mit Kostenmodell und ActiveQueue verdrahten
         relocation_selector = RelocationSelection(
             cost_model=self.cost_model,
@@ -187,6 +203,28 @@ class SimulationEngine:
             self._is_started = True
 
         while True:
+            # WP5/RQ3: Periodische Distribution-Snapshots & Positions-Tracking
+            snapshot_interval = getattr(self.config, "distribution_snapshot_interval", None)
+            if snapshot_interval is not None and snapshot_interval > 0:
+                if (
+                        self._last_distribution_snapshot_time is None
+                        or (self.state.t - self._last_distribution_snapshot_time) >= snapshot_interval
+                ):
+                    snapshot = self.distribution_metrics.snapshot()
+                    self.metrics.record_distribution_snapshot(snapshot)
+                    # Positionsänderungen für RQ3/RQ4 tracken
+                    self.metrics.record_position_state(self.state)
+                    self._last_distribution_snapshot_time = self.state.t
+
+            # Optionales Early-Stopping auf Basis von Konvergenz
+            if getattr(self.config, "stop_on_convergence", False):
+                if self.metrics.convergence_detector.is_converged():
+                    conv_time = self.metrics.convergence_detector.get_convergence_time()
+                    patience = getattr(self.config, "convergence_patience", 0)
+                    if conv_time is not None and self.state.t >= conv_time + patience:
+                        # Simulation vorzeitig beenden
+                        return None
+
             if self.state.t >= self.config.simulation_time:
                 return None
 

@@ -16,7 +16,7 @@ class SimulationConfig:
         False = Simulation läuft komplett ohne GUI durch.
         True = Interaktive Visualisierung mit Next-Event-Button.
         """
-        self.enable_visualization = True
+        self.enable_visualization = False
         self.visualization_type = "web"  # "matplotlib" oder "web"
 
         """
@@ -134,5 +134,51 @@ class SimulationConfig:
 
         # Gewichtung für Popularity-Placement
         # Wird später genutzt, um Distanz vs. Tiefe zu balancieren.
+        # score = alpha * normalized_distance + beta * normalized_depth
         self.popularity_distance_weight = 0.5
         self.popularity_depth_weight = 0.5
+
+        # ------------------------------------------------------------
+        # Popularity-spezifische Parameter (WP3)
+        # ------------------------------------------------------------
+
+        # Warmup-Phase: Bis zu dieser Anzahl kumulierter Retrievals
+        # wird Popularity-Placement nicht verwendet, sondern auf
+        # RANDOM-Placement zurückgefallen.
+        self.popularity_warmup_requests = 50
+
+        # Schwellen für Hot/Cold-Klassifikation auf Basis des
+        # normalisierten Popularity-Scores in [0, 1]
+        # p >= hot_threshold  -> Hot  (näher zur Pickstation, geringe Tiefe)
+        # p <= cold_threshold -> Cold (weiter weg, tiefere Stacks ok)
+        # dazwischen          -> Neutral
+        self.popularity_hot_threshold = 0.7
+        self.popularity_cold_threshold = 0.3
+
+        # ------------------------------------------------------------
+        # WP5: Steady-State / Konvergenz-Erkennung & Early-Stopping
+        # ------------------------------------------------------------
+
+        # Falls True:
+        # - Simulation kann vorzeitig beendet werden, wenn ein
+        #   Konvergenzzustand erkannt wurde und die Geduldszeit
+        #   (convergence_patience) abgelaufen ist.
+        self.stop_on_convergence = False
+
+        # Wie lange nach dem ersten Konvergenzzeitpunkt noch weiter
+        # simuliert wird (in Zeiteinheiten), bevor frühzeitig
+        # abgebrochen werden darf.
+        self.convergence_patience = 200
+
+        # Optional: Parameter für ConvergenceDetector
+        # (werden in SimulationEngine beim Erzeugen von Metrics gespiegelt)
+        self.convergence_window_size = 10
+        self.convergence_threshold = 0.05
+
+        # ------------------------------------------------------------
+        # WP5/RQ3: Distribution-Snapshots
+        # ------------------------------------------------------------
+
+        # Zeiteinheiten zwischen zwei Distribution-Snapshots.
+        # Empfehlung: 50–200, abhängig von Simulation_time.
+        self.distribution_snapshot_interval = 100

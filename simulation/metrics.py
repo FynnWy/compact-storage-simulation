@@ -1,3 +1,6 @@
+from metrics.convergence_detector import ConvergenceDetector, PositionChangeTracker
+
+
 class Metrics:
     def __init__(self):
         self.completed_requests = []
@@ -12,11 +15,128 @@ class Metrics:
         self.tardiness_by_time = {}
         self.completed_requests_by_time = {}
 
-        # Neue Metriken (Arbeitspaket 17/18)
         # Metrik 1: Arrival → Pickstation-Ankunft
         self._arrival_to_pickstation = []
         # Metrik 3 (Hauptmetrik): Arrival → vollständige Fertigstellung
         self._arrival_to_full_completion = []
+
+        # ------------------------------------------------------------------
+        # WP5: Steady-State / Konvergenz
+        # ------------------------------------------------------------------
+        # Detector für Distribution-Snapshots (Digging-Depth, Hot-Bin-Ratio, etc.)
+        self.convergence_detector = ConvergenceDetector()
+        # Tracker für Positionsänderungen der Bins
+        self.position_tracker = PositionChangeTracker()
+        # Optional: Roh-Snapshots für spätere Auswertung/Export
+        self._distribution_snapshots = []
+
+        # ------------------------------------------------------------------
+        # WP5/RQ3: Digging-Depth pro Request
+        # ------------------------------------------------------------------
+        self.request_digging_depths = []
+
+    # ----------------------------------------------------------------------
+    # WP5: Distribution & Positionsänderungen
+    # ----------------------------------------------------------------------
+
+    def record_distribution_snapshot(self, snapshot: dict) -> None:
+        """
+        Fügt einen Distribution-Snapshot hinzu und aktualisiert den
+        ConvergenceDetector.
+
+        Erwartet u.a.:
+            snapshot = {
+                "time": int,
+                "average_digging_depth": float,
+                "hot_bins_top_ratio": float,
+                "popularity_depth_correlation": float,  # optional
+                ...
+            }
+        """
+        self._distribution_snapshots.append(snapshot)
+        self.convergence_detector.add_snapshot(snapshot)
+
+    def record_position_state(self, state) -> None:
+        """
+        Nimmt den aktuellen Lagerzustand auf und berechnet Positionsänderungen
+        gegenüber dem vorherigen Snapshot.
+        """
+        current_time = getattr(state, "t", None)
+        if current_time is None:
+            return
+        self.position_tracker.record_state(state, current_time)
+
+    def get_convergence_analysis(self) -> dict:
+        """
+        Liefert Konvergenz- und Stabilitätsmetriken für RQ4.
+
+        Struktur:
+            {
+                "is_converged": bool,
+                "convergence_time": int | None,
+                "stability_metrics": { ... aus ConvergenceDetector.get_stability_metrics() ... },
+                "snapshots": [... alle Roh-Snapshots ...],
+            }
+        """
+        return {
+            "is_converged": self.convergence_detector.is_converged(),
+            "convergence_time": self.convergence_detector.get_convergence_time(),
+            "stability_metrics": self.convergence_detector.get_stability_metrics(),
+            "snapshots": list(self._distribution_snapshots),
+        }
+
+    def get_position_change_timeseries(self):
+        """
+        Liefert die Zeitreihe der Positionsänderungen für RQ3/RQ4:
+
+            [
+                {
+                    "time": t,
+                    "total_moves": ...,
+                    "bins_changed_stack": ...,
+                    "bins_changed_level": ...,
+                },
+                ...
+            ]
+        """
+        return self.position_tracker.get_timeseries()
+
+    def get_distribution_timeseries(self):
+        """
+        Liefert die Zeitreihe aller Distribution-Snapshots für RQ3/RQ4.
+        """
+        return list(self._distribution_snapshots)
+
+    # ----------------------------------------------------------------------
+    # WP5/RQ3: Digging-Depth pro Request
+    # ----------------------------------------------------------------------
+
+    def record_digging_depth(self, depth: int) -> None:
+        """
+        Zeichnet die Anzahl der Blocking-Bins (Digging-Depth) für ein Retrieval auf.
+        """
+        if depth is None:
+            return
+        try:
+            d = int(depth)
+        except (TypeError, ValueError):
+            return
+        if d < 0:
+            d = 0
+        self.request_digging_depths.append(d)
+
+    def get_average_digging_depth(self) -> float:
+        """
+        Durchschnittliche Anzahl Blocking-Bins pro tatsächlichem Retrieval
+        (auf Basis der Request-Events).
+        """
+        if not self.request_digging_depths:
+            return 0.0
+        return sum(self.request_digging_depths) / len(self.request_digging_depths)
+
+    # ----------------------------------------------------------------------
+    # Bestehende Metriken (unverändert)
+    # ----------------------------------------------------------------------
 
     def record_target_bin_at_pickstation(self, state, action, request=None):
         """
@@ -180,7 +300,10 @@ class Metrics:
         return series
 
     def summary(self):
-        return {
+        # Letzten Distribution-Snapshot für kompakte Übersicht holen (falls vorhanden)
+        last_distribution_snapshot = self._distribution_snapshots[-1] if self._distribution_snapshots else None
+
+        base = {
             "completed_requests": len(self.completed_requests),
             "successful_requests": self.successful_requests,
             "missed_deadline_requests": self.missed_deadline_requests,
@@ -192,6 +315,14 @@ class Metrics:
             "target_bin_removals": self.target_bin_removals,
             "time_series": self.time_series(),
         }
+
+        # WP5/RQ3-Zusatzinformationen (kompakt gehalten)
+        base.update({
+            "average_request_digging_depth": self.get_average_digging_depth(),
+            "last_distribution_snapshot": last_distribution_snapshot,
+        })
+
+        return base
 
     def _increment(self, dictionary, key):
         dictionary[key] = dictionary.get(key, 0) + 1

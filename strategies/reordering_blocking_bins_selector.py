@@ -13,6 +13,7 @@ class ReorderingSelector:
     Die Strategie wird über config.reordering_strategy gesteuert:
     - "LOFI": Last-Out-First-In (Baseline, entspricht aktuellem Verhalten)
     - "ABC":  C-Bins zuerst, dann B, dann A (A landet oben)
+    - "POPULARITY": Bins mit niedrigem access_count landen unten, hohe oben
     """
 
     def __init__(self, config):
@@ -42,6 +43,8 @@ class ReorderingSelector:
             return self._reorder_lofi(blockers)
         elif strategy == "ABC":
             return self._reorder_abc(blockers)
+        elif strategy == "POPULARITY":
+            return self._reorder_popularity(blockers)
         else:
             raise ValueError(f"Unknown reordering strategy: {strategy}")
 
@@ -69,3 +72,21 @@ class ReorderingSelector:
             return class_priority.get(abc_class, 0)
 
         return sorted(blockers, key=priority)
+
+    def _reorder_popularity(self, blockers: List[Bin]) -> List[Bin]:
+        """
+        Popularity-Reordering: Sortiert nach access_count (aufsteigend).
+
+        Bins mit niedrigstem access_count werden zuerst zurückgelegt (landen unten).
+        Bins mit höchstem access_count werden zuletzt zurückgelegt (landen oben).
+
+        Durch die Stabilität von sorted() bleibt bei gleichem access_count
+        die ursprüngliche Reihenfolge erhalten.
+
+        Beispiel:
+            Input:  [Bin(count=5), Bin(count=1), Bin(count=10)]
+            Output: [Bin(count=1), Bin(count=5), Bin(count=10)]
+            Ergebnis im Stack (von unten nach oben):
+                unten ... Bin(count=1), Bin(count=5), Bin(count=10) ... oben
+        """
+        return sorted(blockers, key=lambda b: b.get_access_count())

@@ -159,6 +159,20 @@ class EventHandler:
         self._mark_bin_in_transit(action, state=self.state, in_transit=True)
 
         if action.get("type") == "remove_target":
+            # WP5/RQ3: Digging-Depth pro Retrieval erfassen
+            robot = event.payload.get("robot")
+            task = getattr(robot, "current_task", None)
+            digging_depth = 0
+            if task is not None and hasattr(task, "relocations"):
+                # Annahme: Jede Relocation entspricht genau einer Blocking-Bin
+                try:
+                    digging_depth = len(task.relocations)
+                except Exception:
+                    digging_depth = 0
+
+            if digging_depth is not None:
+                self.metrics.record_digging_depth(int(digging_depth))
+
             request = event.payload.get("request")
             self.metrics.record_target_bin_at_pickstation(self.state, action, request)
 

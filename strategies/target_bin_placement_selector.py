@@ -46,6 +46,9 @@ class PlacementSelector:
         if strategy == "ABC":
             return self._select_abc_stack(state, bin_obj)
 
+        if strategy == "POPULARITY":
+            return self._select_popularity_stack(state, bin_obj)
+
         raise ValueError(f"Unknown placement strategy: {strategy}")
 
     # ------------------------------------------------------------------ #
@@ -189,6 +192,125 @@ class PlacementSelector:
         index = int(self.rng.integers(len(best_stacks)))
         return best_stacks[index]
 
+    def _select_popularity_stack(self, state, bin_obj):
+        """
+        Popularity-basierte Platzierung für Target-Bin-Rücklagerung.
+
+        Scoring-Formel für jeden Stack:
+            score = alpha * normalized_distance + beta * normalized_depth
+
+        Wobei:
+            - normalized_distance = distance_to_nearest_pickstation / max_distance
+              (max_distance = max. Distanz unter allen Kandidaten)
+            - normalized_depth = expected_digging_depth / max_stack_height
+            - expected_digging_depth ~ aktuelle Stackhöhe (je voller, desto tiefer)
+            - alpha, beta aus config
+              (popularity_distance_weight, popularity_depth_weight)
+
+        Placement-Logik:
+            - Popularität p in [0, 1] (0 = kalt, 1 = heiß)
+            - Hot (p >= hot_threshold):  Stack mit minimalem Score
+            - Cold (p <= cold_threshold): Stack mit maximalem Score
+            - Neutral: Stack mit Score am nächsten zu 0.5
+
+        Warmup:
+            - total_accesses = Summe aller access_counts im System
+            - Solange total_accesses < popularity_warmup_requests oder
+              max_access_count == 0 -> Fallback: RANDOM-Placement
+        """
+        candidates = self._get_eligible_stacks(state)
+
+        if not candidates:
+            raise RuntimeError("No suitable stack with free capacity available for POPULARITY placement")
+
+        # --- Popularity & Warmup ------------------------------------------------
+        all_counts = [b.get_access_count() for b in state.bins]
+        max_count = max(all_counts) if all_counts else 0
+        total_accesses = sum(all_counts)
+
+        warmup_requests = getattr(self.config, "popularity_warmup_requests", 0)
+
+        # Cold-Start / Warmup: noch keine sinnvolle Popularität verfügbar
+        if max_count == 0 or total_accesses < warmup_requests:
+            # Empfehlung aus Aufgabenstellung: Random-Fallback
+            return self._select_random_stack(state)
+
+        popularity = self._get_popularity_score(state, bin_obj, all_counts=all_counts, max_count=max_count)
+
+        hot_threshold = getattr(self.config, "popularity_hot_threshold", 0.7)
+        cold_threshold = getattr(self.config, "popularity_cold_threshold", 0.3)
+
+        alpha = getattr(self.config, "popularity_distance_weight", 0.5)
+        beta = getattr(self.config, "popularity_depth_weight", 0.5)
+
+        max_stack_height = self._get_max_stack_height(state)
+        if max_stack_height is None or max_stack_height <= 0:
+            # Fallback: nutze maximale aktuelle Höhe als Normalisierung
+            max_stack_height = max((stack.height() for stack in candidates), default=1) or 1
+
+        # --- Distanz- und Depth-Infos je Stack ---------------------------------
+        stack_infos = []
+        distances = []
+
+        for stack in candidates:
+            pos = self._parse_stack_position(stack)
+            distance = get_min_distance_to_pickstation(state, pos)
+            expected_depth = self._calc_expected_digging_depth(state, stack)
+            stack_infos.append((stack, distance, expected_depth))
+            distances.append(distance)
+
+        max_distance = max(distances) if distances else 0
+        if max_distance <= 0:
+            max_distance = 1  # vermeiden von Division durch 0
+
+        # Score für jeden Stack berechnen
+        scored_stacks = []
+        for stack, distance, expected_depth in stack_infos:
+            normalized_distance = distance / max_distance
+            normalized_depth = expected_depth / max_stack_height
+            score = alpha * normalized_distance + beta * normalized_depth
+            scored_stacks.append((stack, score))
+
+        # --- Auswahl je nach Popularität ---------------------------------------
+        if popularity >= hot_threshold:
+            # Hot: score minimieren
+            best_score = None
+            best_stacks = []
+            for stack, score in scored_stacks:
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_stacks = [stack]
+                elif score == best_score:
+                    best_stacks.append(stack)
+
+        elif popularity <= cold_threshold:
+            # Cold: score maximieren
+            best_score = None
+            best_stacks = []
+            for stack, score in scored_stacks:
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_stacks = [stack]
+                elif score == best_score:
+                    best_stacks.append(stack)
+        else:
+            # Neutral: Score möglichst balanciert (nahe 0.5)
+            best_distance_to_mid = None
+            best_stacks = []
+            for stack, score in scored_stacks:
+                dist_to_mid = abs(score - 0.5)
+                if best_distance_to_mid is None or dist_to_mid < best_distance_to_mid:
+                    best_distance_to_mid = dist_to_mid
+                    best_stacks = [stack]
+                elif dist_to_mid == best_distance_to_mid:
+                    best_stacks.append(stack)
+
+        if len(best_stacks) == 1:
+            return best_stacks[0]
+
+        index = int(self.rng.integers(len(best_stacks)))
+        return best_stacks[index]
+
     # ------------------------------------------------------------------ #
     # Hilfsfunktionen
     # ------------------------------------------------------------------ #
@@ -281,3 +403,39 @@ class PlacementSelector:
                     pass
 
         raise RuntimeError(f"Cannot parse position for stack_id={stack_id}")
+
+    def _get_popularity_score(self, state, bin_obj, all_counts=None, max_count=None) -> float:
+        """
+        Gibt normalisierten Popularitätswert zwischen 0 und 1 zurück.
+
+        Definition:
+            popularity = access_count / max_access_count
+
+        Fallback:
+            Wenn max_access_count == 0:
+                0.5 (neutral)
+        """
+        if all_counts is None:
+            all_counts = [b.get_access_count() for b in state.bins]
+
+        if max_count is None:
+            max_count = max(all_counts) if all_counts else 0
+
+        if max_count <= 0:
+            return 0.5
+
+        return bin_obj.get_access_count() / max_count
+
+    def _calc_expected_digging_depth(self, state, stack) -> float:
+        """
+        Berechnet erwartete Grabtiefe, wenn eine Bin von diesem Stack angefordert wird.
+
+        Vereinfachte Annahme:
+            expected_digging_depth ~ aktuelle Stackhöhe.
+
+        Interpretation:
+            - Je höher (voller) der Stack, desto tiefer wird zukünftig
+              durchschnittlich gegraben werden müssen.
+        """
+        current_height = stack.height()
+        return float(current_height)
