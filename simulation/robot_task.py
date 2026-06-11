@@ -36,6 +36,10 @@ class RobotTask:
         # NEU: Flag, ob Blocking-Bins bereits für die Rücklagerung umsortiert wurden
         self.blockers_reordered = False
 
+        # NEU: Tracking für Validierung
+        self.initial_blocker_count = None  # Wird bei Planung gesetzt
+        self.last_validated_time = None     # Zeitpunkt der letzten Validierung
+
     @property
     def request_id(self):
         return self.request.request_id
@@ -71,6 +75,17 @@ class RobotTask:
             "from_stack": from_stack,
             "buffer_stack": buffer_stack,
         })
+
+    def clear_all_relocations(self):
+        """
+        Entfernt alle temporären Relocation-Einträge.
+
+        Wird verwendet, wenn Blocking-Bins NICHT zurückgelegt werden sollen
+        (Strategien RR+RR, LR+NR).
+        """
+        self.temp_storage.clear()
+        # Verhindert, dass später noch ein Reordering-Versuch angestoßen wird
+        self.blockers_reordered = True
 
     def peek_last_relocation(self):
         """
@@ -232,10 +247,20 @@ class RobotTask:
     def can_complete_consistently(self, state):
         """
         Prüft die formale Abschlussinvariante eines Requests.
+
+        NEU:
+        - Die Ziel-Bin muss am Ende auf einem konsistenten Rückgabe-Stack liegen.
+        - Dieser Stack kann der ursprüngliche target_stack_id ODER ein von der
+          Placement-Strategie gewählter alternativer Stack
+          (actual_return_stack_id) sein.
         """
-        if self.target_stack_id is None:
-            return False, "target_stack_id is unknown"
-        
+        # Effektiver Rückgabe-Stack: bevorzugt den tatsächlich verwendeten Stack,
+        # fällt sonst auf den ursprünglichen Ziel-Stack zurück.
+        effective_stack_id = self.actual_return_stack_id or self.target_stack_id
+
+        if effective_stack_id is None:
+            return False, "no return stack known for target"
+
         if not self.target_removed:
             return False, "target was not removed"
 
@@ -251,21 +276,22 @@ class RobotTask:
         if not self.target_returned:
             return False, "target was not returned"
 
-        target_stack = self._get_stack_by_id(state, self.target_stack_id)
+        # Stack, auf dem die Ziel-Bin am Ende liegen soll
+        target_stack = self._get_stack_by_id(state, effective_stack_id)
 
         if target_stack is None:
-            return False, f"target stack {self.target_stack_id} does not exist"
+            return False, f"return stack {effective_stack_id} does not exist"
 
         top_bin = target_stack.peek()
 
         if top_bin is None:
-            return False, f"target stack {self.target_stack_id} is empty"
+            return False, f"return stack {effective_stack_id} is empty"
 
         if top_bin.bin_id != self.target_bin_id:
             return (
                 False,
                 f"target bin {self.target_bin_id} is not on top of "
-                f"target stack {self.target_stack_id}; top is {top_bin.bin_id}"
+                f"return stack {effective_stack_id}; top is {top_bin.bin_id}"
             )
 
         return True, "task is consistently completed"

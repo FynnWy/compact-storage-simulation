@@ -5,6 +5,9 @@ from traffic.pathfinder import Pathfinder
 from traffic.traffic_manager import TrafficManager
 from traffic.deadlock_detector import DeadlockDetector, DeadlockResolver
 from traffic.highway_rules import HighwayRules
+from traffic.port_prioritizer import PortPrioritizer, RobotCandidate
+from traffic.port_exit_guard import PortExitGuard           # NEU
+from traffic.idle_parking import IdleParkingManager         # NEU
 
 __all__ = [
     "ReservationTable",
@@ -13,4 +16,8 @@ __all__ = [
     "DeadlockDetector",
     "DeadlockResolver",
     "HighwayRules",
+    "PortPrioritizer",
+    "RobotCandidate",
+    "PortExitGuard",
+    "IdleParkingManager",
 ]

@@ -168,10 +168,22 @@ class EventBuilder:
         return events
 
     def calculate_action_duration(self, action, state, robot):
-        if self.cost_model is None:
-            return 1
+        """
+        Berechnet Dauer einer Aktion.
+        """
+        action_type = action.get("type")
 
-        return self.cost_model.action_duration(action, state, robot)
+        if action_type in ("relocate", "remove_target", "return"):
+            return self.cost_model.config.action_cost_bin_manipulation
+
+        if action_type == "pickup_from_pickstation":
+            # Pickup dauert 1 ZE
+            return self.cost_model.config.action_cost_bin_manipulation
+
+        if action_type == "request_complete":
+            return 0
+
+        return 0
 
     def calculate_pickstation_service_duration(self, batch_count=1):
         """

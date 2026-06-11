@@ -1,5 +1,6 @@
 from events.event_types import EventType
-
+from traffic.port_prioritizer import PortPrioritizer, RobotCandidate
+from traffic.idle_parking import IdleParkingManager
 
 class EventHandler:
 
@@ -24,6 +25,25 @@ class EventHandler:
         self.scheduler = scheduler
         self.executor = executor
         self.event_builder = event_builder
+        # Maximale Anzahl Blockierungs-Retries für dieselbe Aktion,
+        # bevor der Task als „veraltet“ gilt und neu verplant wird.
+        self.max_action_retries_before_replan = 20
+
+        # Intelligente Port-Priorisierung (WP4)
+        move_cost = getattr(
+            getattr(self.state, "config", None),
+            "port_move_cost_per_cell",
+            1,
+        )
+        self.port_prioritizer = PortPrioritizer(move_cost_per_cell=move_cost)
+
+        # Idle-ParkingManager (WP5 – Idle-Roboter-Regeln)
+        self.idle_parking = IdleParkingManager(
+            grid_width=self.state.grid.width,
+            grid_depth=self.state.grid.depth,
+            port_positions=self.state.port_positions,
+            buffer_zone=self.state.buffer_zone,
+        )
 
     def get_next_event(self):
         if self.event_queue.is_empty():
@@ -62,7 +82,7 @@ class EventHandler:
     def _handle_robot_move(self, event):
         """
         Verarbeitet einen einzelnen Bewegungsschritt eines Roboters.
-        
+
         Flow:
         1. Prüfen ob Zielposition verfügbar ist (Reservierung)
         2. Roboter bewegt sich zum nächsten Wegpunkt
@@ -71,54 +91,109 @@ class EventHandler:
         5. Falls nein: Nächstes ROBOT_MOVE Event erzeugen
         """
         robot = event.payload.get("robot")
-        
+
         if robot is None:
             raise RuntimeError("Cannot handle robot move: event has no robot")
-        
-        # NEU: Prüfen ob nächste Position noch reserviert ist
+
         next_waypoint = robot.get_next_waypoint()
-        
+
         if next_waypoint is None:
             # Pfad bereits abgeschlossen
             return
-        
+
+        # Kollisionen an Pickstations und im „PS-Bereich“ (x < 0) verhindern
+        # Wir behandeln:
+        # - alle echten Pickstation-Positionen
+        # - sowie alle Zellen mit x < 0 (außerhalb des Grids)
+        is_pickstation_cell = False
+
+        # 1) Echte Pickstations
+        for ps in self.state.pickstations:
+            if next_waypoint == ps.position:
+                is_pickstation_cell = True
+                break
+
+        # 2) Generischer PS-Bereich: alle Zellen links vom Grid
+        if next_waypoint[0] < 0:
+            is_pickstation_cell = True
+
+        if is_pickstation_cell:
+            # Prüfen ob dort bereits ein anderer Roboter steht
+            for other in self.state.robots:
+                if (
+                    other.robot_id != robot.robot_id
+                    and other.get_position() == next_waypoint
+                ):
+                    print(
+                        f"[WARNING] Robot {robot.robot_id} blocked at PS-area cell "
+                        f"{next_waypoint} (occupied by robot {other.robot_id}) "
+                        f"at time {self.state.t}, retrying..."
+                    )
+                    delayed_event = self.event_builder.delay_event(
+                        event=event,
+                        current_time=self.state.t,
+                    )
+                    self.event_queue.push(delayed_event)
+                    return
+
         # Reservierung prüfen (Sicherheitsprüfung)
         if not self.state.reservation_table.is_free(
-            *next_waypoint, self.state.t, exclude_robot=robot.robot_id
+                *next_waypoint, self.state.t, exclude_robot=robot.robot_id
         ):
-            # Blockiert - Event verzögern und neu versuchen
+            # Blockiert - Event verzögern
             print(
                 f"[WARNING] Robot {robot.robot_id} blocked at {next_waypoint} "
                 f"at time {self.state.t}, retrying..."
             )
-            
+
             delayed_event = self.event_builder.delay_event(
                 event=event,
                 current_time=self.state.t,
             )
             self.event_queue.push(delayed_event)
             return
-        
-        # Alte Position freigeben (falls vorhanden)
+
+        # Alte Position freigeben
         old_position = robot.get_position()
         if old_position is not None:
             self.state.reservation_table.release(
                 robot.robot_id, *old_position, self.state.t - 1
             )
-        
+
         # Roboter zum nächsten Wegpunkt bewegen
         try:
             new_position = robot.advance_to_next_waypoint()
         except RuntimeError as e:
             print(f"[WARNING] Robot {robot.robot_id} move failed: {e}")
             return
-        
+
+        # ✅ NEU: Port-Enter/Leave-Logik
+        # Roboter fährt AUF eine Pickstation-Position
+        pickstation_at_new = self.state.find_pickstation_at(new_position)
+        if pickstation_at_new is not None:
+            # Roboter betritt Port (prüft Reservierung intern)
+            pickstation_at_new.robot_enters(robot.robot_id)
+
+        # Roboter verlässt eine Pickstation-Position
+        if old_position is not None:
+            pickstation_at_old = self.state.find_pickstation_at(old_position)
+            if pickstation_at_old is not None and old_position != new_position:
+                # Verlassen des Ports gibt Reservierung automatisch frei
+                pickstation_at_old.robot_leaves()
+
         # Prüfen ob Ziel erreicht
         if robot.has_reached_destination():
-            # Ziel erreicht - Pfad-Reservierungen freigeben
-            self.state.reservation_table.release_all(robot.robot_id)
+            self._cleanup_past_reservations(robot)
+
+            # ✅ NEU: Wenn Robot keinen Task hat (nach Pickstation-Exit)
+            # wird er automatisch idle und verfügbar für neue Tasks
+            if robot.current_task is None:
+                robot.set_status("idle")
+                # Idle-Roboter dürfen NICHT in Pufferzone/Port parken
+                self._handle_robot_becomes_idle(robot)
+
             return
-        
+
         # Noch nicht am Ziel - nächstes ROBOT_MOVE Event erzeugen
         move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
         next_move_event = self.event_builder.build_robot_move_event(
@@ -126,6 +201,150 @@ class EventHandler:
             time=self.state.t + move_cost,
         )
         self.event_queue.push(next_move_event)
+
+        # Prüfen ob Ziel erreicht
+        if robot.has_reached_destination():
+            # NEU: Nicht alle Reservierungen freigeben!
+            # Nur vergangene Reservierungen aufräumen, aktuelle Position behalten.
+            # Die aktuelle Position bleibt reserviert bis die Action abgeschlossen ist.
+            self._cleanup_past_reservations(robot)
+            return
+
+        # Noch nicht am Ziel - nächstes ROBOT_MOVE Event erzeugen
+        move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
+        next_move_event = self.event_builder.build_robot_move_event(
+            robot=robot,
+            time=self.state.t + move_cost,
+        )
+        self.event_queue.push(next_move_event)
+
+    def _handle_robot_becomes_idle(self, robot):
+        """
+        Behandelt Roboter der idle wird.
+
+        Wenn Roboter in Pufferzone oder auf einem Port steht: Muss diese verlassen.
+        """
+        current_pos = robot.get_position()
+
+        if current_pos is None:
+            return
+
+        if self.idle_parking.must_leave_current_position(current_pos):
+            # Finde nächste Parkposition
+            occupied = {
+                r.get_position()
+                for r in self.state.robots
+                if r is not robot and r.get_position() is not None
+            }
+            target = self.idle_parking.find_nearest_parking_position(
+                current_pos, occupied
+            )
+
+            if target is not None:
+                # Plane Pfad zur Parkposition (niedrige Priorität, kein Task)
+                self._plan_idle_move(robot, target)
+            else:
+                # Keine Parkposition frei (sollte selten sein)
+                print(f"[WARNING] No parking position for robot {robot.robot_id}")
+
+    def _plan_idle_move(self, robot, target_position):
+        """
+        Plant einen reinen Idle-Move zu einer Parkposition.
+
+        - Keine Request- oder Task-Bindung
+        - target_action=None → Roboter bleibt danach idle
+        - Pfad-Reservierung weiterhin über TrafficManager/ReservationTable
+        """
+        current_position = robot.get_position()
+        if current_position is None:
+            return
+
+        path = self.event_builder.cost_model.calculate_path(
+            from_position=current_position,
+            to_position=target_position,
+            robot=robot,
+            state=self.state,
+            current_time=self.state.t,
+        )
+
+        if not path:
+            # Bereits an Ziel oder kein Pfad → nichts tun
+            return
+
+        path_events = self.event_builder.build_path_events(
+            robot=robot,
+            path=path,
+            target_action=None,
+            request=None,
+            start_time=self.state.t,
+            state=self.state,
+        )
+
+        if path_events is None:
+            # Pfad-Reservierung fehlgeschlagen → wir geben auf,
+            # da dies nur ein weicher Komfort-Move ist.
+            print(
+                f"[INFO] Idle move for robot {robot.robot_id} to {target_position} "
+                f"could not be reserved"
+            )
+            return
+
+        for ev in path_events:
+            self.event_queue.push(ev)
+
+    def _cleanup_past_reservations(self, robot):
+        """
+        Räumt vergangene Reservierungen eines Roboters auf, behält aber die aktuelle Position.
+        """
+        current_time = self.state.t
+        current_position = robot.get_position()
+
+        reservations = self.state.reservation_table.get_reservations_for_robot(robot.robot_id)
+
+        for (x, y, t) in reservations:
+            # Vergangene Reservierungen freigeben
+            if t < current_time:
+                self.state.reservation_table.release(robot.robot_id, x, y, t)
+            # Aktuelle Position behalten (falls reserviert)
+            elif (x, y) == current_position and t == current_time:
+                # Behalte diese Reservierung
+                pass
+
+    def _cleanup_robot_reservations_except_current(self, robot_id, current_pos, current_time):
+        """
+        Gibt alle Reservierungen eines Roboters frei, AUSSER die aktuelle Position zur aktuellen Zeit.
+
+        Verwendung:
+        - Wenn Roboter an Pickstation "andockt"
+        - Roboter steht physisch auf Position (z.B. (-1, y))
+        - Diese Position muss reserviert bleiben, um Kollisionen zu verhindern
+        - Erst beim Verlassen (neuer Pfad) wird die alte Reservierung durch neue ersetzt
+
+        Args:
+            robot_id: ID des Roboters
+            current_pos: (x, y) - Aktuelle Position des Roboters
+            current_time: Aktueller Simulationszeitpunkt
+        """
+        if current_pos is None:
+            # Roboter hat keine Position (sollte nicht passieren, aber zur Sicherheit)
+            self.state.reservation_table.release_all(robot_id)
+            return
+
+        x, y = current_pos
+
+        # Hole alle Reservierungen dieses Roboters
+        reservations = self.state.reservation_table.get_reservations_for_robot(robot_id)
+
+        # Kopie erstellen, da wir während Iteration löschen
+        reservations_copy = list(reservations)
+
+        for res_x, res_y, res_t in reservations_copy:
+            # Behalte nur die aktuelle Position zur aktuellen Zeit
+            if res_x == x and res_y == y and res_t == current_time:
+                continue  # Diese Reservierung NICHT freigeben - Roboter steht dort!
+
+            # Alle anderen Reservierungen freigeben
+            self.state.reservation_table.release(robot_id, res_x, res_y, res_t)
 
     def _handle_robot_action(self, event):
         action = self.event_builder.get_action_from_event(event)
@@ -148,12 +367,116 @@ class EventHandler:
                 f"reason={reason}"
             )
 
+            # ----------------------------------------------------------
+            # 1) INTELLIGENTER SKIP NUR FÜR RELOCATE-AKTIONEN (BLOCKER)
+            # ----------------------------------------------------------
+            action_type = action.get("type")
+            if action_type == "relocate" and robot is not None:
+                bin_id = action.get("bin_id")
+                from_stack_id = action.get("from_stack")
+
+                if bin_id is not None and from_stack_id is not None:
+                    actual_stack, actual_level = self._find_bin_location(bin_id)
+
+                    if actual_stack is None:
+                        # Die Bin liegt auf KEINEM Stack mehr.
+                        # Für eine Blocker-Relocate bedeutet das:
+                        # - Sie blockiert den ursprünglichen Stack nicht mehr.
+                        # - Jemand hat sie bereits entfernt (in Transit, Pickstation
+                        #   oder Rücklagerung).
+                        # → Sicher zu skippen, da das ursprüngliche Ziel
+                        #   (Blocker weg) bereits erreicht ist.
+                        print(
+                            f"[SKIP] t={self.state.t}, robot={robot.robot_id}, "
+                            f"request={request.request_id if request is not None else None}, "
+                            f"relocate for bin {bin_id} skipped: "
+                            f"bin not on any stack anymore (already moved or processed)"
+                        )
+                        self._schedule_next_action_for_same_task(event)
+                        return
+
+                    if actual_stack.stack_id != from_stack_id:
+                        # SICHERER FALL:
+                        # Die Blocker-Bin wurde bereits von einem anderen Roboter
+                        # wegbewegt und steht nicht mehr auf dem ursprünglichen Stack.
+                        # → Unser Task-Ziel (freie Sicht auf die Target-Bin) ist
+                        #   bereits erreicht, diese Relocation können wir überspringen.
+                        print(
+                            f"[SKIP] t={self.state.t}, robot={robot.robot_id}, "
+                            f"request={request.request_id if request is not None else None}, "
+                            f"relocate for bin {bin_id} skipped: "
+                            f"bin already moved off {from_stack_id} "
+                            f"to {actual_stack.stack_id}"
+                        )
+
+                        # Wichtig: Wir führen KEINE Aktion aus, aktualisieren den Task
+                        # nicht künstlich, sondern fragen einfach die nächste Aktion
+                        # aus der Strategie ab. Die Strategie sieht den aktuellen
+                        # echten Zustand (Bin steht woanders) und plant entsprechend neu.
+                        self._schedule_next_action_for_same_task(event)
+                        return
+
+            # ✅ NEU: REVALIDIERUNG bei remove_target
+            if action_type == "remove_target" and robot is not None:
+                task = robot.current_task
+                if task is not None and event.retry_count >= 5:
+                    # Nach 5 Retries: Prüfe ob Stack sich verändert hat
+                    if self._stack_state_changed(task):
+                        print(
+                            f"[REVALIDATE] t={self.state.t}, robot={robot.robot_id}, "
+                            f"task={task.request_id}, stack changed → replanning relocations"
+                        )
+
+                        # Lösche alte Relocation-Plan
+                        task.temp_storage.clear()
+
+                        # Frage Strategie nach neuer Relocation-Sequenz
+                        # (wird beim nächsten next_action() neu berechnet)
+                        self._schedule_next_action_for_same_task(event)
+                        return
+
+            # ----------------------------------------------------------
+            # 2) RETRY-LIMIT + REPLAN FÜR HOFFNUNGSLOSE FÄLLE
+            # ----------------------------------------------------------
+            if (
+                    robot is not None
+                    and event.retry_count >= self.max_action_retries_before_replan
+            ):
+                task = getattr(robot, "current_task", None)
+
+                if task is not None:
+                    print(
+                        f"[REPLAN] t={self.state.t}, robot={robot.robot_id}, "
+                        f"task={task.request_id}, action={action}, "
+                        f"stuck after {event.retry_count} retries → requeue task"
+                    )
+
+                    # Task vom Roboter lösen und zurück in die Warteschlange geben.
+                    robot.clear_task()
+                    self.active_queue.add_waiting_task(task)
+
+                # KEIN weiteres delay_event für diese Aktion
+                return
+
+            # ----------------------------------------------------------
+            # 3) STANDARD-VERHALTEN: VERZÖGERN UND SPÄTER NOCHMAL VERSUCHEN
+            # ----------------------------------------------------------
             delayed_event = self.event_builder.delay_event(
                 event=event,
                 current_time=self.state.t,
             )
             self.event_queue.push(delayed_event)
             return
+
+        # NEU: Aktuelle Position für die Aktionsdauer reserviert halten
+        robot = event.payload.get("robot")
+        if robot is not None:
+            current_pos = robot.get_position()
+            if current_pos is not None:
+                # Reserviere Position für aktuelle Zeit
+                self.state.reservation_table.reserve(
+                    robot.robot_id, *current_pos, self.state.t
+                )
 
         # in_transit setzen VOR Ausführung
         self._mark_bin_in_transit(action, state=self.state, in_transit=True)
@@ -197,6 +520,57 @@ class EventHandler:
             return
 
         self._schedule_next_action_for_same_task(event)
+
+    def _stack_state_changed(self, task):
+        """
+        Prüft ob der Zustand des Target-Stacks sich seit Task-Planung verändert hat.
+
+        Returns:
+            bool: True wenn Stack-Struktur sich geändert hat
+        """
+        if task.target_stack_id is None:
+            return False
+
+        # Hole aktuellen Stack-Zustand
+        stack = self._get_stack_by_id(self.state, task.target_stack_id)
+        if stack is None:
+            return True  # Stack nicht gefunden = definitiv verändert
+
+        # Prüfe ob Target-Bin noch am selben Ort ist
+        target_bin_id = task.target_bin_id
+        target_stack, target_level = self._find_bin_location(target_bin_id)
+
+        if target_stack is None:
+            return True  # Bin verschwunden
+
+        if target_stack.stack_id != task.target_stack_id:
+            return True  # Bin auf anderem Stack
+
+        # Prüfe ob die Anzahl der Blocker sich geändert hat
+        # (initial_blocker_count wird beim Task-Erstellen gesetzt)
+        if hasattr(task, 'initial_blocker_count'):
+            current_blocker_count = target_level
+            if current_blocker_count != task.initial_blocker_count:
+                return True
+
+        return False
+
+    def _get_stack_by_id(self, state, stack_id):
+        """
+        Hilfsmethode: Findet Stack anhand ID (unterstützt Tuple und String).
+        """
+        if stack_id is None:
+            return None
+
+        if isinstance(stack_id, tuple):
+            x, y = stack_id
+            return state.grid.get_stack(x, y)
+
+        for stack in state.grid.all_stacks():
+            if stack.stack_id == stack_id:
+                return stack
+
+        return None
 
     def _mark_bin_in_transit(self, action, state, in_transit):
         """
@@ -303,11 +677,16 @@ class EventHandler:
                     f"action bin {action.get('bin_id')} is not target bin {task.target_bin_id}"
                 )
 
-            if action.get("to_stack") != task.target_stack_id:
+            # NEU: Bei alternativen Placement-Strategien (RANDOM, ABC, POPULARITY)
+            # kann der Rückgabe-Stack vom Original-Stack abweichen.
+            # actual_return_stack_id wird von TopAccessStrategy._next_return_target_action gesetzt.
+            expected_stack = getattr(task, "actual_return_stack_id", None) or task.target_stack_id
+
+            if action.get("to_stack") != expected_stack:
                 raise RuntimeError(
                     f"Cannot mark target returned for task {task.request_id}: "
-                    f"action to_stack {action.get('to_stack')} is not target stack "
-                    f"{task.target_stack_id}"
+                    f"action to_stack {action.get('to_stack')} is not expected stack "
+                    f"{expected_stack}"
                 )
 
             task.mark_target_returned()
@@ -318,6 +697,15 @@ class EventHandler:
         )
 
     def _start_pickstation_service_and_release_robot(self, event):
+        """
+        Robot gibt Bin an Pickstation ab und MUSS diese sofort verlassen.
+
+        Workflow:
+        1. Robot kommt an Pickstation an
+        2. Bin wird in Pickstation-Queue eingereiht
+        3. Robot bekommt ROBOT_MOVE Event zum Verlassen der Pickstation
+        4. Nach Exit wird Robot idle und für neue Tasks verfügbar
+        """
         robot = event.payload.get("robot")
 
         if robot is None:
@@ -329,30 +717,116 @@ class EventHandler:
             raise RuntimeError("Cannot start pickstation service: robot has no task")
 
         task.mark_waiting_at_pickstation()
-        
-        # NEU: Pickstation aus State ermitteln
+
+        # Pickstation aus State ermitteln
         robot_position = robot.get_position()
         if robot_position is None:
-            robot_position = (0, 0)
-        
+            raise RuntimeError(
+                f"Cannot start pickstation service: robot {robot.robot_id} has no position"
+            )
+
         pickstation = self.state.get_nearest_pickstation(robot_position)
         if pickstation is None:
             raise RuntimeError(
                 f"Cannot start pickstation service: no pickstation available "
                 f"for robot {robot.robot_id}"
             )
-        
+
         # Task zur Pickstation-Queue hinzufügen
         pickstation.enqueue(task, self.state.t)
-        
-        # Task aus assigned entfernen (wird später wieder zugewiesen)
         self.active_queue.add_pickstation_task(task)
-        
-        # Roboter freigeben
+
+        # ✅ Robot MUSS Pickstation verlassen
+        exit_position = self._find_pickstation_exit_position(
+            pickstation.position, robot.robot_id
+        )
+
+        if exit_position is None:
+            # Keine freie Exit-Position → Robot bleibt blockiert
+            print(
+                f"[WARNING] Robot {robot.robot_id} cannot exit pickstation "
+                f"{pickstation.station_id} - no free adjacent cell"
+            )
+            robot.clear_task()
+            return
+
+        # Reserviere Exit-Position
+        success = self.state.reservation_table.reserve(
+            robot_id=robot.robot_id,
+            x=exit_position[0],
+            y=exit_position[1],
+            t=self.state.t + 1
+        )
+
+        if not success:
+            print(
+                f"[WARNING] Robot {robot.robot_id} cannot reserve exit position "
+                f"{exit_position}"
+            )
+            robot.clear_task()
+            return
+
+        # Gebe Pickstation-Position frei (für nächsten Robot)
+        self.state.reservation_table.release(
+            robot.robot_id,
+            robot_position[0],
+            robot_position[1],
+            self.state.t
+        )
+
+        # Setze Pfad für Exit-Bewegung
+        robot.set_path([exit_position], target_action=None)
+
+        # Task vom Robot entfernen (wird nach Exit idle)
         robot.clear_task()
-        
+
+        # Erzeuge ROBOT_MOVE Event für Exit
+        exit_event = self.event_builder.build_robot_move_event(
+            robot=robot,
+            time=self.state.t + 1,
+        )
+        self.event_queue.push(exit_event)
+
         # Prüfen ob Pickstation sofort Service starten kann
         self._try_start_pickstation_service(pickstation)
+
+    def _find_pickstation_exit_position(self, pickstation_pos, robot_id):
+        """
+        Findet eine freie Nachbarzelle zur Pickstation zum "Ausparken".
+
+        Priorität: rechts (ins Grid) > oben/unten > links (weiter raus)
+
+        Args:
+            pickstation_pos: (x, y) Position der Pickstation
+            robot_id: ID des Roboters
+
+        Returns:
+            (x, y) freie Position oder None
+        """
+        x, y = pickstation_pos
+        current_time = self.state.t
+
+        # Mögliche Exit-Positionen (Priorität: ins Grid rein)
+        candidates = [
+            (x + 1, y),  # Rechts (ins Grid)
+            (x, y - 1),  # Oben
+            (x, y + 1),  # Unten
+            (x - 1, y),  # Links (falls Pickstation nicht am Rand)
+        ]
+
+        for candidate in candidates:
+            # Prüfe ob Position im Grid liegt
+            if not (0 <= candidate[0] < self.state.grid.width and
+                    0 <= candidate[1] < self.state.grid.depth):
+                continue
+
+            # Prüfe ob Position zur Zeit t+1 frei ist
+            if self.state.reservation_table.is_free(
+                    candidate[0], candidate[1], current_time + 1, exclude_robot=robot_id
+            ):
+                return candidate
+
+        return None
     
     def _try_start_pickstation_service(self, pickstation):
         """
@@ -407,26 +881,241 @@ class EventHandler:
         self.event_queue.push(pickstation_complete_event)
 
     def _handle_pickstation_complete(self, event):
+        """
+        Behandelt Abschluss des Pickstation-Service.
+
+        Workflow:
+        1. Service ist abgeschlossen (Bin wurde bearbeitet)
+        2. Finde verfügbaren Robot zum Abholen der Bin
+        3. Robot fährt zur Pickstation
+        4. Robot nimmt Bin mit und bringt sie zurück ins Grid
+        """
         task = event.payload.get("task")
 
         if task is None:
             raise RuntimeError("Cannot handle pickstation completion: event has no task")
 
         task.mark_pickstation_completed()
+
+        # Finde Pickstation, an der dieser Task war
+        pickstation = None
+        if hasattr(task, 'assigned_pickstation') and task.assigned_pickstation:
+            pickstation = self.state.get_pickstation(task.assigned_pickstation)
+
+        if pickstation is None:
+            # Fallback: Suche Pickstation, die diesen Task bearbeitet
+            for ps in self.state.pickstations:
+                if task in ps.current_tasks:
+                    pickstation = ps
+                    break
+
+        if pickstation is None:
+            raise RuntimeError(
+                f"Cannot find pickstation for task {task.request_id}"
+            )
+
+        # Service beenden (macht Kapazität frei)
+        pickstation.complete_service(task)
+
+        # Task in "wartet auf Abholung" markieren
         self.active_queue.mark_pickstation_task_completed(task)
 
-        # WICHTIG:
-        # Hier KEINE vollständige Fertigstellung mehr zählen.
-        # Die vollständige Completion erfolgt erst, wenn der Task
-        # alle Bins zurückgelagert hat und konsistent abgeschlossen ist
-        # (siehe _handle_request_complete).
-        # Metrik 1 (Arrival → Pickstation) wurde bereits bei remove_target
-        # bzw. beim Batching erfasst.
-        
+        # ✅ Finde verfügbaren Robot zum Abholen – jetzt mit PortPrioritizer
+        available_robot = self._select_robot_for_pickstation_pickup(
+            pickstation=pickstation,
+            task=task,
+        )
+
+        if available_robot is None:
+            # Kein Robot verfügbar → Task bleibt in Warteschlange
+            # Wird später beim nächsten schedule_available_robots() versucht
+            print(
+                f"[INFO] No robot available to pick up task {task.request_id} "
+                f"from pickstation {pickstation.station_id}"
+            )
+            return
+
+        # Reserviere Port VOR dem Losfahren
+        success = pickstation.reserve(available_robot.robot_id)
+        if not success:
+            # Port nicht verfügbar, Task in Warteschlange
+            print(
+                f"[INFO] Cannot reserve port {pickstation.station_id} "
+                f"for robot {available_robot.robot_id} - task {task.request_id} "
+                f"stays waiting"
+            )
+            self.active_queue.add_waiting_task(task)
+            return
+
+        # Robot bekommt Task zum Abholen der Bin
+        available_robot.assign_task(task)
+
+        # ✅ NEU: Wenn bereits ein Robot physisch auf der Pickstation steht,
+        # schicken wir keinen zweiten dorthin.
+        for robot in self.state.robots:
+            if (
+                    robot.robot_id != available_robot.robot_id
+                    and robot.get_position() == pickstation.position
+            ):
+                print(
+                    f"[INFO] Cannot send robot {available_robot.robot_id} to "
+                    f"pickstation {pickstation.station_id}: currently occupied "
+                    f"by robot {robot.robot_id}"
+                )
+                available_robot.clear_task()
+                # Port-Reservierung wieder freigeben
+                pickstation.release_reservation()
+                # Task bleibt als wartender Task; er wird später erneut versucht
+                self.active_queue.add_waiting_task(task)
+                return
+
+        self.active_queue.assign_task_to_robot(task, available_robot)
+
+        # Plane Pfad zur Pickstation
+        robot_position = available_robot.get_position()
+        pickstation_position = pickstation.position
+
+        path = self.event_builder.cost_model.calculate_path(
+            from_position=robot_position,
+            to_position=pickstation_position,
+            robot=available_robot,
+            state=self.state,
+            current_time=self.state.t,
+        )
+
+        if not path:
+            # Robot ist bereits an Pickstation (sollte nicht vorkommen)
+            print(
+                f"[WARNING] Robot {available_robot.robot_id} already at pickstation"
+            )
+            return
+
+        # Erzeuge ROBOT_MOVE Events zur Pickstation
+        # Target-Action: Bin von Pickstation nehmen
+        pickup_action = {
+            "type": "pickup_from_pickstation",
+            "pickstation_id": pickstation.station_id,
+            "bin_id": task.target_bin_id,
+        }
+
+        path_events = self.event_builder.build_path_events(
+            robot=available_robot,
+            path=path,
+            target_action=pickup_action,
+            request=task.request,
+            start_time=self.state.t,
+            state=self.state,
+        )
+
+        if path_events is None:
+            # Pfad kann nicht reserviert werden
+            print(
+                f"[BLOCKED] Cannot reserve path for robot {available_robot.robot_id} "
+                f"to pickstation {pickstation.station_id}"
+            )
+            available_robot.clear_task()
+            # Port-Reservierung wieder freigeben
+            pickstation.release_reservation()
+            self.active_queue.add_waiting_task(task)
+            return
+
+        for path_event in path_events:
+            self.event_queue.push(path_event)
+
+        # Nächsten wartenden Task aus Pickstation-Queue starten
+        self._try_start_pickstation_service(pickstation)
+
+    def _select_robot_for_pickstation_pickup(self, pickstation, task):
+        """
+        Wählt den besten idle Robot zum Abholen einer Bin von der Pickstation.
+
+        Nutzt PortPrioritizer:
+        - Machbarkeit bzgl. Deadline
+        - Minimale Port-Leerlaufzeit (früheste Ankunft)
+        - Tiebreaker: niedrigere Robot-ID
+        """
+        candidates = []
+
+        for robot in self.state.robots:
+            # Nur wirklich freie Roboter betrachten
+            if robot.status != "idle":
+                continue
+            if robot.current_task is not None:
+                continue
+
+            pos = robot.get_position()
+            if pos is None:
+                continue
+
+            # Roboter, die bereits auf der Pickstation stehen, sind hier nicht sinnvoll
+            if pos == pickstation.position:
+                continue
+
+            # Deadline aus Request – Fallbacks für ältere Felder
+            request = task.request
+            deadline = getattr(
+                request,
+                "deadline",
+                getattr(request, "latest_time", self.state.t + 10**9),
+            )
+
+            candidates.append(
+                RobotCandidate(
+                    robot_id=robot.robot_id,
+                    position=pos,
+                    deadline=deadline,
+                    task_id=task.request_id,
+                )
+            )
+
+        if not candidates:
+            return None
+
+        result = self.port_prioritizer.select_robot(
+            candidates=candidates,
+            port_position=pickstation.position,
+            current_time=self.state.t,
+        )
+
+        if result is None:
+            return None
+
+        return self.state.get_robot(result.selected_robot_id)
+
+    def _find_available_robot_for_pickup(self):
+        """
+        Findet einen idle Robot, der NICHT auf einer Pickstation steht.
+
+        Returns:
+            Robot oder None
+        """
+        for robot in self.state.robots:
+            if robot.status != "idle":
+                continue
+
+            if robot.current_task is not None:
+                continue
+
+            # Prüfe ob Robot auf Pickstation steht
+            robot_pos = robot.get_position()
+            if robot_pos is None:
+                continue
+
+            on_pickstation = False
+            for ps in self.state.pickstations:
+                if robot_pos == ps.position:
+                    on_pickstation = True
+                    break
+
+            if not on_pickstation:
+                return robot
+
+        return None
+
     def _update_robot_position_after_action(self, event):
         """
         Aktualisiert Roboter-Position nach erfolgreicher Aktion.
-        
+
         Wird nach relocate/remove_target/return aufgerufen.
         """
         robot = event.payload.get("robot")
@@ -443,7 +1132,7 @@ class EventHandler:
     def _handle_request_complete(self, event):
         """
         Behandelt vollständigen Abschluss eines Requests.
-        
+
         Wird aufgerufen, wenn:
         - Target-Bin zurückgelegt wurde
         - Alle Blocker-Bins zurückgelegt wurden
@@ -466,10 +1155,7 @@ class EventHandler:
                 f"robot task belongs to request {task.request_id}"
             )
 
-        # Sicherstellen, dass der Task wirklich vollständig und konsistent ist:
-        # - Target-Bin zurückgelegt
-        # - alle Blocker-Bins zurückgelegt
-        # - Lagerzustand konsistent
+        # Sicherstellen, dass der Task wirklich vollständig und konsistent ist
         task.require_consistently_completed(self.state)
 
         completion_time = self.state.t
@@ -477,14 +1163,20 @@ class EventHandler:
         # Hauptrequest abschließen (Metrik 3)
         self.metrics.record_full_completion(completion_time, task.request)
 
-        # Gebatchte Requests erhalten denselben Vollständigkeitszeitpunkt.
-        # Sie wurden alle an derselben Bin bedient, und die physische
-        # Rücklagerung wird vom gemeinsamen Task getragen.
+        # Gebatchte Requests erhalten denselben Vollständigkeitszeitpunkt
         for batched_request in task.batched_requests:
             self.metrics.record_full_completion(completion_time, batched_request)
 
         self.active_queue.mark_completed(request)
+
+        # NEU: Jetzt alle Reservierungen des Roboters freigeben
+        self.state.reservation_table.release_all(robot.robot_id)
+
         robot.clear_task()
+        # Roboter wird wirklich idle
+        robot.set_status("idle")
+        # Idle-Roboter-Regel: Port/Pufferzone verlassen
+        self._handle_robot_becomes_idle(robot)
 
     def _schedule_next_action_for_same_task(self, event):
         robot = event.payload.get("robot")
@@ -506,7 +1198,7 @@ class EventHandler:
 
         # Pfad berechnen und Bewegungs-Events erzeugen
         target_position = self._get_target_position_for_action(next_action)
-        
+
         if target_position is None:
             # Keine Bewegung erforderlich
             duration = self.event_builder.calculate_action_duration(
@@ -524,21 +1216,25 @@ class EventHandler:
 
             self.event_queue.push(next_event)
             return
-        
+
         # Pfad berechnen
         current_position = robot.get_position()
         if current_position is None:
-            current_position = target_position
-            robot.set_position(current_position)
+            # Mit der neuen Robot-Initialisierung sollte das nicht mehr vorkommen.
+            # Falls doch, behandeln wir es als Fehler, denn jede Bewegung
+            # muss eine definierte Startposition haben.
+            raise RuntimeError(
+                f"Robot {robot.robot_id} has no position when scheduling next action"
+            )
 
         path = self.event_builder.cost_model.calculate_path(
             from_position=current_position,
             to_position=target_position,
-            robot=robot,  # NEU
-            state=self.state,  # NEU
-            current_time=self.state.t,  # NEU
+            robot=robot,
+            state=self.state,
+            current_time=self.state.t,
         )
-        
+
         if not path:
             # Roboter ist bereits am Ziel
             duration = self.event_builder.calculate_action_duration(
@@ -556,7 +1252,7 @@ class EventHandler:
 
             self.event_queue.push(next_event)
             return
-        
+
         # Pfad-Events erzeugen (mit state für Reservierung)
         path_events = self.event_builder.build_path_events(
             robot=robot,
@@ -564,12 +1260,10 @@ class EventHandler:
             target_action=next_action,
             request=task.request,
             start_time=self.state.t,
-            state=self.state,  # NEU: state übergeben
+            state=self.state,
         )
-        
-        # NEU: Prüfen ob Pfad reserviert werden konnte
+
         if path_events is None:
-            # Reservierung fehlgeschlagen - Task in Warteschlange
             print(
                 f"[BLOCKED] Cannot reserve path for robot {robot.robot_id}, "
                 f"task {task.request_id} moved to waiting queue"
@@ -577,7 +1271,7 @@ class EventHandler:
             self.active_queue.add_waiting_task(task)
             robot.clear_task()
             return
-        
+
         for path_event in path_events:
             self.event_queue.push(path_event)
     
@@ -649,10 +1343,9 @@ class EventHandler:
 
             robot = scheduling_result["robot"]
             request = scheduling_result["request"]
-            
-            # NEU: Prüfen ob Bewegung erforderlich
+
             requires_movement = scheduling_result.get("requires_movement", False)
-            
+
             if not requires_movement:
                 # Keine Bewegung - direkt Action ausführen
                 duration = self.event_builder.calculate_action_duration(
@@ -670,24 +1363,26 @@ class EventHandler:
 
                 self.event_queue.push(event)
                 continue
-            
+
             # Bewegung erforderlich - Pfad berechnen
             target_position = self._get_target_position_for_action(action)
             current_position = robot.get_position()
-            
+
             if current_position is None:
-                # Roboter hat noch keine Position - setze auf Ziel
-                current_position = target_position
-                robot.set_position(current_position)
-            
+                # Mit der neuen Robot-Initialisierung sollte das nicht mehr vorkommen.
+                # Wenn doch, ist das ein Modelldefekt.
+                raise RuntimeError(
+                    f"Robot {robot.robot_id} has no position when scheduling new request"
+                )
+
             path = self.event_builder.cost_model.calculate_path(
                 from_position=current_position,
                 to_position=target_position,
-                robot=robot,  # NEU
-                state=self.state,  # NEU
-                current_time=self.state.t,  # NEU
+                robot=robot,
+                state=self.state,
+                current_time=self.state.t,
             )
-            
+
             if not path:
                 # Roboter ist bereits am Ziel - direkt Action ausführen
                 duration = self.event_builder.calculate_action_duration(
@@ -705,7 +1400,7 @@ class EventHandler:
 
                 self.event_queue.push(event)
                 continue
-            
+
             # Pfad-Events erzeugen und zur Queue hinzufügen
             path_events = self.event_builder.build_path_events(
                 robot=robot,
@@ -713,12 +1408,10 @@ class EventHandler:
                 target_action=action,
                 request=request,
                 start_time=scheduling_result["start_time"],
-                state=self.state,  # NEU: state übergeben
+                state=self.state,
             )
-            
-            # NEU: Prüfen ob Pfad reserviert werden konnte
+
             if path_events is None:
-                # Reservierung fehlgeschlagen - Request bleibt pending
                 print(
                     f"[BLOCKED] Cannot reserve path for robot {robot.robot_id}, "
                     f"request {request.request_id} stays pending"
@@ -726,6 +1419,28 @@ class EventHandler:
                 robot.clear_task()
                 self.active_queue.pending.appendleft(request)
                 continue
-            
+
             for path_event in path_events:
                 self.event_queue.push(path_event)
+
+    def _find_bin_location(self, bin_id):
+        """
+        Sucht die aktuelle Stack-Position einer Bin.
+
+        Rückgabe:
+            (stack, level) oder (None, None), falls Bin in keinem Stack liegt.
+
+        Wird genutzt für:
+        - Smart Skip bei blockierten Relocate-Aktionen:
+          Wenn die Blocker-Bin nicht mehr auf dem erwarteten Stack liegt,
+          wurde sie bereits „aus dem Weg geräumt“.
+        """
+        if bin_id is None:
+            return None, None
+
+        for stack in self.state.grid.all_stacks():
+            for level, bin_obj in enumerate(stack.bins):
+                if bin_obj.bin_id == bin_id:
+                    return stack, level
+
+        return None, None

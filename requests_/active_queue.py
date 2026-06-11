@@ -130,9 +130,21 @@ class ActiveQueue:
 
     def release_blocker_ownership(self, bin_id):
         """
-        Gibt die Ownership einer Bin frei, nachdem sie zurückgelagert wurde.
+        Gibt die Ownership einer blockierenden Bin auf (Ownership-Transfer, R-B3).
+
+        Wird aufgerufen, wenn der übernehmende Task die Ownership aus task.temp_storage
+        entfernt hat. Hier wird nur noch die globale Sperre aufgehoben.
+
+        ✅ DEFENSIV: Wenn keine Ownership existiert, nur Warnung ausgeben.
         """
-        self._blocker_ownership.pop(bin_id, None)
+        if bin_id in self._blocker_ownership:
+            self._blocker_ownership.pop(bin_id, None)
+            return
+
+        print(
+            f"[WARNING] Cannot release blocker ownership for bin {bin_id}: "
+            f"no owner registered in ActiveQueue (might be already released)"
+        )
 
     def transfer_blocker_ownership(self, bin_id, from_task, to_task):
         """
@@ -162,6 +174,17 @@ class ActiveQueue:
 
     def is_bin_blocker_owned(self, bin_id):
         return bin_id in self._blocker_ownership
+
+    # ------------------------------------------------------------------
+    # Hilfsmethode für EventHandler (Pickstation-Pickup)
+    # ------------------------------------------------------------------
+
+    def assign_task_to_robot(self, task, robot):
+        """
+        Backwards-kompatibler Wrapper:
+        Weist einen bestehenden Task einem Robot zu.
+        """
+        self.mark_task_assigned(task, robot)
 
     # ------------------------------------------------------------------
     # Reservierungsabfragen (Stufe 1 – Kernlogik)

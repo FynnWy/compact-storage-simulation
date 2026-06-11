@@ -49,6 +49,10 @@ class PlacementSelector:
         if strategy == "POPULARITY":
             return self._select_popularity_stack(state, bin_obj)
 
+        if strategy == "NEAREST":
+            # LR+NR: NÄCHSTER zulässiger Stack RELATIV ZUR PICKSTATION
+            return self._select_nearest_stack(state)
+
         raise ValueError(f"Unknown placement strategy: {strategy}")
 
     # ------------------------------------------------------------------ #
@@ -82,29 +86,62 @@ class PlacementSelector:
                 f"has no free capacity"
             )
 
+        # NEU: Stack darf nicht in der Port-Pufferzone liegen
+        if hasattr(state, "is_valid_storage_position"):
+            pos = self._parse_stack_position(stack)
+            if not state.is_valid_storage_position(pos[0], pos[1]):
+                raise RuntimeError(
+                    f"Cannot select original return stack: stack {stack.stack_id} "
+                    f"is in a port buffer zone or at a port"
+                )
+
         return stack
 
     def _select_random_stack(self, state):
         """
-        Wählt zufälligen Stack mit freier Kapazität (CIRS/AutoStore Baseline).
+        Wählt zufälligen Stack mit freier Kapazität (CIRS/AutoStore Baseline),
+        der NICHT in einer Port-Pufferzone liegt.
         """
-        max_stack_height = self._get_max_stack_height(state)
-
-        candidates = []
-        for stack in state.grid.all_stacks():
-            if stack.is_locked():
-                continue
-
-            if max_stack_height is not None and stack.height() >= max_stack_height:
-                continue
-
-            candidates.append(stack)
+        candidates = self._get_eligible_stacks(state)
 
         if not candidates:
-            raise RuntimeError("No suitable stack with free capacity available for RANDOM placement")
+            raise RuntimeError(
+                "No suitable stack with free capacity available for RANDOM placement"
+            )
 
         index = int(self.rng.integers(len(candidates)))
         return candidates[index]
+
+    def _select_nearest_stack(self, state):
+        """
+        Wählt den nächstgelegenen zulässigen Stack relativ zur Pickstation.
+
+        Distanz wird über Manhattan-Distanz zur NÄCHSTGELEGENEN Pickstation
+        berechnet (get_min_distance_to_pickstation).
+
+        Bei Gleichstand: Tie-Breaking nach y-Koordinate, dann x-Koordinate.
+
+        Zulässigkeitskriterien:
+        - Nicht gesperrt
+        - Freie Kapazität (< max_stack_height)
+        - Nicht in Port-Pufferzone
+        """
+        candidates = self._get_eligible_stacks(state)
+
+        if not candidates:
+            raise RuntimeError(
+                "No suitable stack with free capacity available for NEAREST placement"
+            )
+
+        # Sortieren nach Distanz zur Pickstation mit deterministischem Tie-Breaking
+        def sort_key(stack):
+            pos = self._parse_stack_position(stack)
+            distance = get_min_distance_to_pickstation(state, pos)
+            # Tie-Breaking: y-Koordinate, dann x-Koordinate
+            return (distance, pos[1], pos[0])
+
+        candidates_sorted = sorted(candidates, key=sort_key)
+        return candidates_sorted[0]
 
     def _select_abc_stack(self, state, bin_obj):
         """
@@ -364,6 +401,7 @@ class PlacementSelector:
         Liefert alle Stacks, die für Target-Bin-Rücklagerung verfügbar sind:
         - nicht gesperrt
         - unterhalb max_stack_height (falls definiert)
+        - NICHT in einer Port-Pufferzone (falls State dies unterstützt)
         """
         max_stack_height = self._get_max_stack_height(state)
         candidates = []
@@ -374,6 +412,12 @@ class PlacementSelector:
 
             if max_stack_height is not None and stack.height() >= max_stack_height:
                 continue
+
+            # NEU: Pufferzonen-Filter, falls verfügbar
+            if hasattr(state, "is_valid_storage_position"):
+                pos = self._parse_stack_position(stack)
+                if not state.is_valid_storage_position(pos[0], pos[1]):
+                    continue
 
             candidates.append(stack)
 

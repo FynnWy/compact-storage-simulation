@@ -105,6 +105,9 @@ class ExperimentRunner:
         config.reordering_strategy = experiment.reordering_strategy
         config.placement_strategy = experiment.placement_strategy
 
+        # NEU: Blocking-Bin Rücklagerung
+        config.return_blocking_bins = experiment.return_blocking_bins
+
         # Optionale Overrides
         if experiment.simulation_time is not None:
             config.simulation_time = experiment.simulation_time

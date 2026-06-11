@@ -120,6 +120,20 @@ class TopAccessStrategy(BaseStrategy):
         }
 
     def _next_restore_blockers_action(self, state, task):
+        # NEU: Prüfen, ob Blocking-Bins überhaupt zurückgelegt werden sollen
+        if not self._should_return_blocking_bins(state):
+            # Alle Relocation-Einträge verwerfen (Bins bleiben wo sie sind)
+            task.clear_all_relocations()
+
+            # Weiter zur nächsten Phase
+            if not task.pickstation_completed:
+                task.phase = RobotTask.PHASE_WAIT_FOR_PICKSTATION
+                return None
+
+            task.phase = RobotTask.PHASE_RETURN_TARGET
+            return self.next_action(state, task)
+
+        # --- Bestehende Logik für Ordered Return ---
         # NEU: Vor der ersten Rücklagerung Blocker ggf. umsortieren
         if not task.blockers_reordered and task.has_blockers_to_restore():
             if self._reordering_selector is None:
@@ -376,6 +390,7 @@ class TopAccessStrategy(BaseStrategy):
     def _select_buffer_stack(self, state, simulated_buffers):
         """
         Wählt den aktuell niedrigsten Buffer-Stack mit freier Kapazität.
+        Buffer-Stacks dürfen NICHT in Port-Pufferzonen liegen.
         """
         max_stack_height = self._get_max_stack_height(state)
 
@@ -389,6 +404,12 @@ class TopAccessStrategy(BaseStrategy):
 
             if max_stack_height is not None and simulated_height >= max_stack_height:
                 continue
+
+            # NEU: Pufferzonen-Filter (falls State dies unterstützt)
+            if hasattr(state, "is_valid_storage_position"):
+                pos = self._parse_stack_position(stack)
+                if not state.is_valid_storage_position(pos[0], pos[1]):
+                    continue
 
             candidate_stacks.append(stack)
 
@@ -425,3 +446,40 @@ class TopAccessStrategy(BaseStrategy):
                 return getattr(config, attr_name)
 
         return None
+
+    def _should_return_blocking_bins(self, state):
+        """
+        Prüft, ob Blocking-Bins zurückgelegt werden sollen.
+
+        Liest return_blocking_bins aus state.config.
+        Default: True (Ordered Return)
+        """
+        config = getattr(state, "config", None)
+        if config is None:
+            return True
+        return getattr(config, "return_blocking_bins", True)
+
+    def _parse_stack_position(self, stack):
+        """
+        Ermittelt eine (x, y)-Position für einen Stack, falls möglich.
+
+        Unterstützte Varianten:
+        - stack.stack_id als Tuple: (x, y)
+        - stack.stack_id als String: 'S_x_y'
+        """
+        stack_id = getattr(stack, "stack_id", None)
+
+        if isinstance(stack_id, tuple) and len(stack_id) == 2:
+            return stack_id
+
+        if isinstance(stack_id, str) and stack_id.startswith("S_"):
+            parts = stack_id.split("_")
+            if len(parts) == 3:
+                try:
+                    x = int(parts[1])
+                    y = int(parts[2])
+                    return x, y
+                except ValueError:
+                    pass
+
+        raise RuntimeError(f"Cannot parse position for stack_id={stack_id}")

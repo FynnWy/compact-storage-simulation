@@ -31,6 +31,7 @@ from traffic.reservation_table import ReservationTable
 from traffic.traffic_manager import TrafficManager
 from traffic.highway_rules import HighwayRules
 
+
 class SimulationEngine:
     def __init__(self, config):
         self.config = config
@@ -46,27 +47,26 @@ class SimulationEngine:
 
         self._initialize_state()
         self._initialize_simulation_components()
-    
+
     def _initialize_state(self):
         """
         Erstellt Grid, Bins, Roboter, Requests, Pickstations und initialisiert das Lager
         gemäß der gewählten Strategie.
         """
-        grid = StorageGrid(self.config.grid_width, self.config.grid_depth)
+        grid, pickstations = self._create_grid()
         bins = self._create_bins(self.config.bin_num)
         robots = self._create_robots(self.config.num_robots)
-        pickstations = self._create_pickstations()
         future_request_queue = self._create_future_request_queue()
         event_queue = EventQueue()
-        
+
         # ReservationTable erstellen
         reservation_table = ReservationTable(
             grid_width=self.config.grid_width,
             grid_depth=self.config.grid_depth,
             time_horizon=self.config.simulation_time,
         )
-        
-        # NEU: Highway-Regeln erstellen (falls aktiviert)
+
+        # Highway-Regeln erstellen (falls aktiviert)
         highway_rules = None
         if self.config.enable_highway_system:
             highway_rules = HighwayRules(
@@ -75,12 +75,13 @@ class SimulationEngine:
                 pattern=self.config.highway_pattern,
             )
             highway_rules.wrong_direction_penalty = self.config.highway_wrong_direction_penalty
-        
+
         # TrafficManager mit Highway-Regeln erstellen
         traffic_manager = TrafficManager(
             grid=grid,
             reservation_table=reservation_table,
-            highway_rules=highway_rules
+            highway_rules=highway_rules,
+            port_positions={ps.position for ps in pickstations},
         )
 
         self.hot_bin_ids = self._determine_hot_bin_ids()
@@ -92,7 +93,7 @@ class SimulationEngine:
             hot_bin_ids=self.hot_bin_ids,
             random_seed=self.config.random_seed,
             max_stack_height=self.config.max_stack_height,
-            # NEU: ABC-Thresholds aus Config an Initialisierung übergeben
+            # ABC-Thresholds aus Config an Initialisierung übergeben
             abc_threshold_a=self.config.abc_threshold_a,
             abc_threshold_b=self.config.abc_threshold_b,
         )
@@ -108,6 +109,8 @@ class SimulationEngine:
             traffic_manager=traffic_manager
         )
         self.state.config = self.config
+        # Port-Pufferzonen initialisieren (einmalig beim Start)
+        self.state.initialize_port_zones(pickstations)
         self.state.mark_initialized()
 
     def _initialize_simulation_components(self):
@@ -125,13 +128,13 @@ class SimulationEngine:
             cost_model=self.cost_model,
             config=self.config,  # NEU: Config übergeben
         )
-        
+
         self.request_handler = RequestHandler(
             state=self.state,
             event_builder=self.event_builder,
         )
         self.constraint_manager = ConstraintManager()
-        self.executor = ActionExecutor()
+        self.executor = ActionExecutor(event_builder=self.event_builder)
         self.metrics = Metrics()
 
         # WP4: ConvergenceDetector an Config anpassen (falls vorhanden)
@@ -410,12 +413,24 @@ class SimulationEngine:
         """
         Erstellt alle Roboter.
 
-        Roboter starten idle und ohne feste Position.
-        Ein Roboter kann pro Zeiteinheit eine Aktion ausführen.
+        Roboter starten idle und mit zufälliger Startposition
+        innerhalb des Grids.
+
+        Hintergrund:
+        - Realistische Initialisierung: Roboter stehen irgendwo im Lager.
+        - Alle Bewegungen erfolgen danach über Pathfinder/ReservationTable,
+          es gibt keine Teleports mehr.
         """
         robots = []
+
         for robot_id in range(num_robots):
-            robots.append(Robot(robot_id=robot_id, position=None))
+            # Zufällige Startposition im Grid
+            x = int(self.rng.integers(0, self.config.grid_width))
+            y = int(self.rng.integers(0, self.config.grid_depth))
+
+            start_pos = (x, y)
+            robots.append(Robot(robot_id=robot_id, position=start_pos))
+
         return robots
 
     def _create_future_request_queue(self):
@@ -455,40 +470,75 @@ class SimulationEngine:
     def is_ready(self):
         return self.state is not None and self.state.is_initialized()
 
+    def _create_grid(self):
+        """
+        Erstellt StorageGrid und Pickstations inkl. Port-Integration.
+
+        - Berechnet Pickstation-Positionen im Grid
+        - Extrahiert Port-Positionen
+        - Übergibt Port-Positionen an StorageGrid
+        """
+        pickstations = self._create_pickstations()
+        port_positions = {ps.position for ps in pickstations}
+
+        grid = StorageGrid(
+            self.config.grid_width,
+            self.config.grid_depth,
+            port_positions=port_positions,
+        )
+        return grid, pickstations
+
     def _create_pickstations(self):
         """
         Erstellt alle Pickstations basierend auf Config.
-        
-        Platzierung:
-        - Pickstations werden am linken Rand außerhalb des Grids platziert
-        - Position: (-1, y) wobei y gleichmäßig verteilt wird
-        
+
+        Neue Platzierung:
+        - Pickstations liegen IM Grid
+        - Genau 2 Pickstations (oder 1, falls so konfiguriert)
+        - Gegenüberliegend
+        - In der Mitte der längeren Seite
+        - Am Rand (erste/letzte Zeile oder Spalte)
+
         Returns:
             list[Pickstation]
         """
         pickstations = []
-        
+
         num_stations = self.config.num_pickstations
         capacity = self.config.pickstation_capacity
-        grid_depth = self.config.grid_depth
-        
-        for i in range(num_stations):
+        width = self.config.grid_width
+        depth = self.config.grid_depth
+
+        if num_stations not in (1, 2):
+            raise ValueError(
+                f"Unsupported number of pickstations: {num_stations}. "
+                f"This configuration expects 1 or 2 pickstations."
+            )
+
+        if depth >= width:
+            # Längere Seite ist depth → Ports links/rechts
+            mid_y = depth // 2
+            port_1_position = (0, mid_y)              # Linker Rand
+            port_2_position = (width - 1, mid_y)      # Rechter Rand
+        else:
+            # Längere Seite ist width → Ports oben/unten
+            mid_x = width // 2
+            port_1_position = (mid_x, 0)              # Oberer Rand
+            port_2_position = (mid_x, depth - 1)      # Unterer Rand
+
+        positions = []
+        if num_stations >= 1:
+            positions.append(port_1_position)
+        if num_stations == 2:
+            positions.append(port_2_position)
+
+        for i, position in enumerate(positions):
             station_id = f"PS_{i}"
-            
-            # Gleichmäßige Verteilung entlang der linken Seite
-            if num_stations == 1:
-                y_position = grid_depth // 2
-            else:
-                y_position = int(i * (grid_depth - 1) / (num_stations - 1))
-            
-            position = (-1, y_position)
-            
             pickstation = Pickstation(
                 station_id=station_id,
                 position=position,
                 capacity=capacity,
             )
-            
             pickstations.append(pickstation)
-        
+
         return pickstations

@@ -131,8 +131,18 @@ class Scheduler:
                                 robot.assign_task(task)
                                 self.active_queue.mark_assigned(request, robot)
 
-                                # Ownership-Transfer: Task A gibt Bin ab, Task B übernimmt
-                                owner_task.release_blocker_ownership(bin_id)
+                                # ✅ Ownership-Transfer: DEFENSIV
+                                released = owner_task.release_blocker_ownership(bin_id)
+
+                                # ✅ Nur wenn erfolgreich freigegeben, Ownership übernehmen
+                                if released is not None:
+                                    self.active_queue.release_blocker_ownership(bin_id)
+                                else:
+                                    # Ownership war bereits weg → trotzdem fortfahren
+                                    print(
+                                        f"[INFO] Opportunistic transfer of bin {bin_id}: "
+                                        f"ownership already released, proceeding anyway"
+                                    )
 
                                 action = self.strategy.next_action(state, task)
                                 return {
@@ -258,5 +268,48 @@ class Scheduler:
         for stack in state.grid.all_stacks():
             if stack.stack_id == stack_id:
                 return stack
+
+        return None
+
+    def _get_available_robot(self, state):
+        """
+        Findet einen idle Robot, der für neue Tasks verfügbar ist.
+
+        Ein Robot ist verfügbar, wenn:
+        - status == "idle"
+        - current_task == None
+        - NICHT auf einer Pickstation steht
+
+        Returns:
+            Robot oder None
+        """
+        for robot in state.robots:
+            # Status muss idle sein
+            if robot.status != "idle":
+                continue
+
+            # Kein aktiver Task
+            if robot.current_task is not None:
+                continue
+
+            # ✅ Prüfe ob Robot auf Pickstation steht
+            robot_pos = robot.get_position()
+            if robot_pos is None:
+                # Robot ohne Position → nicht verfügbar
+                continue
+
+            # Prüfe alle Pickstations
+            on_pickstation = False
+            for ps in state.pickstations:
+                if robot_pos == ps.position:
+                    on_pickstation = True
+                    break
+
+            if on_pickstation:
+                # Robot steht auf Pickstation → nicht verfügbar
+                continue
+
+            # Robot ist verfügbar
+            return robot
 
         return None

@@ -31,6 +31,9 @@ class Pickstation:
         self.queue = []  # [(task, arrival_time), ...]
         self.current_tasks = []  # Aktuell bediente Tasks (max = capacity)
         self.available_slots = capacity
+        # --- Port-Säulen-Zustand (NEU) ---
+        self.reserved_for_robot = None  # Robot-ID oder None
+        self.robot_on_port = None       # Physisch anwesender Robot
 
         # --- Statistiken ---
         self.total_bins_processed = 0
@@ -151,6 +154,103 @@ class Pickstation:
         self.total_tasks_processed += 1
 
     # ================================================================
+    # Port-Reservierung (NEU)
+    # ================================================================
+
+    def reserve(self, robot_id: int) -> bool:
+        """
+        Versucht Port für einen Roboter zu reservieren.
+
+        Args:
+            robot_id: ID des Roboters der reservieren möchte
+
+        Returns:
+            True wenn erfolgreich reserviert
+            False wenn bereits für ANDEREN Roboter reserviert
+        """
+        # Falls Port bereits physisch durch anderen Roboter belegt ist, blockieren
+        if self.robot_on_port is not None and self.robot_on_port != robot_id:
+            return False
+
+        if self.reserved_for_robot is None:
+            self.reserved_for_robot = robot_id
+            return True
+        elif self.reserved_for_robot == robot_id:
+            # Bereits für diesen Roboter reserviert (idempotent)
+            return True
+        else:
+            # Für anderen Roboter reserviert
+            return False
+
+    def release_reservation(self):
+        """Gibt Reservierung frei (nur Reservierung, nicht Anwesenheit)."""
+        self.reserved_for_robot = None
+
+    def robot_enters(self, robot_id: int):
+        """
+        Roboter betritt die Port-Position.
+
+        Args:
+            robot_id: ID des einfahrenden Roboters
+
+        Raises:
+            RuntimeError wenn Roboter keine Reservierung hat
+            RuntimeError wenn bereits anderer Roboter auf Port
+        """
+        if self.reserved_for_robot != robot_id:
+            raise RuntimeError(
+                f"Robot {robot_id} cannot enter port {self.station_id}: "
+                f"reserved for robot {self.reserved_for_robot}"
+            )
+        if self.robot_on_port is not None and self.robot_on_port != robot_id:
+            raise RuntimeError(
+                f"Robot {robot_id} cannot enter port {self.station_id}: "
+                f"robot {self.robot_on_port} already on port"
+            )
+        self.robot_on_port = robot_id
+
+    def robot_leaves(self):
+        """
+        Roboter verlässt die Port-Position.
+        Gibt automatisch auch die Reservierung frei.
+        """
+        self.robot_on_port = None
+        self.reserved_for_robot = None
+
+    def is_available(self) -> bool:
+        """
+        Prüft ob Port verfügbar ist (nicht reserviert UND nicht belegt).
+        """
+        return self.reserved_for_robot is None and self.robot_on_port is None
+
+    def is_reserved(self) -> bool:
+        """Prüft ob Port reserviert ist."""
+        return self.reserved_for_robot is not None
+
+    def is_reserved_by(self, robot_id: int) -> bool:
+        """Prüft ob Port für bestimmten Roboter reserviert ist."""
+        return self.reserved_for_robot == robot_id
+
+    def is_occupied(self) -> bool:
+        """Prüft ob Roboter physisch auf Port steht."""
+        return self.robot_on_port is not None
+
+    def can_robot_enter(self, robot_id: int) -> bool:
+        """
+        Prüft ob ein Roboter den Port betreten darf.
+
+        Erlaubt wenn:
+         - Port ist für diesen Roboter reserviert
+         - Kein anderer Roboter steht auf dem Port
+        """
+        if self.reserved_for_robot != robot_id:
+            return False
+        if self.robot_on_port is not None and self.robot_on_port != robot_id:
+            return False
+        return True
+
+
+    # ================================================================
     # Zustandsabfragen
     # ================================================================
 
@@ -216,9 +316,8 @@ class Pickstation:
             f"Pickstation("
             f"id={self.station_id}, "
             f"pos={self.position}, "
-            f"capacity={self.capacity}, "
-            f"queue={self.queue_length()}, "
-            f"serving={len(self.current_tasks)}, "
-            f"processed={self.total_tasks_processed}"
+            f"reserved={self.reserved_for_robot}, "
+            f"occupied={self.robot_on_port}, "
+            f"queue={self.queue_length()}"
             f")"
         )

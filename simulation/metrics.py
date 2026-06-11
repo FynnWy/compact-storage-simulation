@@ -314,6 +314,7 @@ class Metrics:
             "average_arrival_to_full_completion": self.average_arrival_to_full_completion(),
             "target_bin_removals": self.target_bin_removals,
             "time_series": self.time_series(),
+            "requests_completed": len(self._arrival_to_full_completion),
         }
 
         # WP5/RQ3-Zusatzinformationen (kompakt gehalten)

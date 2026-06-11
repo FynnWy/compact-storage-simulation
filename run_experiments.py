@@ -76,6 +76,25 @@ def create_experiments() -> List[ExperimentConfig]:
             reordering_strategy="POPULARITY",
             placement_strategy="POPULARITY",
         ),
+        ExperimentConfig(
+            name="RR+RR",
+            description=(
+                "Random Relocation + Random Return "
+                "(CIRS/AutoStore Baseline ohne Ordered Return)"
+            ),
+            reordering_strategy="LOFI",  # Keine spezielle Reordering-Logik
+            placement_strategy="RANDOM",  # Target-Bin zufällig zurücklagern
+            return_blocking_bins=False,  # Blocking-Bins NICHT zurücklegen
+            random_seeds=[42, 123, 456, 789, 1011],
+        ),
+        ExperimentConfig(
+            name="LR+NR",
+            description="Local Relocation + Nearest Return (structure-preserving)",
+            reordering_strategy="LOFI",  # Keine spezielle Reordering-Logik
+            placement_strategy="NEAREST",  # Target-Bin auf nächsten Stack
+            return_blocking_bins=False,  # Blocking-Bins NICHT zurücklegen
+            random_seeds=[42, 123, 456, 789, 1011],
+        ),
     ]
 
 

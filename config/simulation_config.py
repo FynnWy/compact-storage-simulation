@@ -54,6 +54,10 @@ class SimulationConfig:
         self.grip_cost = 1
         self.drop_cost = 1
 
+        # Dauer für Bin-Manipulation (relocate, remove_target, return)
+        # Umfasst: Greifen + Heben/Senken des Arms
+        self.action_cost_bin_manipulation = self.grip_cost + self.arm_move_cost_per_level
+
         """
         Pickstation-Konfiguration.
         
@@ -118,11 +122,21 @@ class SimulationConfig:
         self.reordering_strategy = "LOFI"
 
         # Placement-Strategie für Target-Bin-Rücklagerung
-        # "ORIGINAL"   = zurück auf Original-Stack (aktueller Zustand)
-        # "RANDOM"     = zufälliger Stack mit Kapazität (CIRS-Baseline)
+        # "ORIGINAL"   = zurück auf Original-Stack (aktuelles Verhalten)
+        # "RANDOM"     = zufälliger Stack mit Kapazität (CIRS-Baseline, für RR+RR)
+        # "NEAREST"    = nächstgelegener Stack zum Original (für LR+NR)
         # "ABC"        = Zonen nach ABC-Klasse
         # "POPULARITY" = Distanz + erwartete Grabtiefe gewichtet
         self.placement_strategy = "ORIGINAL"
+
+        # ------------------------------------------------------------
+        # Blocking-Bin Rücklagerung
+        # ------------------------------------------------------------
+
+        # Ob Blocking-Bins nach dem Pick auf den Original-Stack zurückgelegt werden
+        # True  = Ordered Return (aktuelles Verhalten)
+        # False = Blocking-Bins verbleiben an neuer Position (für RR+RR, LR+NR)
+        self.return_blocking_bins = True
 
         # ABC-Klassifizierung basierend auf Zipf-Verteilung (über bin_id)
         # Beispiel bei 100 Bins:
@@ -182,3 +196,10 @@ class SimulationConfig:
         # Zeiteinheiten zwischen zwei Distribution-Snapshots.
         # Empfehlung: 50–200, abhängig von Simulation_time.
         self.distribution_snapshot_interval = 100
+
+        # ------------------------------------------------------------
+        # Port-Priorisierung (WP4)
+        # ------------------------------------------------------------
+        # Zeiteinheiten pro Bewegungsschritt für die Port-Ankunftsschätzung.
+        # Default: identisch zu move_cost_per_grid_step.
+        self.port_move_cost_per_cell: int = self.move_cost_per_grid_step

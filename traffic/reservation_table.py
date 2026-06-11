@@ -105,6 +105,19 @@ class ReservationTable:
         """
         return self._reservations.get((x, y, t))
 
+    def get_blocked_at(self, t):
+        """
+        Gibt alle Positionen zurück, die zur Zeit t blockiert sind.
+
+        Returns:
+            set[(x, y)]
+        """
+        return {
+            (x, y)
+            for (x, y, ts), _robot in self._reservations.items()
+            if ts == t
+        }
+
     # ================================================================
     # Pfad-Reservierung
     # ================================================================

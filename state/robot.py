@@ -11,6 +11,17 @@ class Robot:
         self.path_target_action = None  # Aktion, die nach Pfad ausgeführt wird
 
     def set_position(self, position):
+        """
+        Setzt Position des Roboters.
+
+        ✅ WICHTIG: Position darf NIE auf None gesetzt werden, nachdem sie
+        einmal initialisiert wurde!
+        """
+        if position is None and self.position is not None:
+            raise RuntimeError(
+                f"Cannot set position of robot {self.robot_id} to None - "
+                f"robot already has position {self.position}"
+            )
         self.position = position
 
     def get_position(self):

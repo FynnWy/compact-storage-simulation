@@ -9,6 +9,10 @@ def _all_stack_positions(grid):
 
     for x in range(grid.width):
         for y in range(grid.depth):
+            # Wenn das Grid Port-Positionen kennt, nur echte Storage-Positionen verwenden. Pickstations nicht betrachten.
+            if hasattr(grid, "is_storage_position"):
+                if not grid.is_storage_position(x, y):
+                    continue
             positions.append((x, y))
 
     return positions

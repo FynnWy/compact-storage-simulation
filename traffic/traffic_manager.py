@@ -2,7 +2,7 @@
 
 from traffic.pathfinder import Pathfinder
 from traffic.deadlock_detector import DeadlockDetector, DeadlockResolver
-
+from traffic.port_exit_guard import PortExitGuard
 
 class TrafficManager:
     """
@@ -29,7 +29,8 @@ class TrafficManager:
         pathfinder=None,
         deadlock_detector=None,
         deadlock_resolver=None,
-        highway_rules=None,  # NEU
+        highway_rules=None,
+        port_positions=None,  # Port-Positionen für Ausfahrfeld-Garantie
     ):
         """
         Args:
@@ -42,13 +43,20 @@ class TrafficManager:
         """
         self.grid = grid
         self.reservation_table = reservation_table
-        self.highway_rules = highway_rules  # NEU
+        self.highway_rules = highway_rules
+
+        # Port-Positionen & Ausfahrfeld-Garantie
+        self.port_positions = set(port_positions or getattr(grid, "port_positions", set()))
+        self.port_exit_guard = PortExitGuard(
+            grid_width=grid.width,
+            grid_depth=grid.depth,
+        )
         
         # Pathfinder mit Highway-Regeln erstellen
         self.pathfinder = pathfinder or Pathfinder(
             grid,
             reservation_table,
-            highway_rules=highway_rules,  # NEU
+            highway_rules=highway_rules,
         )
         
         self.deadlock_detector = deadlock_detector or DeadlockDetector()
@@ -59,8 +67,6 @@ class TrafficManager:
         # Statistiken
         self._deadlocks_detected = 0
         self._deadlocks_resolved = 0
-    
-    # ... rest bleibt unverändert ...
     
     def request_path(
         self,
@@ -111,6 +117,23 @@ class TrafficManager:
             
             if path is None:
                 continue
+
+            # Ausfahrfeld-Garantie für Ports prüfen (HARTE Constraint)
+            if self.port_positions:
+                times = [start_time + i for i in range(len(path))]
+
+                is_valid, reason = self.port_exit_guard.validate_path_for_ports(
+                    path=path,
+                    path_times=times,
+                    port_positions=self.port_positions,
+                    get_blocked_at_time=lambda t: self.reservation_table.get_blocked_at(t),
+                    get_robot_on_port=lambda p, t: self._robot_on_port_at(p, t),
+                )
+
+                if not is_valid:
+                    # Pfad würde Port einschließen → ablehnen
+                    print(f"[BLOCKED] Path for robot {robot.robot_id} rejected: {reason}")
+                    continue
             
             # Pfad reservieren
             success, conflict = self.reservation_table.reserve_path(
@@ -135,6 +158,21 @@ class TrafficManager:
         
         # Alle Versuche fehlgeschlagen
         return None
+
+    def _robot_on_port_at(self, port_pos, t):
+        """
+        Prüft, ob zur Zeit t ein Roboter auf einem Port steht.
+
+        Implementierung über Reservierungstabelle:
+        Sobald eine Zelle (Port) für t reserviert ist, gilt sie als belegt.
+        """
+        if port_pos not in self.port_positions:
+            return False
+
+        blocking_robot = self.reservation_table.get_blocking_robot(
+            port_pos[0], port_pos[1], t
+        )
+        return blocking_robot is not None
     
     def release_robot_reservations(self, robot):
         """

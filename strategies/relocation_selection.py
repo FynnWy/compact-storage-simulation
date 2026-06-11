@@ -1,4 +1,6 @@
 # strategies/relocation_selection.py
+import numpy as np
+
 
 class RelocationSelection:
     """
@@ -23,6 +25,7 @@ class RelocationSelection:
         critical_stack_penalty=1000,
         cost_model=None,
         active_queue=None,
+        rng=None,
     ):
         """
         Args:
@@ -38,11 +41,15 @@ class RelocationSelection:
             active_queue:
                 Optional: ActiveQueue-Instanz, um kritische Bins/Stacks
                 zu ermitteln (reservierte Target- und Blocker-Bins).
+            rng:
+                Optionaler Random Number Generator für zufällige Auswahl
+                (z.B. im RR+RR-Setup).
         """
         self.neighbor_bonus = neighbor_bonus
         self.critical_stack_penalty = critical_stack_penalty
         self.cost_model = cost_model
         self.active_queue = active_queue
+        self.rng = rng or np.random.default_rng()
 
     # ------------------------------------------------------------------ #
     # Öffentliches Interface
@@ -66,6 +73,11 @@ class RelocationSelection:
           active_queue.get_all_reserved_bin_ids() liegt
           (Target-Bins aktiver/wartender Tasks + Blocker-Bins mit Ownership).
 
+        WICHTIG:
+        - Im RR+RR-Setup (placement_strategy="RANDOM" UND return_blocking_bins=False)
+          werden temporäre Stacks ZUFÄLLIG aus den zulässigen Kandidaten gewählt
+          (zufällige Verteilung der Blocker im Grid).
+
         Args:
             state: aktueller Lagerzustand (enthält grid und config).
             source_stack: Stack-Objekt, von dem die Blocker-Bin kommt.
@@ -83,14 +95,12 @@ class RelocationSelection:
 
         source_pos = self._parse_stack_position(source_stack)
         if source_pos is None:
-            # Falls keine sinnvolle Position bestimmbar ist, fällt die
-            # Distanzkomponente weg und wir wählen nur nach Kostenmodell /
-            # gleichweit entfernt.
             source_pos = (0, 0)
 
         critical_stack_ids = self._get_critical_stack_ids(state)
 
         candidate_scores = []
+        candidate_stacks = []
 
         for stack in state.grid.all_stacks():
             # Quellstack nie als Ziel verwenden
@@ -105,6 +115,15 @@ class RelocationSelection:
             if max_stack_height is not None and stack.height() >= max_stack_height:
                 continue
 
+            # NEU: Pufferzonen-Filter – Buffer-Stack darf nicht in Pufferzone liegen
+            if hasattr(state, "is_valid_storage_position"):
+                target_pos = self._parse_stack_position(stack)
+                if target_pos is not None:
+                    if not state.is_valid_storage_position(target_pos[0], target_pos[1]):
+                        continue
+
+            candidate_stacks.append(stack)
+
             # Basis-Kosten: geschätzte Relocation-Kosten (Zeit)
             base_cost = self._estimate_relocation_cost(state, source_stack, stack, source_pos)
 
@@ -115,10 +134,24 @@ class RelocationSelection:
             score = base_cost + critical_term
             candidate_scores.append((score, stack))
 
-        if not candidate_scores:
+        if not candidate_stacks:
             raise RuntimeError("No relocation stack with free capacity available")
 
-        # Niedrigste Kosten gewinnen
+        # ------------------------------------------------------------------ #
+        # RR+RR-Modus: Zufällige Verteilung der Blocker auf zulässige Stacks
+        # ------------------------------------------------------------------ #
+        cfg = getattr(state, "config", None)
+        placement_strategy = getattr(cfg, "placement_strategy", None) if cfg is not None else None
+        return_blocking_bins = getattr(cfg, "return_blocking_bins", True) if cfg is not None else True
+
+        if placement_strategy == "RANDOM" and return_blocking_bins is False:
+            # RR+RR-Setup: Random Relocation – wähle Zufallsstack aus Kandidaten
+            index = int(self.rng.integers(len(candidate_stacks)))
+            return candidate_stacks[index]
+
+        # ------------------------------------------------------------------ #
+        # Default: Kostenbasierte Auswahl (Local Relocation)
+        # ------------------------------------------------------------------ #
         candidate_scores.sort(key=lambda item: item[0])
         return candidate_scores[0][1]
 

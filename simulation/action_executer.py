@@ -1,19 +1,56 @@
 class ActionExecutor:
+    def __init__(self, event_builder):
+        """
+        Initialisiert den ActionExecutor.
+
+        Args:
+            event_builder: EventBuilder-Instanz für Event-Payload-Parsing
+        """
+        self.event_builder = event_builder
+
     def execute(self, event, state):
-        action = self._get_action_from_event(event)
+        """
+        Führt die Aktion eines Events aus.
+        """
+        action = self.event_builder.get_action_from_event(event)
         action_type = action.get("type")
 
         if action_type == "relocate":
             self._execute_relocate(action, state)
-
         elif action_type == "remove_target":
             self._execute_remove_target(action, state)
-
         elif action_type == "return":
             self._execute_return(action, state)
-
+        elif action_type == "pickup_from_pickstation":
+            self._execute_pickup_from_pickstation(action, state)
+        elif action_type == "request_complete":
+            pass  # Keine physische Aktion
         else:
             raise ValueError(f"Unknown action type: {action_type}")
+
+    def _execute_pickup_from_pickstation(self, action, state):
+        """
+        Holt Bin von Pickstation ab.
+
+        Bin-Status wechselt von "at_pickstation" zu "not_locked"
+        und wird dem Robot zugewiesen (logisch, nicht physisch).
+        """
+        bin_id = action.get("bin_id")
+        bin_obj = state.get_bin_by_id(bin_id)
+
+        if bin_obj is None:
+            raise RuntimeError(f"Cannot pickup: Bin {bin_id} not found")
+
+        if bin_obj.get_status() != "at_pickstation":
+            raise RuntimeError(
+                f"Cannot pickup bin {bin_id}: not at pickstation "
+                f"(status: {bin_obj.get_status()})"
+            )
+
+        # Bin-Status zurücksetzen
+        bin_obj.mark_transit_done()  # Status = "not_locked"
+
+        # Bin ist jetzt "beim Robot" (logisch) und muss zurück ins Grid
 
     def _get_action_from_event(self, event):
         if isinstance(event.payload, dict) and "action" in event.payload:
