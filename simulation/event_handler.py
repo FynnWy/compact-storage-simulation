@@ -121,12 +121,31 @@ class EventHandler:
             # Prüfen ob dort bereits ein anderer Roboter steht
             for other in self.state.robots:
                 if (
-                    other.robot_id != robot.robot_id
-                    and other.get_position() == next_waypoint
+                        other.robot_id != robot.robot_id
+                        and other.get_position() == next_waypoint
                 ):
                     print(
                         f"[WARNING] Robot {robot.robot_id} blocked at PS-area cell "
                         f"{next_waypoint} (occupied by robot {other.robot_id}) "
+                        f"at time {self.state.t}, retrying..."
+                    )
+                    delayed_event = self.event_builder.delay_event(
+                        event=event,
+                        current_time=self.state.t,
+                    )
+                    self.event_queue.push(delayed_event)
+                    return
+
+        # ✅ NEU: Port-Reservierung für nächsten Wegpunkt (falls Pickstation)
+        pickstation_at_next = self.state.find_pickstation_at(next_waypoint)
+        if pickstation_at_next is not None:
+            # Wenn Port noch nicht für diesen Roboter reserviert ist, versuchen zu reservieren
+            if not pickstation_at_next.is_reserved_by(robot.robot_id):
+                if not pickstation_at_next.reserve(robot.robot_id):
+                    # Port ist für anderen Roboter reserviert → Move verzögern
+                    print(
+                        f"[INFO] Robot {robot.robot_id} cannot reserve port "
+                        f"{pickstation_at_next.station_id} at {next_waypoint} "
                         f"at time {self.state.t}, retrying..."
                     )
                     delayed_event = self.event_builder.delay_event(
@@ -192,22 +211,6 @@ class EventHandler:
                 # Idle-Roboter dürfen NICHT in Pufferzone/Port parken
                 self._handle_robot_becomes_idle(robot)
 
-            return
-
-        # Noch nicht am Ziel - nächstes ROBOT_MOVE Event erzeugen
-        move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
-        next_move_event = self.event_builder.build_robot_move_event(
-            robot=robot,
-            time=self.state.t + move_cost,
-        )
-        self.event_queue.push(next_move_event)
-
-        # Prüfen ob Ziel erreicht
-        if robot.has_reached_destination():
-            # NEU: Nicht alle Reservierungen freigeben!
-            # Nur vergangene Reservierungen aufräumen, aktuelle Position behalten.
-            # Die aktuelle Position bleibt reserviert bis die Action abgeschlossen ist.
-            self._cleanup_past_reservations(robot)
             return
 
         # Noch nicht am Ziel - nächstes ROBOT_MOVE Event erzeugen

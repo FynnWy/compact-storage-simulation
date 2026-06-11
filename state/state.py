@@ -82,6 +82,24 @@ class State:
                 return bin_obj
         return None
 
+    def get_robot(self, robot_id):
+        """
+        Gibt Robot anhand seiner ID zurück.
+
+        Durchsucht die Liste aller Robots und liefert den Robot mit der
+        angegebenen ID. Analog zu get_bin_by_id() und get_pickstation().
+
+        Args:
+            robot_id: ID des gesuchten Roboters (int)
+
+        Returns:
+            Robot | None: Der gefundene Robot oder None wenn nicht vorhanden
+        """
+        for robot in self.robots:
+            if robot.robot_id == robot_id:
+                return robot
+        return None
+
     def get_stack(self, x, y):
         return self.grid.get_stack(x, y)
 

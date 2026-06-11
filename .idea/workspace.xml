@@ -4,35 +4,13 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Work Package 2.6 finished: Implemented Experiment-Runner and Export">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Work Packages 3-5 finished: WP 3: First Debugs and Tests, WP 4: Enhanced Pickstation logic to resolve blocking issues at pickstations and WP 5: new basic strategys (Random Relocation + Random Return and Local Relocation + Nearest Return)">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/init_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/init_strategy.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/simulation_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/simulation_config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/current_functions.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/experiments/experiment_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/experiments/experiment_config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/experiments/runner.py" beforeDir="false" afterPath="$PROJECT_DIR$/experiments/runner.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/plan_only_next_moves.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/requests_/active_queue.py" beforeDir="false" afterPath="$PROJECT_DIR$/requests_/active_queue.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/run_experiments.py" beforeDir="false" afterPath="$PROJECT_DIR$/run_experiments.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/action_executer.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/action_executer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/constraint_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/constraint_manager.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/event_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_builder.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/experiments/experiment_setup.md" beforeDir="false" afterPath="$PROJECT_DIR$/experiments/experiment_setup.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/metrics.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/metrics.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/robot_task.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/robot_task.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/scheduler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/scheduler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/simulation_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/simulation_engine.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/state/pickstation.py" beforeDir="false" afterPath="$PROJECT_DIR$/state/pickstation.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/state/robot.py" beforeDir="false" afterPath="$PROJECT_DIR$/state/robot.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/state/state.py" beforeDir="false" afterPath="$PROJECT_DIR$/state/state.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/state/storage_grid.py" beforeDir="false" afterPath="$PROJECT_DIR$/state/storage_grid.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategies/relocation_selection.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/relocation_selection.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategies/target_bin_placement_selector.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/target_bin_placement_selector.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategies/top_access_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/top_access_strategy.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/traffic/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/traffic/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/traffic/reservation_table.py" beforeDir="false" afterPath="$PROJECT_DIR$/traffic/reservation_table.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/traffic/traffic_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/traffic/traffic_manager.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_edge_cases.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_edge_cases.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -40,7 +18,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="96" />
+    <option name="cachedIndexableFilesCount" value="97" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -187,7 +165,7 @@
       <workItem from="1781007732451" duration="49000" />
       <workItem from="1781007801612" duration="461000" />
       <workItem from="1781008376416" duration="13114000" />
-      <workItem from="1781165506702" duration="8814000" />
+      <workItem from="1781165506702" duration="14600000" />
     </task>
     <task id="LOCAL-00001" summary="Initial project structure">
       <option name="closed" value="true" />
@@ -365,7 +343,15 @@
       <option name="project" value="LOCAL" />
       <updated>1780579582577</updated>
     </task>
-    <option name="localTasksCounter" value="23" />
+    <task id="LOCAL-00023" summary="Work Packages 3-5 finished: WP 3: First Debugs and Tests, WP 4: Enhanced Pickstation logic to resolve blocking issues at pickstations and WP 5: new basic strategys (Random Relocation + Random Return and Local Relocation + Nearest Return)">
+      <option name="closed" value="true" />
+      <created>1781179900384</created>
+      <option name="number" value="00023" />
+      <option name="presentableId" value="LOCAL-00023" />
+      <option name="project" value="LOCAL" />
+      <updated>1781179900384</updated>
+    </task>
+    <option name="localTasksCounter" value="24" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -416,7 +402,8 @@
     <MESSAGE value="Work Package 2.2 finished: Implemented ABC-Strategy (ABC-Reordering + ABC-Placement)" />
     <MESSAGE value="Work Package 2.3 - 2.5 finished: Implemented Popularity-aware Strategy (Popularity-Reordering + Popularity-Placement) and Metrics for RQ3/RQ4: Steady state and bin-distribution" />
     <MESSAGE value="Work Package 2.6 finished: Implemented Experiment-Runner and Export" />
-    <option name="LAST_COMMIT_MESSAGE" value="Work Package 2.6 finished: Implemented Experiment-Runner and Export" />
+    <MESSAGE value="Work Packages 3-5 finished: WP 3: First Debugs and Tests, WP 4: Enhanced Pickstation logic to resolve blocking issues at pickstations and WP 5: new basic strategys (Random Relocation + Random Return and Local Relocation + Nearest Return)" />
+    <option name="LAST_COMMIT_MESSAGE" value="Work Packages 3-5 finished: WP 3: First Debugs and Tests, WP 4: Enhanced Pickstation logic to resolve blocking issues at pickstations and WP 5: new basic strategys (Random Relocation + Random Return and Local Relocation + Nearest Return)" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />

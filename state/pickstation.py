@@ -194,19 +194,31 @@ class Pickstation:
             robot_id: ID des einfahrenden Roboters
 
         Raises:
-            RuntimeError wenn Roboter keine Reservierung hat
+            RuntimeError wenn keine gültige Reservierung für diesen Roboter existiert
             RuntimeError wenn bereits anderer Roboter auf Port
         """
+        # Keine Reservierung vorhanden
+        if self.reserved_for_robot is None:
+            raise RuntimeError(
+                f"Robot {robot_id} cannot enter port {self.station_id}: "
+                f"no reservation for this robot"
+            )
+
+        # Port ist für einen anderen Roboter reserviert
         if self.reserved_for_robot != robot_id:
             raise RuntimeError(
                 f"Robot {robot_id} cannot enter port {self.station_id}: "
                 f"reserved for robot {self.reserved_for_robot}"
             )
+
+        # Bereits ein anderer Roboter physisch auf dem Port
         if self.robot_on_port is not None and self.robot_on_port != robot_id:
             raise RuntimeError(
                 f"Robot {robot_id} cannot enter port {self.station_id}: "
                 f"robot {self.robot_on_port} already on port"
             )
+
+        # Gültige Reservierung für diesen Roboter → Eintritt erlaubt
         self.robot_on_port = robot_id
 
     def robot_leaves(self):
@@ -240,14 +252,20 @@ class Pickstation:
         Prüft ob ein Roboter den Port betreten darf.
 
         Erlaubt wenn:
+         - Port ist nicht reserviert, oder
          - Port ist für diesen Roboter reserviert
-         - Kein anderer Roboter steht auf dem Port
+         - UND kein anderer Roboter steht auf dem Port
         """
-        if self.reserved_for_robot != robot_id:
-            return False
+        # Anderer Roboter steht bereits physisch auf dem Port
         if self.robot_on_port is not None and self.robot_on_port != robot_id:
             return False
-        return True
+
+        # Port ist entweder nicht reserviert oder für diesen Roboter reserviert
+        if self.reserved_for_robot is None or self.reserved_for_robot == robot_id:
+            return True
+
+        # Für anderen Roboter reserviert
+        return False
 
 
     # ================================================================

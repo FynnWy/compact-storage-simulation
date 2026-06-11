@@ -12,16 +12,29 @@ zu machen.
 - Grid-Breite: `grid_width = 20`
 - Grid-Tiefe: `grid_depth = 30`
 - Maximale Stapelhöhe: `max_stack_height = 8`
+- Anzahl Pickstations im Grid: `num_pickstations = 2`
 
-Damit ergibt sich eine maximale Lagerkapazität von
+Wichtig:  
+Die Pickstations liegen **im Grid** und belegen reguläre Grid-Zellen. Diese
+Zellen werden in der Simulation **nicht** als Lager-Stacks behandelt und
+stehen damit nicht für die Einlagerung von Bins zur Verfügung.
+
+Damit ergibt sich eine **theoretische** maximale Lagerkapazität von
 
 \[
-C_{\max} = 20 \times 30 \times 8 = 4800 \text{ Bins}.
+C_{\text{theoretisch}} = 20 \times 30 \times 8 = 4800 \text{ Bins}.
 \]
 
-Das Grid ist rechteckig, mit einer längeren Seite in y-Richtung. Dies erlaubt
-eine platzierungsnahe Umsetzung der Empfehlung aus der Literatur, Pickstationen
-in der Mitte einer Systemseite bzw. auf gegenüberliegenden Seiten zu platzieren.
+Da jedoch zwei Grid-Zellen von Pickstations belegt sind, ist die
+**effektive** Lagerkapazität
+
+\[
+C_{\text{effektiv}} = (20 \times 30 - 2) \times 8 = 4784 \text{ Bins}.
+\]
+
+Die Initialisierungslogik (`init_random_distribution`) verwendet ausschließlich
+echte Storage-Positionen (d.h. keine Port-/Pickstation-Zellen) und berechnet
+die verfügbare Kapazität genau auf Basis dieser effektiven Stack-Anzahl.
 
 ## Bin-Anzahl und physische Auslastung
 
@@ -29,7 +42,13 @@ Die Anzahl der Bins wird so gewählt, dass das Lager stark ausgelastet, aber
 nicht vollständig gefüllt ist:
 
 - Füllgrad: ca. 90 %
-- Bin-Anzahl: `bin_num = 4320 ≈ 0.9 · C_max`
+- Bin-Anzahl: `bin_num = 4320`
+
+Bezogen auf die **effektive** Kapazität (ohne Pickstation-Zellen) ergibt sich:
+
+\[
+\text{Füllgrad} \approx \frac{4320}{4784} \approx 0{,}90.
+\]
 
 Damit sind die meisten Stacks bis nahe an die maximale Höhe belegt, es
 existieren jedoch noch ausreichend freie Top-Positionen, um Relocations von
@@ -44,17 +63,27 @@ Es werden zwei Pickstations eingesetzt:
 - Anzahl Pickstations: `num_pickstations = 2`
 - Kapazität pro Pickstation: `pickstation_capacity = 1`
 
-Die Platzierung erfolgt in der Simulation-Engine wie folgt:
+Die Platzierung erfolgt direkt **im Grid** durch die Simulation-Engine:
 
-- Spezialfall `num_pickstations == 2`:
-  - Zwei Pickstations werden auf gegenüberliegenden Seiten des Grids platziert,
-    jeweils in der geometrischen Mitte:
-    - Untere Seite: `(x_center, -1)`
-    - Obere Seite: `(x_center, grid_depth)`
-    mit `x_center = grid_width // 2`.
+- Die Pickstations liegen am Rand des Grids und sind sich gegenüberliegend
+  angeordnet.
+- Die konkrete Platzierung hängt von der längeren Seite des Grids ab:
+  - Falls `grid_depth >= grid_width` (längere Seite in y-Richtung):
+    - Linke Seite: `(0, depth // 2)`
+    - Rechte Seite: `(width - 1, depth // 2)`
+  - Andernfalls (längere Seite in x-Richtung):
+    - Obere Seite: `(width // 2, 0)`
+    - Untere Seite: `(width // 2, depth - 1)`
 
-Damit werden zwei „Ports“ an gegenüberliegenden Seiten realisiert, wie es in
-der Literatur zur Maximierung der Durchsatzkapazität beschrieben wird.
+Diese Grid-Positionen werden vom `StorageGrid` als Port-/Pickstation-Zellen
+gekennzeichnet und daher bei:
+
+- der Berechnung der verfügbaren Stack-Positionen und
+- der zufälligen Anfangsbelegung mit Bins
+
+**nicht** als Lager-Stacks berücksichtigt. Effektiv stehen somit bei zwei
+Pickstations genau zwei Stack-Positionen weniger für die Einlagerung zur
+Verfügung.
 
 Die Roboteranzahl wird relativ zur Systemgröße und den Pickstations gewählt:
 

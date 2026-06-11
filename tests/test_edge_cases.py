@@ -3,6 +3,14 @@
 Edge-Case Tests.
 
 Testet Grenzfälle die in echten Lägern Probleme verursachen könnten.
+
+HINWEIS: Minimale Grid-Größe ist 7x7, da kleinere Grids mit Pickstations
+und Pufferzonen kaum sinnvoll testbar sind.
+
+KAPAZITÄTSBERECHNUNG:
+- Pickstation-Positionen sind KEINE Storage-Stacks
+- Bei 7x7 Grid mit 1 Pickstation: 49 - 1 = 48 Storage-Stacks
+- Bei 8x8 Grid mit 1 Pickstation: 64 - 1 = 63 Storage-Stacks
 """
 import pytest
 from config.simulation_config import SimulationConfig
@@ -15,11 +23,13 @@ class TestFullGrid:
     def test_full_grid_no_crash(self):
         """Volles Grid darf nicht crashen."""
         config = SimulationConfig()
-        config.grid_width = 3
-        config.grid_depth = 3
+        config.grid_width = 7
+        config.grid_depth = 7
         config.max_stack_height = 4
-        # Genau genug Bins um Grid zu füllen: 3*3*4 = 36
-        config.bin_num = 36
+        # 7x7 = 49 Zellen, minus 1 Pickstation = 48 Storage-Stacks
+        # 48 * 4 = 192 max. Kapazität
+        # 90% Auslastung = 172 Bins (etwas Puffer für Relocations)
+        config.bin_num = 172
         config.num_robots = 1
         config.simulation_time = 200
         config.random_seed = 42
@@ -39,15 +49,17 @@ class TestFullGrid:
 
 
 class TestMinimalConfig:
-    """Minimale Konfiguration."""
+    """Minimale Konfiguration (mit sinnvoller Grid-Größe)."""
 
-    def test_single_robot_single_stack(self):
-        """1 Roboter, minimales Grid."""
+    def test_single_robot_minimal_grid(self):
+        """1 Roboter, minimales sinnvolles Grid (7x7)."""
         config = SimulationConfig()
-        config.grid_width = 2
-        config.grid_depth = 2
+        config.grid_width = 7
+        config.grid_depth = 7
         config.max_stack_height = 3
-        config.bin_num = 10
+        # 48 Storage-Stacks * 3 Höhe = 144 max. Kapazität
+        # 50% Auslastung = 72 Bins
+        config.bin_num = 72
         config.num_robots = 1
         config.simulation_time = 100
         config.random_seed = 42
@@ -74,10 +86,13 @@ class TestDifferentStrategies:
     def test_strategy_combinations(self, reordering, placement):
         """Verschiedene Strategie-Kombinationen sollten funktionieren."""
         config = SimulationConfig()
-        config.grid_width = 4
-        config.grid_depth = 4
+        config.grid_width = 8
+        config.grid_depth = 8
         config.max_stack_height = 5
-        config.bin_num = 40
+        # 64 - 1 Pickstation = 63 Storage-Stacks
+        # 63 * 5 = 315 max. Kapazität
+        # 70% Auslastung = 220 Bins
+        config.bin_num = 220
         config.num_robots = 2
         config.simulation_time = 300
         config.random_seed = 42
@@ -104,9 +119,11 @@ class TestSchedulerStrategies:
     def test_scheduler_strategies(self, scheduler):
         """FIFO und EDF sollten funktionieren."""
         config = SimulationConfig()
-        config.grid_width = 4
-        config.grid_depth = 4
-        config.bin_num = 40
+        config.grid_width = 8
+        config.grid_depth = 8
+        config.max_stack_height = 5
+        # 63 Storage-Stacks * 5 = 315, davon 63% = 200 Bins
+        config.bin_num = 200
         config.num_robots = 2
         config.simulation_time = 300
         config.random_seed = 42
@@ -128,9 +145,11 @@ class TestHighwaySystem:
     def test_highway_patterns(self, pattern):
         """Alle Highway-Patterns sollten funktionieren."""
         config = SimulationConfig()
-        config.grid_width = 5
-        config.grid_depth = 5
-        config.bin_num = 50
+        config.grid_width = 8
+        config.grid_depth = 8
+        config.max_stack_height = 5
+        # 63 Storage-Stacks * 5 = 315, davon 63% = 200 Bins
+        config.bin_num = 200
         config.num_robots = 2
         config.simulation_time = 200
         config.random_seed = 42
