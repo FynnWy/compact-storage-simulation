@@ -101,6 +101,12 @@ class EventHandler:
             # Pfad bereits abgeschlossen
             return
 
+        # Debug: geplanter Move
+        print(
+            f"[DEBUG][MOVE] t={self.state.t} robot={robot.robot_id} "
+            f"current_pos={robot.get_position()} next_waypoint={next_waypoint}"
+        )
+
         # Kollisionen an Pickstations und im „PS-Bereich“ (x < 0) verhindern
         # Wir behandeln:
         # - alle echten Pickstation-Positionen
@@ -172,6 +178,25 @@ class EventHandler:
             self.event_queue.push(delayed_event)
             return
 
+        # ✅ NEU: Harte Laufzeit-Kollisionsvermeidung für ALLE Zellen
+        # Falls ein anderer Roboter aktuell physisch auf next_waypoint steht,
+        # darf dieser Robot dort nicht hinfahren – unabhängig von Reservierungen.
+        for other in self.state.robots:
+            if other.robot_id == robot.robot_id:
+                continue
+            if other.get_position() == next_waypoint:
+                print(
+                    f"[WARNING] Robot {robot.robot_id} blocked at occupied cell "
+                    f"{next_waypoint} by robot {other.robot_id} at time {self.state.t}, "
+                    f"retrying..."
+                )
+                delayed_event = self.event_builder.delay_event(
+                    event=event,
+                    current_time=self.state.t,
+                )
+                self.event_queue.push(delayed_event)
+                return
+
         # Alte Position freigeben
         old_position = robot.get_position()
         if old_position is not None:
@@ -185,6 +210,31 @@ class EventHandler:
         except RuntimeError as e:
             print(f"[WARNING] Robot {robot.robot_id} move failed: {e}")
             return
+
+        # NEU: Bounds-Check nach dem Move
+        gx, gy = new_position
+        gw, gd = self.state.grid.width, self.state.grid.depth
+        if not (0 <= gx < gw and 0 <= gy < gd):
+            print(
+                f"[ILLEGAL_POS][MOVE] t={self.state.t} robot={robot.robot_id} "
+                f"moved to out-of-bounds position {new_position} "
+                f"(grid={gw}x{gd})"
+            )
+
+        # NEU: Kollisions-Check nach dem Move
+        pos_to_robot = {}
+        for r in self.state.robots:
+            pos = r.get_position()
+            if pos is None:
+                continue
+            if pos in pos_to_robot:
+                other_id = pos_to_robot[pos]
+                print(
+                    f"[COLLISION][MOVE] t={self.state.t} pos={pos} "
+                    f"robots={other_id},{r.robot_id}"
+                )
+            else:
+                pos_to_robot[pos] = r.robot_id
 
         # ✅ NEU: Port-Enter/Leave-Logik
         # Roboter fährt AUF eine Pickstation-Position
@@ -1160,18 +1210,18 @@ class EventHandler:
         """
         Aktualisiert Roboter-Position nach erfolgreicher Aktion.
 
-        Wird nach relocate/remove_target/return aufgerufen.
+        NEU:
+        Im aktuellen Modell werden alle physischen Bewegungen ausschließlich
+        über ROBOT_MOVE-Events und Pfadplanung (ReservationTable) abgebildet.
+
+        Aktionen wie relocate/remove_target/return verändern nur den
+        Lagerzustand (Stacks/Bins) und den Taskzustand, nicht die physische
+        Roboterposition. Zusätzliche "Teleports" nach einer Aktion führen
+        zu Mehrfachbelegung derselben Zelle und stören die Kollisionslogik.
+
+        Deshalb ist diese Methode jetzt bewusst ein No-Op.
         """
-        robot = event.payload.get("robot")
-
-        if robot is None:
-            return
-
-        action = self.event_builder.get_action_from_event(event)
-        final_position = self.event_builder.get_final_robot_position(action)
-
-        if final_position is not None:
-            robot.set_position(final_position)
+        return
 
     def _handle_request_complete(self, event):
         """

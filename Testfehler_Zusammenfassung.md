@@ -85,8 +85,8 @@ GELAGERT WERDEN
 2. Tests nicht aktualisiert.
 
 
-## 5. Kollisionsfehler, gelöst: NEIN
-**Failed:** Collision at (-1, 0) between Robot 0 and Robot 1
+## 5. Kollisionsfehler, gelöst: JA
+**Failed:** Collision at (-1, 0) between Robot 0 and Robot 1 und AssertionError: 101 collisions detected
 
 **Betroffene Tests:** test_no_collision_two_robots.
 
@@ -95,7 +95,8 @@ Die Pickstations liegen nun INNERHALB des Grids, die Kollision mit -1 sollte eig
 Vielleicht ein veralteter Test?
 
 **Wahrscheinliche Ursache**
-1. Veralteter Test?
+1. Collision at (-1, 0): Veralteter Test?
+2. AssertionError: 101 collisions detected: Ursache ungenau
 
 
 ## 6. Strategie-Selektor-Assertions, gelöst: NEIN

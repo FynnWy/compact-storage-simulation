@@ -4,9 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (return-stack): allow original and random return-stack selection when stack is in a port buffer zone">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (missing attribute in Test-Dummy)">
       <change beforePath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" beforeDir="false" afterPath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/test_event_handler_smart_skip.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_event_handler_smart_skip.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/simulation_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/simulation_engine.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -162,7 +163,7 @@
       <workItem from="1781007801612" duration="461000" />
       <workItem from="1781008376416" duration="13114000" />
       <workItem from="1781165506702" duration="14789000" />
-      <workItem from="1782378360201" duration="11949000" />
+      <workItem from="1782378360201" duration="14162000" />
     </task>
     <task id="LOCAL-00001" summary="Initial project structure">
       <option name="closed" value="true" />
@@ -380,7 +381,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782401469179</updated>
     </task>
-    <option name="localTasksCounter" value="28" />
+    <task id="LOCAL-00028" summary="Fix (missing attribute in Test-Dummy)">
+      <option name="closed" value="true" />
+      <created>1782401805626</created>
+      <option name="number" value="00028" />
+      <option name="presentableId" value="LOCAL-00028" />
+      <option name="project" value="LOCAL" />
+      <updated>1782401805626</updated>
+    </task>
+    <option name="localTasksCounter" value="29" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -410,7 +419,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="Initial project structure" />
     <MESSAGE value="Storage initialization done" />
     <MESSAGE value="Fixed dependencies and updated" />
     <MESSAGE value="Establish connections between key classes, execute initial smoke tests and resolve related bugs" />
@@ -435,7 +443,8 @@
     <MESSAGE value="Fix (port-reservation): prevent ports from being reserved by None" />
     <MESSAGE value="Fix (target bin stack-return): prevent violation of return-stack/top-of-stack invariant" />
     <MESSAGE value="Fix (return-stack): allow original and random return-stack selection when stack is in a port buffer zone" />
-    <option name="LAST_COMMIT_MESSAGE" value="Fix (return-stack): allow original and random return-stack selection when stack is in a port buffer zone" />
+    <MESSAGE value="Fix (missing attribute in Test-Dummy)" />
+    <option name="LAST_COMMIT_MESSAGE" value="Fix (missing attribute in Test-Dummy)" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
