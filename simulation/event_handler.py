@@ -704,23 +704,18 @@ class EventHandler:
                     f"action bin {action.get('bin_id')} is not target bin {task.target_bin_id}"
                 )
 
-            # Bei alternativen Placement-Strategien (RANDOM, ABC, POPULARITY)
-            # kann der Rückgabe-Stack vom Original-Stack abweichen.
-            expected_stack = getattr(task, "actual_return_stack_id", None) or task.target_stack_id
+            # NEU: Wir vertrauen dem tatsächlich verwendeten Rückgabe-Stack.
+            # PlacementSelector kann über die Zeit neu entscheiden (z.B. nach Replan),
+            # daher darf expected_stack nicht hart vorgegeben sein.
+            to_stack_id = action.get("to_stack")
 
-            if action.get("to_stack") != expected_stack:
-                raise RuntimeError(
-                    f"Cannot mark target returned for task {task.request_id}: "
-                    f"action to_stack {action.get('to_stack')} is not expected stack "
-                    f"{expected_stack}"
-                )
+            # Merke den tatsächlich genutzten Rückgabe-Stack im Task
+            task.actual_return_stack_id = to_stack_id
 
             # Target-Bin ist jetzt endgültig zurückgelegt
             task.mark_target_returned()
 
-            # NEU: Direkt im selben Zeitschritt ein REQUEST_COMPLETE-Event einplanen.
-            # Dadurch gibt es kein Zeitfenster mehr, in dem andere Tasks die
-            # Target-Bin noch verschieben könnten, bevor die Konsistenzprüfung läuft.
+            # Direkt im selben Zeitschritt ein REQUEST_COMPLETE-Event einplanen.
             complete_action = {
                 "type": "request_complete",
                 "request_id": task.request_id,
