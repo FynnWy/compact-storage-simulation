@@ -67,6 +67,10 @@ class PlacementSelector:
         - Stack existiert
         - Stack ist nicht gesperrt
         - Stack hat freie Kapazität (falls max_stack_height gesetzt ist)
+
+        WICHTIG:
+        - Für ORIGINAL-Placement wird der Pufferzonen-Filter NICHT angewendet.
+          Der Original-Stack darf also auch in der Buffer-Zone liegen.
         """
         stack = self._get_stack_by_id(state, original_stack_id)
 
@@ -86,23 +90,33 @@ class PlacementSelector:
                 f"has no free capacity"
             )
 
-        # NEU: Stack darf nicht in der Port-Pufferzone liegen
-        if hasattr(state, "is_valid_storage_position"):
-            pos = self._parse_stack_position(stack)
-            if not state.is_valid_storage_position(pos[0], pos[1]):
-                raise RuntimeError(
-                    f"Cannot select original return stack: stack {stack.stack_id} "
-                    f"is in a port buffer zone or at a port"
-                )
+        # Kein Pufferzonen-Filter hier: Original-Stack darf in der Buffer-Zone liegen.
+        # Echte Ports sind im Grid normalerweise keine Storage-Stacks und tauchen
+        # daher gar nicht erst als StorageStack auf.
 
         return stack
 
     def _select_random_stack(self, state):
         """
-        Wählt zufälligen Stack mit freier Kapazität (CIRS/AutoStore Baseline),
-        der NICHT in einer Port-Pufferzone liegt.
+        Wählt zufälligen Stack mit freier Kapazität (CIRS/AutoStore Baseline).
+
+        Für RANDOM-Placement wird der Pufferzonen-Filter NICHT angewendet:
+        - Kandidaten: alle nicht gesperrten Stacks mit freier Kapazität,
+          unabhängig davon, ob sie in der Buffer-Zone liegen.
         """
-        candidates = self._get_eligible_stacks(state)
+        max_stack_height = self._get_max_stack_height(state)
+        candidates = []
+
+        for stack in state.grid.all_stacks():
+            if stack.is_locked():
+                continue
+
+            if max_stack_height is not None and stack.height() >= max_stack_height:
+                continue
+
+            # Kein is_valid_storage_position()-Check hier:
+            # RANDOM darf auch Buffer-Zonen-Stacks nutzen.
+            candidates.append(stack)
 
         if not candidates:
             raise RuntimeError(
@@ -402,6 +416,9 @@ class PlacementSelector:
         - nicht gesperrt
         - unterhalb max_stack_height (falls definiert)
         - NICHT in einer Port-Pufferzone (falls State dies unterstützt)
+
+        Wird von NEAREST/ABC/POPULARITY verwendet – für ORIGINAL und RANDOM
+        wird bewusst kein Pufferzonen-Filter angewandt.
         """
         max_stack_height = self._get_max_stack_height(state)
         candidates = []
@@ -413,7 +430,7 @@ class PlacementSelector:
             if max_stack_height is not None and stack.height() >= max_stack_height:
                 continue
 
-            # NEU: Pufferzonen-Filter, falls verfügbar
+            # Pufferzonen-Filter NUR hier (nicht für ORIGINAL/RANDOM)
             if hasattr(state, "is_valid_storage_position"):
                 pos = self._parse_stack_position(stack)
                 if not state.is_valid_storage_position(pos[0], pos[1]):
