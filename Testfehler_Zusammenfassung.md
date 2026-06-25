@@ -56,7 +56,7 @@ NACH FIX:
 1. TopAccessStrategy: Keine weitere Action mehr planen, wenn PHASE_COMPLETE erreicht.
 2. EventHandler: REQUEST_COMPLETE-Events erzeugen, wenn Target-Return erfolgreich.
 
-## 3. Ungültige Auswahl des Original-Return-Stacks, gelöst: NEIN
+## 3. Ungültige Auswahl des Original-Return-Stacks, gelöst: JA
 
 WICHTIG: RÜCKLAGERUNG, ETC. Darf in den Bufferstacks passieren. NUR DÜRFEN DORT KEINE BLOCKIERENDEN BINS VON ANDEREN STACKS ZWISCHEN-
 GELAGERT WERDEN
@@ -73,7 +73,7 @@ GELAGERT WERDEN
 3. Geometrie-/Buffer-Zonen-Definition inkonsistent.
 
 
-## 4. Fehlende Attribute im Test-Dummy, gelöst: NEIN
+## 4. Fehlende Attribute im Test-Dummy, gelöst: JA
 **AttributeError:** 'DummyState' object has no attribute 'port_positions'
 
 **Betroffene Tests:** test_event_handler_smart_skip_*.

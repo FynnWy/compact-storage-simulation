@@ -4,8 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (target bin stack-return): prevent violation of return-stack/top-of-stack invariant">
-      <change beforePath="$PROJECT_DIR$/strategies/target_bin_placement_selector.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/target_bin_placement_selector.py" afterDir="false" />
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (return-stack): allow original and random return-stack selection when stack is in a port buffer zone">
+      <change beforePath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" beforeDir="false" afterPath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_event_handler_smart_skip.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_event_handler_smart_skip.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -70,34 +71,34 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Node.js.side_view.js.executor": "Run",
-    "Python.main.executor": "Run",
-    "Python.test_pickstation.executor": "Run",
-    "Python.test_traffic_system.executor": "Run",
-    "Python.test_view.executor": "Run",
-    "Python.web_visualizer.executor": "Run",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "ai.playground.ignore.import.keys.banner.in.settings": "true",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "fynn__dev",
-    "junie.onboarding.icon.badge.shown": "true",
-    "last_opened_file_path": "/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "ml.llm.LLMConfigurable",
-    "to.speed.mode.migration.done": "true",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Node.js.side_view.js.executor&quot;: &quot;Run&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_pickstation.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_traffic_system.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_view.executor&quot;: &quot;Run&quot;,
+    &quot;Python.web_visualizer.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;fynn__dev&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;ml.llm.LLMConfigurable&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$" />
@@ -161,7 +162,7 @@
       <workItem from="1781007801612" duration="461000" />
       <workItem from="1781008376416" duration="13114000" />
       <workItem from="1781165506702" duration="14789000" />
-      <workItem from="1782378360201" duration="11553000" />
+      <workItem from="1782378360201" duration="11949000" />
     </task>
     <task id="LOCAL-00001" summary="Initial project structure">
       <option name="closed" value="true" />
@@ -371,7 +372,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782400980777</updated>
     </task>
-    <option name="localTasksCounter" value="27" />
+    <task id="LOCAL-00027" summary="Fix (return-stack): allow original and random return-stack selection when stack is in a port buffer zone">
+      <option name="closed" value="true" />
+      <created>1782401469179</created>
+      <option name="number" value="00027" />
+      <option name="presentableId" value="LOCAL-00027" />
+      <option name="project" value="LOCAL" />
+      <updated>1782401469179</updated>
+    </task>
+    <option name="localTasksCounter" value="28" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -425,7 +434,8 @@
     <MESSAGE value="Work Packages 3-5 finished: WP 3: First Debugs and Tests, WP 4: Enhanced Pickstation logic to resolve blocking issues at pickstations and WP 5: new basic strategys (Random Relocation + Random Return and Local Relocation + Nearest Return)" />
     <MESSAGE value="Fix (port-reservation): prevent ports from being reserved by None" />
     <MESSAGE value="Fix (target bin stack-return): prevent violation of return-stack/top-of-stack invariant" />
-    <option name="LAST_COMMIT_MESSAGE" value="Fix (target bin stack-return): prevent violation of return-stack/top-of-stack invariant" />
+    <MESSAGE value="Fix (return-stack): allow original and random return-stack selection when stack is in a port buffer zone" />
+    <option name="LAST_COMMIT_MESSAGE" value="Fix (return-stack): allow original and random return-stack selection when stack is in a port buffer zone" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />

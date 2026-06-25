@@ -117,6 +117,13 @@ class DummyState:
             reserve=lambda robot_id, x, y, t: True
         )
 
+        # Zusatzattribute für Kompatibilität mit EventHandler / IdleParkingManager
+        # Nutzung als Mengen, daher als set() anlegen
+        self.port_positions = set()   # keine Ports nötig für Smart-Skip-Tests
+        self.buffer_zone = set()      # leere Pufferzone
+        self.pickstations = []        # keine Pickstations im Minimal-Setup
+        self.robots = []              # leere Roboterliste
+
     def get_bin_by_id(self, bin_id):
         for b in self.bins:
             if b.bin_id == bin_id:
