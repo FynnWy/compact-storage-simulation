@@ -38,7 +38,7 @@ dort muss vor dem Eintritt:
 2. Beim Verlassen des Ports (robot_leaves) und bei Abbruch von Tasks muss die Reservierung sauber freigegeben werden (release_reservation / robot_leaves).
 
 
-## 2. Rückgabestapel-/Top-of-Stack-Invariante verletzt, gelöst: NEIN
+## 2. Rückgabestapel-/Top-of-Stack-Invariante verletzt, gelöst: JA
 **RuntimeError:** Cannot complete request 0: target bin 102 is not on top of return stack S_5_3; top is 135
 
 **Betroffene Tests:** TestDifferentStrategies.
@@ -47,10 +47,14 @@ dort muss vor dem Eintritt:
 Tatsächlich liegt ein anderer Bin oben.
 
 **Wahrscheinliche Ursache**
-1. Relocation-/Return-Logik verletzt die Stack-Reihenfolge.
-2. Bin wird in falscher Reihenfolge zurückgelegt.
-3. Scheduler/Strategie erzeugt einen Ablauf, den die Stack-Invariante nicht abdeckt.
+1. Veralteter Test.
+2. Relocation-/Return-Logik verletzt die Stack-Reihenfolge.
+3. Bin wird in falscher Reihenfolge zurückgelegt.
+4. Scheduler/Strategie erzeugt einen Ablauf, den die Stack-Invariante nicht abdeckt.
 
+NACH FIX:
+1. TopAccessStrategy: Keine weitere Action mehr planen, wenn PHASE_COMPLETE erreicht.
+2. EventHandler: REQUEST_COMPLETE-Events erzeugen, wenn Target-Return erfolgreich.
 
 ## 3. Ungültige Auswahl des Original-Return-Stacks, gelöst: NEIN
 

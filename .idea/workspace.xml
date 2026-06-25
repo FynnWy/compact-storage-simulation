@@ -4,12 +4,14 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Work Packages 3-5 finished: WP 3: First Debugs and Tests, WP 4: Enhanced Pickstation logic to resolve blocking issues at pickstations and WP 5: new basic strategys (Random Relocation + Random Return and Local Relocation + Nearest Return)">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (port-reservation): prevent ports from being reserved by None">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/experiments/experiment_setup.md" beforeDir="false" afterPath="$PROJECT_DIR$/experiments/experiment_setup.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" beforeDir="false" afterPath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/action_executer.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/action_executer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/state/pickstation.py" beforeDir="false" afterPath="$PROJECT_DIR$/state/pickstation.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/state/state.py" beforeDir="false" afterPath="$PROJECT_DIR$/state/state.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/robot_task.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/robot_task.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/strategies/relocation_selection.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/relocation_selection.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/strategies/top_access_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/top_access_strategy.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/test_edge_cases.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_edge_cases.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -18,7 +20,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="97" />
+    <option name="cachedIndexableFilesCount" value="98" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -75,34 +77,34 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;Node.js.side_view.js.executor&quot;: &quot;Run&quot;,
-    &quot;Python.main.executor&quot;: &quot;Run&quot;,
-    &quot;Python.test_pickstation.executor&quot;: &quot;Run&quot;,
-    &quot;Python.test_traffic_system.executor&quot;: &quot;Run&quot;,
-    &quot;Python.test_view.executor&quot;: &quot;Run&quot;,
-    &quot;Python.web_visualizer.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
-    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
-    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;fynn__dev&quot;,
-    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
-    &quot;last_opened_file_path&quot;: &quot;/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation&quot;,
-    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
-    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
-    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
-    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
-    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;,
-    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
-    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Node.js.side_view.js.executor": "Run",
+    "Python.main.executor": "Run",
+    "Python.test_pickstation.executor": "Run",
+    "Python.test_traffic_system.executor": "Run",
+    "Python.test_view.executor": "Run",
+    "Python.web_visualizer.executor": "Run",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "ai.playground.ignore.import.keys.banner.in.settings": "true",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "fynn__dev",
+    "junie.onboarding.icon.badge.shown": "true",
+    "last_opened_file_path": "/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "settings.editor.selected.configurable": "ml.llm.LLMConfigurable",
+    "to.speed.mode.migration.done": "true",
+    "vue.rearranger.settings.migration": "true"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$" />
@@ -165,7 +167,8 @@
       <workItem from="1781007732451" duration="49000" />
       <workItem from="1781007801612" duration="461000" />
       <workItem from="1781008376416" duration="13114000" />
-      <workItem from="1781165506702" duration="14600000" />
+      <workItem from="1781165506702" duration="14789000" />
+      <workItem from="1782378360201" duration="10628000" />
     </task>
     <task id="LOCAL-00001" summary="Initial project structure">
       <option name="closed" value="true" />
@@ -351,7 +354,15 @@
       <option name="project" value="LOCAL" />
       <updated>1781179900384</updated>
     </task>
-    <option name="localTasksCounter" value="24" />
+    <task id="LOCAL-00024" summary="Fix (port-reservation): prevent ports from being reserved by None">
+      <option name="closed" value="true" />
+      <created>1781186579128</created>
+      <option name="number" value="00024" />
+      <option name="presentableId" value="LOCAL-00024" />
+      <option name="project" value="LOCAL" />
+      <updated>1781186579128</updated>
+    </task>
+    <option name="localTasksCounter" value="25" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -403,7 +414,8 @@
     <MESSAGE value="Work Package 2.3 - 2.5 finished: Implemented Popularity-aware Strategy (Popularity-Reordering + Popularity-Placement) and Metrics for RQ3/RQ4: Steady state and bin-distribution" />
     <MESSAGE value="Work Package 2.6 finished: Implemented Experiment-Runner and Export" />
     <MESSAGE value="Work Packages 3-5 finished: WP 3: First Debugs and Tests, WP 4: Enhanced Pickstation logic to resolve blocking issues at pickstations and WP 5: new basic strategys (Random Relocation + Random Return and Local Relocation + Nearest Return)" />
-    <option name="LAST_COMMIT_MESSAGE" value="Work Packages 3-5 finished: WP 3: First Debugs and Tests, WP 4: Enhanced Pickstation logic to resolve blocking issues at pickstations and WP 5: new basic strategys (Random Relocation + Random Return and Local Relocation + Nearest Return)" />
+    <MESSAGE value="Fix (port-reservation): prevent ports from being reserved by None" />
+    <option name="LAST_COMMIT_MESSAGE" value="Fix (port-reservation): prevent ports from being reserved by None" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />

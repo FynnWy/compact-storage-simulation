@@ -38,6 +38,11 @@ class ActionExecutor:
         bin_id = action.get("bin_id")
         bin_obj = state.get_bin_by_id(bin_id)
 
+        print(
+            f"[TRACE][PICKUP_PS] t={state.t} bin={bin_id} "
+            f"status_before={bin_obj.get_status() if bin_obj else None}"
+        )
+
         if bin_obj is None:
             raise RuntimeError(f"Cannot pickup: Bin {bin_id} not found")
 
@@ -69,6 +74,10 @@ class ActionExecutor:
         to_stack = self._get_stack_by_id(state, action.get("to_stack"))
         bin_id = action.get("bin_id")
 
+        print(f"[TRACE][RELOCATE] t={state.t} bin={bin_id} "
+              f"from={from_stack.stack_id if from_stack else None} "
+              f"to={to_stack.stack_id if to_stack else None}")
+
         self._require_stack(from_stack, action.get("from_stack"))
         self._require_stack(to_stack, action.get("to_stack"))
 
@@ -93,6 +102,9 @@ class ActionExecutor:
         from_stack = self._get_stack_by_id(state, action.get("from_stack"))
         bin_id = action.get("bin_id")
 
+        print(f"[TRACE][REMOVE_TARGET] t={state.t} bin={bin_id} "
+              f"from={from_stack.stack_id if from_stack else None}")
+
         self._require_stack(from_stack, action.get("from_stack"))
 
         bin_obj = from_stack.pop()
@@ -113,6 +125,9 @@ class ActionExecutor:
         from_stack_id = action.get("from_stack")
         to_stack = self._get_stack_by_id(state, action.get("to_stack"))
         bin_id = action.get("bin_id")
+
+        print(f"[TRACE][RETURN] t={state.t} bin={bin_id} "
+              f"from={from_stack_id} to={to_stack.stack_id if to_stack else None}")
 
         self._require_stack(to_stack, action.get("to_stack"))
 

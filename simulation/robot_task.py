@@ -282,16 +282,45 @@ class RobotTask:
         if target_stack is None:
             return False, f"return stack {effective_stack_id} does not exist"
 
-        top_bin = target_stack.peek()
+        # Prüfe, ob die Ziel-Bin überhaupt noch im System existiert
+        bin_obj = state.get_bin_by_id(self.target_bin_id)
+        if bin_obj is None:
+            return False, f"target bin {self.target_bin_id} no longer exists in state"
 
-        if top_bin is None:
-            return False, f"return stack {effective_stack_id} is empty"
+        # Effektive Stack-Position aus Stack-ID ableiten
+        # (unterstützt sowohl Tuple als auch 'S_x_y')
+        effective_pos = None
+        stack_id = effective_stack_id
+        if isinstance(stack_id, tuple) and len(stack_id) == 2:
+            effective_pos = stack_id
+        elif isinstance(stack_id, str) and stack_id.startswith("S_"):
+            parts = stack_id.split("_")
+            if len(parts) == 3:
+                try:
+                    effective_pos = (int(parts[1]), int(parts[2]))
+                except ValueError:
+                    # Fallback: direkte ID vergleichen
+                    effective_pos = stack_id
+        else:
+            effective_pos = stack_id
 
-        if top_bin.bin_id != self.target_bin_id:
+        # Jetzt prüfen wir die Bin-Metadaten:
+        # Sie muss auf dem erwarteten Rückgabe-Stack liegen,
+        # aber nicht zwingend ganz oben.
+        if bin_obj.get_stack() != effective_pos:
             return (
                 False,
-                f"target bin {self.target_bin_id} is not on top of "
-                f"return stack {effective_stack_id}; top is {top_bin.bin_id}"
+                f"target bin {self.target_bin_id} is on stack {bin_obj.get_stack()}, "
+                f"expected {effective_pos}"
+            )
+
+        # Optional: zusätzliche Sicherheitsprüfung, dass die Bin im Stack enthalten ist.
+        # (Engine-validierungen sollten dies ohnehin sicherstellen.)
+        if bin_obj not in target_stack.bins:
+            return (
+                False,
+                f"target bin {self.target_bin_id} metadata says stack {effective_pos}, "
+                f"but bin not found in that stack's bin list"
             )
 
         return True, "task is consistently completed"

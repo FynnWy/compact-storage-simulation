@@ -122,6 +122,11 @@ class RelocationSelection:
                     if not state.is_valid_storage_position(target_pos[0], target_pos[1]):
                         continue
 
+            # NEU: Stacks mit reservierten Bins (Target- oder Blocker-Bins)
+            # werden GAR NICHT als Relocation-Ziel zugelassen.
+            if stack.stack_id in critical_stack_ids:
+                continue
+
             candidate_stacks.append(stack)
 
             # Basis-Kosten: geschätzte Relocation-Kosten (Zeit)
@@ -152,6 +157,7 @@ class RelocationSelection:
         # ------------------------------------------------------------------ #
         # Default: Kostenbasierte Auswahl (Local Relocation)
         # ------------------------------------------------------------------ #
+        print("[DEBUG] selecting relocation for source", source_stack.stack_id)
         candidate_scores.sort(key=lambda item: item[0])
         return candidate_scores[0][1]
 
@@ -244,12 +250,25 @@ class RelocationSelection:
             if bin_obj is None:
                 continue
 
-            stack_id = bin_obj.get_stack()
-            if stack_id is None:
+            stack_pos = bin_obj.get_stack()
+            if stack_pos is None:
                 # Bin könnte z.B. an der Pickstation sein
                 continue
 
+            # stack_pos ist typischerweise ein (x, y)-Tuple.
+            # Wir normalisieren auf dieselbe ID-Form wie StorageStack.stack_id: "S_x_y".
+            if isinstance(stack_pos, tuple) and len(stack_pos) == 2:
+                x, y = stack_pos
+                stack_id = f"S_{x}_{y}"
+            else:
+                # Fallback: bereits eine ID (z.B. String) – direkt übernehmen
+                stack_id = stack_pos
+
             critical_stack_ids.add(stack_id)
+
+        # Gesamtübersicht nach dem Aufbau der Menge
+        print("[DEBUG] reserved_bin_ids:", reserved_bin_ids)
+        print("[DEBUG] critical_stack_ids:", critical_stack_ids)
 
         return critical_stack_ids
 

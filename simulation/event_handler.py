@@ -511,6 +511,22 @@ class EventHandler:
 
         self.executor.execute(event, self.state)
 
+        action_type = action.get("type")
+        bin_id = action.get("bin_id")
+        request = event.payload.get("request")
+        robot = event.payload.get("robot")
+        task = getattr(robot, "current_task", None) if robot is not None else None
+
+        if bin_id == 102:
+            print(
+                f"[TRACE][POST_ACTION] t={self.state.t} type={action_type} bin={bin_id} "
+                f"req={request.request_id if request else None} "
+                f"task={task.request_id if task else None} "
+                f"task_phase={getattr(task, 'phase', None)} "
+                f"target_stack_id={getattr(task, 'target_stack_id', None)} "
+                f"actual_return_stack_id={getattr(task, 'actual_return_stack_id', None)} "
+            )
+
         # in_transit zurücksetzen NACH erfolgreicher Ausführung
         self._mark_bin_in_transit(action, state=self.state, in_transit=False)
 
@@ -520,6 +536,12 @@ class EventHandler:
         if action.get("type") == "remove_target":
             self._attach_batched_requests_to_task(event)
             self._start_pickstation_service_and_release_robot(event)
+            return
+
+        # NEU: Bei einem erfolgreichen Target-Return wurde oben bereits
+        # im selben Zeitschritt ein REQUEST_COMPLETE-Event erzeugt.
+        # Wir planen daher KEINE weitere Aktion mehr für diesen Task.
+        if action.get("type") == "return" and action.get("return_kind") == "target":
             return
 
         self._schedule_next_action_for_same_task(event)
@@ -657,10 +679,12 @@ class EventHandler:
             return
 
         if action_type == "return":
-            self._update_task_after_successful_return(task, action)
+            # NEU: Robot an Return-Update übergeben, damit dort direkt
+            # ein REQUEST_COMPLETE-Event eingeplant werden kann.
+            self._update_task_after_successful_return(task, action, robot)
             return
 
-    def _update_task_after_successful_return(self, task, action):
+    def _update_task_after_successful_return(self, task, action, robot):
         return_kind = action.get("return_kind")
 
         if return_kind == "blocker":
@@ -680,9 +704,8 @@ class EventHandler:
                     f"action bin {action.get('bin_id')} is not target bin {task.target_bin_id}"
                 )
 
-            # NEU: Bei alternativen Placement-Strategien (RANDOM, ABC, POPULARITY)
+            # Bei alternativen Placement-Strategien (RANDOM, ABC, POPULARITY)
             # kann der Rückgabe-Stack vom Original-Stack abweichen.
-            # actual_return_stack_id wird von TopAccessStrategy._next_return_target_action gesetzt.
             expected_stack = getattr(task, "actual_return_stack_id", None) or task.target_stack_id
 
             if action.get("to_stack") != expected_stack:
@@ -692,7 +715,26 @@ class EventHandler:
                     f"{expected_stack}"
                 )
 
+            # Target-Bin ist jetzt endgültig zurückgelegt
             task.mark_target_returned()
+
+            # NEU: Direkt im selben Zeitschritt ein REQUEST_COMPLETE-Event einplanen.
+            # Dadurch gibt es kein Zeitfenster mehr, in dem andere Tasks die
+            # Target-Bin noch verschieben könnten, bevor die Konsistenzprüfung läuft.
+            complete_action = {
+                "type": "request_complete",
+                "request_id": task.request_id,
+                "bin_id": task.target_bin_id,
+            }
+
+            complete_event = self.event_builder.build_event_from_action(
+                action=complete_action,
+                request=task.request,
+                robot=robot,
+                time=self.state.t,  # gleiche Simulationszeit wie die Return-Action
+            )
+
+            self.event_queue.push(complete_event)
             return
 
         raise RuntimeError(
@@ -899,6 +941,10 @@ class EventHandler:
             raise RuntimeError("Cannot handle pickstation completion: event has no task")
 
         task.mark_pickstation_completed()
+
+        if task.target_bin_id == 102:
+            print(f"[TRACE][PS_COMPLETE] t={self.state.t} task={task.request_id} "
+                  f"bin={task.target_bin_id}")
 
         # Finde Pickstation, an der dieser Task war
         pickstation = None

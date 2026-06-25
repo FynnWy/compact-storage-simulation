@@ -69,7 +69,10 @@ class TopAccessStrategy(BaseStrategy):
             return self._next_return_target_action(state, task)
 
         if task.phase == RobotTask.PHASE_COMPLETE:
-            return self._next_complete_action(task)
+            # NEU: Keine weitere Action mehr planen.
+            # Completion-Events werden ausschließlich im EventHandler direkt
+            # nach einem erfolgreichen Target-Return erzeugt.
+            return None
 
         raise ValueError(f"Unknown task phase: {task.phase}")
 
@@ -243,6 +246,15 @@ class TopAccessStrategy(BaseStrategy):
         }
 
     def _next_complete_action(self, task):
+        """
+        Legacy-Helper für frühere Strategien.
+
+        Im Next-Step-Flow von TopAccessStrategy wird PHASE_COMPLETE nicht mehr
+        über eine request_complete-Action beendet, sondern ausschließlich über
+        REQUEST_COMPLETE-Events, die im EventHandler nach Target-Return
+        erzeugt werden. Diese Methode bleibt nur für Rückwärtskompatibilität
+        bestehen und sollte in neuen Flows nicht mehr verwendet werden.
+        """
         return {
             "type": "request_complete",
             "request_id": task.request_id,

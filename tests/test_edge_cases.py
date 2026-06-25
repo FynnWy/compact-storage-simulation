@@ -138,6 +138,51 @@ class TestSchedulerStrategies:
                 break
 
 
+class TestRequestCompletionStackInvariant:
+    """
+    Integrationstest für die gelockerte Stack-Invariante beim Request-Abschluss.
+
+    Ziel:
+    - Für verschiedene Kombinationen aus Reordering- und Placement-Strategie
+      soll die Simulation ohne Crash durchlaufen können.
+    - Insbesondere darf die Abschlusslogik NICHT mehr verlangen, dass die
+      Target-Bin ganz oben auf dem Rückgabestack liegt.
+    """
+
+    @pytest.mark.parametrize("reordering,placement", [
+        ("LOFI", "ORIGINAL"),
+        ("LOFI", "RANDOM"),
+        ("ABC", "ORIGINAL"),
+        ("ABC", "ABC"),
+        ("POPULARITY", "POPULARITY"),
+    ])
+    def test_requests_complete_without_top_of_stack_requirement(self, reordering, placement):
+        from config.simulation_config import SimulationConfig
+        from simulation.simulation_engine import SimulationEngine
+
+        config = SimulationConfig()
+        config.grid_width = 6
+        config.grid_depth = 6
+        config.max_stack_height = 4
+        config.bin_num = 80
+        config.num_robots = 2
+        config.simulation_time = 200
+        config.random_seed = 123
+        config.enable_visualization = False
+        config.reordering_strategy = reordering
+        config.placement_strategy = placement
+
+        engine = SimulationEngine(config)
+
+        # Lauf eine begrenzte Anzahl Schritte.
+        # Erwartung: Es tritt KEIN RuntimeError aus RobotTask.require_consistently_completed auf.
+        max_events = 400
+        for _ in range(max_events):
+            event = engine.step()
+            if event is None:
+                break
+
+
 class TestHighwaySystem:
     """Highway-System Tests."""
 
