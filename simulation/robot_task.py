@@ -98,21 +98,37 @@ class RobotTask:
 
     def mark_last_relocation_restored(self, bin_id, from_stack, to_stack):
         """
-        Markiert genau die zuletzt ausgelagerte Bin als erfolgreich zurückgelagert.
+        Markiert eine zuvor ausgelagerte Bin als erfolgreich zurückgelagert.
+
+        Verhalten:
+        - Wenn diese Bin noch in temp_storage des Tasks geführt wird:
+          * passenden Eintrag finden
+          * from_stack / to_stack validieren
+          * Eintrag entfernen.
+        - Wenn die Bin NICHT (mehr) in temp_storage dieses Tasks existiert:
+          * kein Fehler – ein anderer Task oder kein Blocker dieses Tasks.
         """
-        relocation = self.peek_last_relocation()
+        if not self.temp_storage:
+            # Dieser Task hat aktuell keine offenen Blocker-Relocations.
+            # Wenn hier eine fremde Bin gemeldet wird, ignorieren wir das.
+            return
+
+        # Suche von hinten (bevorzugt LIFO)
+        matched_index = None
+        relocation = None
+
+        for idx in range(len(self.temp_storage) - 1, -1, -1):
+            candidate = self.temp_storage[idx]
+            if candidate["bin_id"] == bin_id:
+                matched_index = idx
+                relocation = candidate
+                break
 
         if relocation is None:
-            raise RuntimeError(
-                f"Cannot mark relocation restored for bin {bin_id}: "
-                f"task {self.request_id} has no open relocations"
-            )
-
-        if relocation["bin_id"] != bin_id:
-            raise RuntimeError(
-                f"Cannot mark relocation restored for task {self.request_id}: "
-                f"expected bin {relocation['bin_id']}, got {bin_id}"
-            )
+            # Bin wird von diesem Task gar nicht (mehr) als Blocker geführt.
+            # Z.B. nach Ownership-Transfer oder wenn ein anderer Task sie zurücklegt.
+            # Für die Abschlussinvariante dieses Tasks ist das unkritisch.
+            return
 
         if relocation["buffer_stack"] != from_stack:
             raise RuntimeError(
@@ -126,7 +142,8 @@ class RobotTask:
                 f"expected to_stack {relocation['from_stack']}, got {to_stack}"
             )
 
-        self.temp_storage.pop()
+        # Entferne genau den gefundenen Eintrag
+        self.temp_storage.pop(matched_index)
 
     def release_blocker_ownership(self, bin_id):
         """

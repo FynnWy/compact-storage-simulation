@@ -99,7 +99,7 @@ Vielleicht ein veralteter Test?
 2. AssertionError: 101 collisions detected: Ursache ungenau
 
 
-## 6. Strategie-Selektor-Assertions, gelöst: NEIN
+## 6. Strategie-Selektor-Assertions, gelöst: JA
 assert (5, 0) in {(0, 0), (2, 0)} bzw. assert (4, 0) == (0, 0)
 
 **Betroffene Tests:** ABC- und Popularity-Selector.

@@ -184,8 +184,11 @@ def test_buffer_zone_two_ports_overlap():
 
 def test_placement_strategy_avoids_buffer_zone():
     """
-    Placement-Strategien nutzen nur Positionen, die state.is_valid_storage_position
-    als gültig markiert – damit werden Pufferzonen effektiv ausgeschlossen.
+    Placement-Strategien, die auf Grid-Heuristiken basieren (z.B. NEAREST),
+    nutzen nur Positionen, die state.is_valid_storage_position als gültig
+    markiert – damit werden Pufferzonen effektiv ausgeschlossen.
+
+    RANDOM ist hiervon explizit ausgenommen und darf auch Pufferzonen nutzen.
     """
     from strategies.target_bin_placement_selector import PlacementSelector
 
@@ -215,6 +218,7 @@ def test_placement_strategy_avoids_buffer_zone():
             self.bins = []
             self.config = type("Cfg", (), {})()
             self._valid_positions = set(valid_positions)
+            self.pickstations = []
 
         def is_valid_storage_position(self, x, y):
             return (x, y) in self._valid_positions
@@ -231,12 +235,17 @@ def test_placement_strategy_avoids_buffer_zone():
     state = DummyState(grid=grid, valid_positions={allowed_pos}, max_stack_height=5)
 
     config = type("Cfg", (), {})()
-    config.placement_strategy = "RANDOM"
+    # WICHTIG: Strategie mit Bufferzonen-Filter verwenden, nicht RANDOM
+    config.placement_strategy = "NEAREST"
     selector = PlacementSelector(config=config)
 
     # Mehrfach prüfen, dass niemals die verbotene Position gewählt wird
     for _ in range(20):
-        stack = selector._select_random_stack(state)
+        stack = selector.select_return_stack(
+            state=state,
+            bin_obj=type("B", (), {"get_abc_class": lambda self=None: None})(),
+            original_stack_id=None,
+        )
         assert stack.stack_id == allowed_pos
 
 

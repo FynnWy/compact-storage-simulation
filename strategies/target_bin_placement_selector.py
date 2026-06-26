@@ -1,6 +1,6 @@
 import numpy as np
 
-from utils.distance_helpers import get_min_distance_to_pickstation
+from utils import distance_helpers
 
 
 class PlacementSelector:
@@ -150,7 +150,7 @@ class PlacementSelector:
         # Sortieren nach Distanz zur Pickstation mit deterministischem Tie-Breaking
         def sort_key(stack):
             pos = self._parse_stack_position(stack)
-            distance = get_min_distance_to_pickstation(state, pos)
+            distance = distance_helpers.get_min_distance_to_pickstation(state, pos)
             # Tie-Breaking: y-Koordinate, dann x-Koordinate
             return (distance, pos[1], pos[0])
 
@@ -182,7 +182,7 @@ class PlacementSelector:
 
         for stack in candidates:
             pos = self._parse_stack_position(stack)
-            distance = get_min_distance_to_pickstation(state, pos)
+            distance = distance_helpers.get_min_distance_to_pickstation(state, pos)
             depth = stack.height()
             stack_infos.append((stack, distance, depth))
             distances.append(distance)
@@ -305,7 +305,7 @@ class PlacementSelector:
 
         for stack in candidates:
             pos = self._parse_stack_position(stack)
-            distance = get_min_distance_to_pickstation(state, pos)
+            distance = distance_helpers.get_min_distance_to_pickstation(state, pos)
             expected_depth = self._calc_expected_digging_depth(state, stack)
             stack_infos.append((stack, distance, expected_depth))
             distances.append(distance)
