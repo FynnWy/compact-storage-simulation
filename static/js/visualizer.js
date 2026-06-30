@@ -14,6 +14,7 @@ const colors = {
     textMuted: "#64748b"
 };
 
+// Globaler currentState wird von main.js verwendet
 let currentState = null;
 let previousState = null;
 let currentMovement = null;
@@ -191,15 +192,26 @@ async function resetSim() {
 
 function updateUI() {
     if (!currentState) {
+        console.warn("updateUI: no currentState available");
         return;
     }
+
+    console.log("updateUI: updating with state at t=", currentState.t);
 
     updateTimeAndHistory();
     updateEventCard();
     updatePickstation();
     updateActiveQueue();
     updateRobots();
-    renderGrid();
+
+    // GEÄNDERT: Statt renderGrid() direkt aufzurufen, ViewManager verwenden
+    if (typeof viewManager !== 'undefined' && viewManager) {
+        console.log("updateUI: using ViewManager for rendering");
+        viewManager.render(currentState);
+    } else {
+        console.warn("updateUI: ViewManager not available, using fallback renderGrid()");
+        renderGrid();
+    }
 }
 
 function updateTimeAndHistory() {
@@ -441,15 +453,20 @@ function detectMovement(previous, current) {
     return null;
 }
 
+// Ändere die renderGrid() Funktion:
+
 function renderGrid() {
     if (typeof d3 === "undefined") {
         throw new Error("D3 wurde nicht geladen. Prüfe die Script-Einbindung in index.html.");
     }
 
     const svg = d3.select("#viz-svg");
-    const container = getElement("viz-container");
+
+    // GEÄNDERT: Suche nach side-view-container statt viz-container
+    const container = getElement("side-view-container");
 
     if (!container) {
+        console.error("renderGrid: container 'side-view-container' not found");
         return;
     }
 
@@ -836,10 +853,48 @@ function initializeEventListeners() {
 
     window.addEventListener("resize", () => {
         if (currentState) {
-            renderGrid();
+            // ViewManager verwenden falls vorhanden
+            if (typeof viewManager !== 'undefined' && viewManager) {
+                viewManager.render(currentState);
+            } else {
+                renderGrid();
+            }
         }
     });
 }
 
-initializeEventListeners();
-fetchState();
+// NEU: Warte auf vollständige Initialisierung
+let visualizerReady = false;
+
+function initializeVisualizer() {
+    console.log("visualizer.js: initializing...");
+    initializeEventListeners();
+
+    // Warte bis ViewManager bereit ist, dann State laden
+    const checkViewManager = setInterval(() => {
+        if (typeof viewManager !== 'undefined' && viewManager) {
+            console.log("visualizer.js: ViewManager detected, fetching initial state");
+            clearInterval(checkViewManager);
+            visualizerReady = true;
+            fetchState();
+        }
+    }, 50);
+
+    // Timeout nach 5 Sekunden
+    setTimeout(() => {
+        if (!visualizerReady) {
+            console.error("visualizer.js: ViewManager not initialized after 5s, loading anyway");
+            clearInterval(checkViewManager);
+            visualizerReady = true;
+            fetchState();
+        }
+    }, 5000);
+}
+
+// Auf DOM-Ready warten
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeVisualizer);
+} else {
+    // DOM already loaded
+    initializeVisualizer();
+}

@@ -1,19 +1,61 @@
 class ActionExecutor:
+    def __init__(self, event_builder):
+        """
+        Initialisiert den ActionExecutor.
+
+        Args:
+            event_builder: EventBuilder-Instanz für Event-Payload-Parsing
+        """
+        self.event_builder = event_builder
+
     def execute(self, event, state):
-        action = self._get_action_from_event(event)
+        """
+        Führt die Aktion eines Events aus.
+        """
+        action = self.event_builder.get_action_from_event(event)
         action_type = action.get("type")
 
         if action_type == "relocate":
             self._execute_relocate(action, state)
-
         elif action_type == "remove_target":
             self._execute_remove_target(action, state)
-
         elif action_type == "return":
             self._execute_return(action, state)
-
+        elif action_type == "pickup_from_pickstation":
+            self._execute_pickup_from_pickstation(action, state)
+        elif action_type == "request_complete":
+            pass  # Keine physische Aktion
         else:
             raise ValueError(f"Unknown action type: {action_type}")
+
+    def _execute_pickup_from_pickstation(self, action, state):
+        """
+        Holt Bin von Pickstation ab.
+
+        Bin-Status wechselt von "at_pickstation" zu "not_locked"
+        und wird dem Robot zugewiesen (logisch, nicht physisch).
+        """
+        bin_id = action.get("bin_id")
+        bin_obj = state.get_bin_by_id(bin_id)
+
+        print(
+            f"[TRACE][PICKUP_PS] t={state.t} bin={bin_id} "
+            f"status_before={bin_obj.get_status() if bin_obj else None}"
+        )
+
+        if bin_obj is None:
+            raise RuntimeError(f"Cannot pickup: Bin {bin_id} not found")
+
+        if bin_obj.get_status() != "at_pickstation":
+            raise RuntimeError(
+                f"Cannot pickup bin {bin_id}: not at pickstation "
+                f"(status: {bin_obj.get_status()})"
+            )
+
+        # Bin-Status zurücksetzen
+        bin_obj.mark_transit_done()  # Status = "not_locked"
+
+        # Bin ist jetzt "beim Robot" (logisch) und muss zurück ins Grid
 
     def _get_action_from_event(self, event):
         if isinstance(event.payload, dict) and "action" in event.payload:
@@ -32,6 +74,10 @@ class ActionExecutor:
         to_stack = self._get_stack_by_id(state, action.get("to_stack"))
         bin_id = action.get("bin_id")
 
+        print(f"[TRACE][RELOCATE] t={state.t} bin={bin_id} "
+              f"from={from_stack.stack_id if from_stack else None} "
+              f"to={to_stack.stack_id if to_stack else None}")
+
         self._require_stack(from_stack, action.get("from_stack"))
         self._require_stack(to_stack, action.get("to_stack"))
 
@@ -44,10 +90,20 @@ class ActionExecutor:
     def _execute_remove_target(self, action, state):
         """
         Entfernt die Ziel-Bin aus ihrem Stack.
+
+        Wichtig:
+        Dieses Event repräsentiert den Abschluss der gesamten Aktion:
+        - Ziel-Bin wurde gegriffen
+        - Ziel-Bin wurde zur Pickstation transportiert
+        - Ziel-Bin wurde an der Pickstation abgegeben
+
         Die Bin befindet sich danach virtuell an der Pickstation.
         """
         from_stack = self._get_stack_by_id(state, action.get("from_stack"))
         bin_id = action.get("bin_id")
+
+        print(f"[TRACE][REMOVE_TARGET] t={state.t} bin={bin_id} "
+              f"from={from_stack.stack_id if from_stack else None}")
 
         self._require_stack(from_stack, action.get("from_stack"))
 
@@ -69,6 +125,9 @@ class ActionExecutor:
         from_stack_id = action.get("from_stack")
         to_stack = self._get_stack_by_id(state, action.get("to_stack"))
         bin_id = action.get("bin_id")
+
+        print(f"[TRACE][RETURN] t={state.t} bin={bin_id} "
+              f"from={from_stack_id} to={to_stack.stack_id if to_stack else None}")
 
         self._require_stack(to_stack, action.get("to_stack"))
 

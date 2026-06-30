@@ -6,11 +6,13 @@ import numpy as np
 from config.init_strategy import initialize_bins
 from requests_.active_queue import ActiveQueue
 from requests_.request_generator import RequestGenerator
+from simulation.action_cost_model import ActionCostModel
 from simulation.action_executer import ActionExecutor
 from simulation.constraint_manager import ConstraintManager
 from simulation.event_builder import EventBuilder
 from simulation.event_handler import EventHandler
 from simulation.metrics import Metrics
+from metrics.distribution_metrics import DistributionMetrics
 from simulation.request_handler import RequestHandler
 from simulation.scheduler import Scheduler
 from state.bin import Bin
@@ -20,7 +22,14 @@ from state.robot import Robot
 from state.state import State
 from state.storage_grid import StorageGrid
 from strategies.top_access_strategy import TopAccessStrategy
+from strategies.relocation_selection import RelocationSelection
+from strategies.target_bin_placement_selector import PlacementSelector
+from strategies.reordering_blocking_bins_selector import ReorderingSelector
 from events.event_types import EventType
+from state.pickstation import Pickstation
+from traffic.reservation_table import ReservationTable
+from traffic.traffic_manager import TrafficManager
+from traffic.highway_rules import HighwayRules
 
 
 class SimulationEngine:
@@ -33,19 +42,47 @@ class SimulationEngine:
         self._is_started = False
         self._processed_events = 0
 
+        # WP5/RQ3: Letzter Snapshot-Zeitpunkt
+        self._last_distribution_snapshot_time = None
+
         self._initialize_state()
         self._initialize_simulation_components()
 
     def _initialize_state(self):
         """
-        Erstellt Grid, Bins, Roboter, Requests und initialisiert das Lager
+        Erstellt Grid, Bins, Roboter, Requests, Pickstations und initialisiert das Lager
         gemäß der gewählten Strategie.
         """
-        grid = StorageGrid(self.config.grid_width, self.config.grid_depth)
+        grid, pickstations = self._create_grid()
         bins = self._create_bins(self.config.bin_num)
         robots = self._create_robots(self.config.num_robots)
         future_request_queue = self._create_future_request_queue()
         event_queue = EventQueue()
+
+        # ReservationTable erstellen
+        reservation_table = ReservationTable(
+            grid_width=self.config.grid_width,
+            grid_depth=self.config.grid_depth,
+            time_horizon=self.config.simulation_time,
+        )
+
+        # Highway-Regeln erstellen (falls aktiviert)
+        highway_rules = None
+        if self.config.enable_highway_system:
+            highway_rules = HighwayRules(
+                grid_width=self.config.grid_width,
+                grid_depth=self.config.grid_depth,
+                pattern=self.config.highway_pattern,
+            )
+            highway_rules.wrong_direction_penalty = self.config.highway_wrong_direction_penalty
+
+        # TrafficManager mit Highway-Regeln erstellen
+        traffic_manager = TrafficManager(
+            grid=grid,
+            reservation_table=reservation_table,
+            highway_rules=highway_rules,
+            port_positions={ps.position for ps in pickstations},
+        )
 
         self.hot_bin_ids = self._determine_hot_bin_ids()
 
@@ -56,6 +93,9 @@ class SimulationEngine:
             hot_bin_ids=self.hot_bin_ids,
             random_seed=self.config.random_seed,
             max_stack_height=self.config.max_stack_height,
+            # ABC-Thresholds aus Config an Initialisierung übergeben
+            abc_threshold_a=self.config.abc_threshold_a,
+            abc_threshold_b=self.config.abc_threshold_b,
         )
 
         self.state = State(
@@ -64,8 +104,13 @@ class SimulationEngine:
             robots=robots,
             future_request_queue=future_request_queue,
             event_queue=event_queue,
+            pickstations=pickstations,
+            reservation_table=reservation_table,
+            traffic_manager=traffic_manager
         )
         self.state.config = self.config
+        # Port-Pufferzonen initialisieren (einmalig beim Start)
+        self.state.initialize_port_zones(pickstations)
         self.state.mark_initialized()
 
     def _initialize_simulation_components(self):
@@ -73,16 +118,65 @@ class SimulationEngine:
         Verdrahtet alle Komponenten für den eigentlichen DES-Lauf.
         """
         self.active_queue = ActiveQueue()
-        self.event_builder = EventBuilder()
+
+        self.cost_model = ActionCostModel(
+            config=self.config,
+            rng=self.rng,
+        )
+
+        self.event_builder = EventBuilder(
+            cost_model=self.cost_model,
+            config=self.config,  # NEU: Config übergeben
+        )
+
         self.request_handler = RequestHandler(
             state=self.state,
             event_builder=self.event_builder,
         )
         self.constraint_manager = ConstraintManager()
-        self.executor = ActionExecutor()
+        self.executor = ActionExecutor(event_builder=self.event_builder)
         self.metrics = Metrics()
 
-        strategy = TopAccessStrategy()
+        # WP4: ConvergenceDetector an Config anpassen (falls vorhanden)
+        if hasattr(self.config, "convergence_window_size"):
+            self.metrics.convergence_detector.window_size = self.config.convergence_window_size
+        if hasattr(self.config, "convergence_threshold"):
+            self.metrics.convergence_detector.threshold = self.config.convergence_threshold
+
+        # WP5/RQ3: DistributionMetrics für Verteilungs-Snapshots
+        self.distribution_metrics = DistributionMetrics(
+            state=self.state,
+            config=self.config,
+        )
+
+        # Relocation-Selection mit Kostenmodell und ActiveQueue verdrahten
+        relocation_selector = RelocationSelection(
+            cost_model=self.cost_model,
+            active_queue=self.active_queue,
+        )
+
+        # NEU: Strategie-Konfiguration aus SimulationConfig auslesen
+        reordering_strategy = getattr(self.config, "reordering_strategy", "LOFI")
+        placement_strategy = getattr(self.config, "placement_strategy", "ORIGINAL")
+
+        # NEU: PlacementSelector für Target-Bin-Rücklagerung (CIRS / Baseline / Erweiterungen)
+        placement_selector = PlacementSelector(
+            config=self.config,
+            rng=self.rng,
+        )
+
+        # NEU: ReorderingSelector für Blocking-Bin-Reordering (LOFI / ABC)
+        reordering_selector = ReorderingSelector(
+            config=self.config,
+        )
+
+        strategy = TopAccessStrategy(
+            relocation_selector=relocation_selector,
+            reordering_strategy=reordering_strategy,
+            placement_strategy=placement_strategy,
+            placement_selector=placement_selector,
+            reordering_selector=reordering_selector,
+        )
 
         self.scheduler = Scheduler(
             active_queue=self.active_queue,
@@ -102,50 +196,9 @@ class SimulationEngine:
             event_builder=self.event_builder,
         )
 
-    def run(self, debug=False, max_events=10000):
-        """
-        Führt die Simulation bis simulation_time oder bis keine Events/Requests mehr existieren.
-
-        debug=True gibt einen einfachen Event-Trace aus.
-        max_events schützt vor Endlosschleifen.
-
-        Führt die Simulation bis simulation_time oder bis keine Events/Requests mehr existieren.
-
-        debug=True gibt einen einfachen Event-Trace aus.
-        max_events schützt vor Endlosschleifen.
-        """
-        self._validate_initial_state()
-
-        processed_events = 0
-
-        while processed_events < max_events:
-            event = self.step()
-
-            if event is None:
-                break
-
-            processed_events += 1
-
-            if debug:
-                print(f"[EVENT] {event}")
-
-        if processed_events >= max_events:
-            raise RuntimeError(
-                f"Simulation stopped after max_events={max_events}. "
-                f"Possible endless event loop."
-            )
-
-        return self.metrics.summary()
-
     def step(self):
         """
         Verarbeitet genau ein Simulationsevent und gibt dieses Event zurück.
-
-        Diese Methode ist für interaktive Visualisierungen gedacht:
-        - Button-Klick -> step()
-        - Visualisierung entscheidet, ob nach diesem Event neu gezeichnet wird
-
-        Gibt None zurück, wenn die Simulation beendet ist.
         """
         if not self._is_started:
             self._validate_initial_state()
@@ -153,6 +206,28 @@ class SimulationEngine:
             self._is_started = True
 
         while True:
+            # WP5/RQ3: Periodische Distribution-Snapshots & Positions-Tracking
+            snapshot_interval = getattr(self.config, "distribution_snapshot_interval", None)
+            if snapshot_interval is not None and snapshot_interval > 0:
+                if (
+                        self._last_distribution_snapshot_time is None
+                        or (self.state.t - self._last_distribution_snapshot_time) >= snapshot_interval
+                ):
+                    snapshot = self.distribution_metrics.snapshot()
+                    self.metrics.record_distribution_snapshot(snapshot)
+                    # Positionsänderungen für RQ3/RQ4 tracken
+                    self.metrics.record_position_state(self.state)
+                    self._last_distribution_snapshot_time = self.state.t
+
+            # Optionales Early-Stopping auf Basis von Konvergenz
+            if getattr(self.config, "stop_on_convergence", False):
+                if self.metrics.convergence_detector.is_converged():
+                    conv_time = self.metrics.convergence_detector.get_convergence_time()
+                    patience = getattr(self.config, "convergence_patience", 0)
+                    if conv_time is not None and self.state.t >= conv_time + patience:
+                        # Simulation vorzeitig beenden
+                        return None
+
             if self.state.t >= self.config.simulation_time:
                 return None
 
@@ -162,6 +237,29 @@ class SimulationEngine:
 
                 self.state.advance_time()
                 self.request_handler.add_ready_requests_to_event_queue()
+
+                # Periodisches Cleanup der ReservationTable (alle 10 ZE)
+                if self.state.t % 10 == 0:
+                    self.state.reservation_table.cleanup_before(self.state.t)
+
+                    # NEU: Periodisches Deadlock-Check (alle 10 ZE)
+                    victim_id = self.state.traffic_manager.check_and_resolve_deadlock(
+                        robots=self.state.robots,
+                        scheduler=self.scheduler,
+                        current_time=self.state.t,
+                    )
+
+                    if victim_id is not None:
+                        # Roboter neu planen lassen
+                        for robot in self.state.robots:
+                            if robot.robot_id == victim_id:
+                                self.state.traffic_manager.release_robot_reservations(robot)
+                                # Task in Warteschlange
+                                if robot.current_task is not None:
+                                    self.active_queue.add_waiting_task(robot.current_task)
+                                    robot.clear_task()
+                                break
+
                 continue
 
             next_event = self.state.event_queue.peek()
@@ -173,10 +271,25 @@ class SimulationEngine:
                 )
 
             if next_event.time > self.state.t:
-                while self.state.t < next_event.time:
+                # ZEIT VORWÄRTS: aber nicht stumpf bis next_event.time,
+                # sondern so lange, bis ein Event mit time <= state.t existiert.
+                target_time = next_event.time
+
+                while self.state.t < target_time:
                     self.state.advance_time()
                     self.request_handler.add_ready_requests_to_event_queue()
 
+                    # NEU: Auch hier Cleanup, falls Zeit vorwärts springt
+                    if self.state.t % 10 == 0:
+                        self.state.reservation_table.cleanup_before(self.state.t)
+
+                    # Nach neuen Arrivals kann jetzt ein früheres Event fällig sein
+                    current_next = self.state.event_queue.peek()
+                    if current_next is not None and current_next.time <= self.state.t:
+                        # Wir haben jetzt ein Event, das "dran" ist
+                        break
+
+                # Zurück zum Schleifenanfang: next_event neu bestimmen
                 continue
 
             event = self.event_handler.get_next_event()
@@ -185,8 +298,64 @@ class SimulationEngine:
             if event is not None:
                 self._validate_runtime_state()
 
-                if event.event_type in {EventType.ARRIVAL, EventType.REQUEST_COMPLETE}:
+                if event.event_type in {
+                    EventType.ARRIVAL,
+                    EventType.REQUEST_COMPLETE,
+                    EventType.PICKSTATION_COMPLETE,
+                }:
                     self.event_handler.schedule_available_robots(self.state.t)
+
+                # ------------------------------------------------------
+                # NEU: Debug-Logging nach jedem verarbeiteten Event
+                # ------------------------------------------------------
+                gw, gd = self.state.grid.width, self.state.grid.depth
+
+                # Positionen und mögliche Kollisionen ermitteln
+                pos_to_robot = {}
+                collisions = []
+                illegal_positions = []
+
+                for r in self.state.robots:
+                    pos = r.get_position()
+                    if pos is None:
+                        continue
+
+                    x, y = pos
+                    if not (0 <= x < gw and 0 <= y < gd):
+                        illegal_positions.append((r.robot_id, pos))
+
+                    if pos in pos_to_robot:
+                        collisions.append((pos, pos_to_robot[pos], r.robot_id))
+                    else:
+                        pos_to_robot[pos] = r.robot_id
+
+                # Basiszustand loggen
+                print(
+                    f"[STATE][STEP] t={self.state.t} "
+                    f"event_type={getattr(event.event_type, 'name', event.event_type)} "
+                    f"robots={{"
+                    + ", ".join(
+                        f"{r.robot_id}: {r.get_position()}"
+                        for r in self.state.robots
+                    )
+                    + "}"
+                )
+
+                # Kollisionen explizit markieren
+                for pos, r0, r1 in collisions:
+                    print(
+                        f"[COLLISION][STEP] t={self.state.t} pos={pos} "
+                        f"robots={r0},{r1} "
+                        f"after_event={getattr(event.event_type, 'name', event.event_type)}"
+                    )
+
+                # Out-of-bounds Positionen explizit markieren
+                for rid, pos in illegal_positions:
+                    print(
+                        f"[ILLEGAL_POS][STEP] t={self.state.t} robot={rid} "
+                        f"pos={pos} (grid={gw}x{gd}) "
+                        f"after_event={getattr(event.event_type, 'name', event.event_type)}"
+                    )
 
             return event
 
@@ -296,12 +465,24 @@ class SimulationEngine:
         """
         Erstellt alle Roboter.
 
-        Roboter starten idle und ohne feste Position.
-        Ein Roboter kann pro Zeiteinheit eine Aktion ausführen.
+        Roboter starten idle und mit zufälliger Startposition
+        innerhalb des Grids.
+
+        Hintergrund:
+        - Realistische Initialisierung: Roboter stehen irgendwo im Lager.
+        - Alle Bewegungen erfolgen danach über Pathfinder/ReservationTable,
+          es gibt keine Teleports mehr.
         """
         robots = []
+
         for robot_id in range(num_robots):
-            robots.append(Robot(robot_id=robot_id, position=None))
+            # Zufällige Startposition im Grid
+            x = int(self.rng.integers(0, self.config.grid_width))
+            y = int(self.rng.integers(0, self.config.grid_depth))
+
+            start_pos = (x, y)
+            robots.append(Robot(robot_id=robot_id, position=start_pos))
+
         return robots
 
     def _create_future_request_queue(self):
@@ -340,3 +521,76 @@ class SimulationEngine:
 
     def is_ready(self):
         return self.state is not None and self.state.is_initialized()
+
+    def _create_grid(self):
+        """
+        Erstellt StorageGrid und Pickstations inkl. Port-Integration.
+
+        - Berechnet Pickstation-Positionen im Grid
+        - Extrahiert Port-Positionen
+        - Übergibt Port-Positionen an StorageGrid
+        """
+        pickstations = self._create_pickstations()
+        port_positions = {ps.position for ps in pickstations}
+
+        grid = StorageGrid(
+            self.config.grid_width,
+            self.config.grid_depth,
+            port_positions=port_positions,
+        )
+        return grid, pickstations
+
+    def _create_pickstations(self):
+        """
+        Erstellt alle Pickstations basierend auf Config.
+
+        Neue Platzierung:
+        - Pickstations liegen IM Grid
+        - Genau 2 Pickstations (oder 1, falls so konfiguriert)
+        - Gegenüberliegend
+        - In der Mitte der längeren Seite
+        - Am Rand (erste/letzte Zeile oder Spalte)
+
+        Returns:
+            list[Pickstation]
+        """
+        pickstations = []
+
+        num_stations = self.config.num_pickstations
+        capacity = self.config.pickstation_capacity
+        width = self.config.grid_width
+        depth = self.config.grid_depth
+
+        if num_stations not in (1, 2):
+            raise ValueError(
+                f"Unsupported number of pickstations: {num_stations}. "
+                f"This configuration expects 1 or 2 pickstations."
+            )
+
+        if depth >= width:
+            # Längere Seite ist depth → Ports links/rechts
+            mid_y = depth // 2
+            port_1_position = (0, mid_y)              # Linker Rand
+            port_2_position = (width - 1, mid_y)      # Rechter Rand
+        else:
+            # Längere Seite ist width → Ports oben/unten
+            mid_x = width // 2
+            port_1_position = (mid_x, 0)              # Oberer Rand
+            port_2_position = (mid_x, depth - 1)      # Unterer Rand
+
+        positions = []
+        if num_stations >= 1:
+            positions.append(port_1_position)
+        if num_stations == 2:
+            positions.append(port_2_position)
+
+        for i, position in enumerate(positions):
+            station_id = f"PS_{i}"
+            pickstation = Pickstation(
+                station_id=station_id,
+                position=position,
+                capacity=capacity,
+            )
+            pickstations.append(pickstation)
+
+        return pickstations

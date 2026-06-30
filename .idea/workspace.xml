@@ -4,13 +4,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Establish connections between key classes, execute initial smoke tests and resolve related bugs">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/simulation_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/simulation_config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/simulation_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/simulation_engine.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/utils/visualization.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils/visualization_3D.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -18,12 +13,13 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="49" />
+    <option name="cachedIndexableFilesCount" value="99" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
       <list>
+        <option value="JavaScript File" />
         <option value="Python Script" />
       </list>
     </option>
@@ -74,42 +70,52 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Python.main.executor": "Run",
-    "Python.web_visualizer.executor": "Run",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "ai.playground.ignore.import.keys.banner.in.settings": "true",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "fynn__dev",
-    "junie.onboarding.icon.badge.shown": "true",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable",
-    "to.speed.mode.migration.done": "true",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Node.js.side_view.js.executor&quot;: &quot;Run&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.manual_run_medium.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_pickstation.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_traffic_system.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_view.executor&quot;: &quot;Run&quot;,
+    &quot;Python.web_visualizer.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;fynn__dev&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;ml.llm.LLMConfigurable&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$" />
+    </key>
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$" />
       <recent name="$PROJECT_DIR$/simulation" />
       <recent name="$PROJECT_DIR$/requests" />
       <recent name="$PROJECT_DIR$/events" />
       <recent name="$PROJECT_DIR$/entities" />
-      <recent name="$PROJECT_DIR$/state" />
     </key>
   </component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-js-predefined-d6986cc7102b-9b0f141eb926-JavaScript-PY-253.29346.142" />
-        <option value="bundled-python-sdk-f2b7a9f6281b-6e1f45a539f7-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.29346.142" />
+        <option value="bundled-js-predefined-d6986cc7102b-9b0f141eb926-JavaScript-PY-253.33813.30" />
+        <option value="bundled-python-sdk-929bdeb5c976-6d6dccd035ac-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.33813.30" />
       </set>
     </attachedChunks>
   </component>
@@ -133,6 +139,34 @@
       <workItem from="1777979083033" duration="1477000" />
       <workItem from="1777988336548" duration="26000" />
       <workItem from="1777988654864" duration="5599000" />
+      <workItem from="1778143731273" duration="539000" />
+      <workItem from="1778235658551" duration="1276000" />
+      <workItem from="1778584281113" duration="7739000" />
+      <workItem from="1778845162086" duration="8724000" />
+      <workItem from="1778856850432" duration="4198000" />
+      <workItem from="1779190192906" duration="14076000" />
+      <workItem from="1779351092157" duration="560000" />
+      <workItem from="1779355777882" duration="2479000" />
+      <workItem from="1779398334352" duration="472000" />
+      <workItem from="1779811423374" duration="77000" />
+      <workItem from="1779979449769" duration="2010000" />
+      <workItem from="1779981937341" duration="379000" />
+      <workItem from="1780052341447" duration="8180000" />
+      <workItem from="1780400075415" duration="1277000" />
+      <workItem from="1780499275825" duration="42000" />
+      <workItem from="1780561016056" duration="11935000" />
+      <workItem from="1780656485401" duration="17601000" />
+      <workItem from="1781005088612" duration="1353000" />
+      <workItem from="1781007684698" duration="27000" />
+      <workItem from="1781007732451" duration="49000" />
+      <workItem from="1781007801612" duration="461000" />
+      <workItem from="1781008376416" duration="13114000" />
+      <workItem from="1781165506702" duration="14789000" />
+      <workItem from="1782378360201" duration="14671000" />
+      <workItem from="1782474389777" duration="6158000" />
+      <workItem from="1782559975859" duration="232000" />
+      <workItem from="1782560250870" duration="360000" />
+      <workItem from="1782817588087" duration="173000" />
     </task>
     <task id="LOCAL-00001" summary="Initial project structure">
       <option name="closed" value="true" />
@@ -174,7 +208,207 @@
       <option name="project" value="LOCAL" />
       <updated>1777914644130</updated>
     </task>
-    <option name="localTasksCounter" value="6" />
+    <task id="LOCAL-00006" summary="Added responsive 2D UI for localhost">
+      <option name="closed" value="true" />
+      <created>1777999959233</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1777999959233</updated>
+    </task>
+    <task id="LOCAL-00007" summary="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning">
+      <option name="closed" value="true" />
+      <created>1778594817340</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1778594817343</updated>
+    </task>
+    <task id="LOCAL-00008" summary="Work Package 2 and 3 finished: Adjusted movement costs and implemented pick station service with decoupled roboters">
+      <option name="closed" value="true" />
+      <created>1778847151542</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1778847151542</updated>
+    </task>
+    <task id="LOCAL-00009" summary="Work Package 4 finished: Formally ensure the return process">
+      <option name="closed" value="true" />
+      <created>1778849201647</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1778849201647</updated>
+    </task>
+    <task id="LOCAL-00010" summary="Work Package 5 finished: Implemented complex request consistency, batching and robust return handling">
+      <option name="closed" value="true" />
+      <created>1778859207373</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1778859207373</updated>
+    </task>
+    <task id="LOCAL-00011" summary="Work Package 6 finished: Simple Relocation logic for blocking bins">
+      <option name="closed" value="true" />
+      <created>1778861111798</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1778861111798</updated>
+    </task>
+    <task id="LOCAL-00012" summary="Work Package 7 finished: New bin request probability distribution (ABC) implemented">
+      <option name="closed" value="true" />
+      <created>1779190872037</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1779190872038</updated>
+    </task>
+    <task id="LOCAL-00013" summary="Work Package 7 finished: Debugged and enhanced the newly implemented metrics">
+      <option name="closed" value="true" />
+      <created>1779191493213</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1779191493213</updated>
+    </task>
+    <task id="LOCAL-00014" summary="Work Package 8 finished: Debugged and enhanced the newly implemented metrics">
+      <option name="closed" value="true" />
+      <created>1779191508041</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1779191508042</updated>
+    </task>
+    <task id="LOCAL-00015" summary="Work Package 9 finished: implemented multi-agent AutoStore traffic system with reservation-based pathfinding and pickstations">
+      <option name="closed" value="true" />
+      <created>1779203820487</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1779203820488</updated>
+    </task>
+    <task id="LOCAL-00016" summary="Work Package 10 finished: implemented Top-Down-Visualization">
+      <option name="closed" value="true" />
+      <created>1779206613147</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1779206613147</updated>
+    </task>
+    <task id="LOCAL-00017" summary="Markdown-Summary of the current state of the simulation (not productive).">
+      <option name="closed" value="true" />
+      <created>1779398650675</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1779398650675</updated>
+    </task>
+    <task id="LOCAL-00018" summary="Work Package 2.0 finished: Implemented fundamental enhancements to the strategy system">
+      <option name="closed" value="true" />
+      <created>1780066122152</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1780066122153</updated>
+    </task>
+    <task id="LOCAL-00019" summary="Work Package 2.1 finished: Implemented AutoStore Baseline (LOFI + Random-TargetBin-Placement)">
+      <option name="closed" value="true" />
+      <created>1780067184352</created>
+      <option name="number" value="00019" />
+      <option name="presentableId" value="LOCAL-00019" />
+      <option name="project" value="LOCAL" />
+      <updated>1780067184353</updated>
+    </task>
+    <task id="LOCAL-00020" summary="Work Package 2.2 finished: Implemented ABC-Strategy (ABC-Reordering + ABC-Placement)">
+      <option name="closed" value="true" />
+      <created>1780069383279</created>
+      <option name="number" value="00020" />
+      <option name="presentableId" value="LOCAL-00020" />
+      <option name="project" value="LOCAL" />
+      <updated>1780069383279</updated>
+    </task>
+    <task id="LOCAL-00021" summary="Work Package 2.3 - 2.5 finished: Implemented Popularity-aware Strategy (Popularity-Reordering + Popularity-Placement) and Metrics for RQ3/RQ4: Steady state and bin-distribution">
+      <option name="closed" value="true" />
+      <created>1780568948770</created>
+      <option name="number" value="00021" />
+      <option name="presentableId" value="LOCAL-00021" />
+      <option name="project" value="LOCAL" />
+      <updated>1780568948770</updated>
+    </task>
+    <task id="LOCAL-00022" summary="Work Package 2.6 finished: Implemented Experiment-Runner and Export">
+      <option name="closed" value="true" />
+      <created>1780579582577</created>
+      <option name="number" value="00022" />
+      <option name="presentableId" value="LOCAL-00022" />
+      <option name="project" value="LOCAL" />
+      <updated>1780579582577</updated>
+    </task>
+    <task id="LOCAL-00023" summary="Work Packages 3-5 finished: WP 3: First Debugs and Tests, WP 4: Enhanced Pickstation logic to resolve blocking issues at pickstations and WP 5: new basic strategys (Random Relocation + Random Return and Local Relocation + Nearest Return)">
+      <option name="closed" value="true" />
+      <created>1781179900384</created>
+      <option name="number" value="00023" />
+      <option name="presentableId" value="LOCAL-00023" />
+      <option name="project" value="LOCAL" />
+      <updated>1781179900384</updated>
+    </task>
+    <task id="LOCAL-00024" summary="Fix (port-reservation): prevent ports from being reserved by None">
+      <option name="closed" value="true" />
+      <created>1781186579128</created>
+      <option name="number" value="00024" />
+      <option name="presentableId" value="LOCAL-00024" />
+      <option name="project" value="LOCAL" />
+      <updated>1781186579128</updated>
+    </task>
+    <task id="LOCAL-00025" summary="Fix (target bin stack-return): prevent violation of return-stack/top-of-stack invariant">
+      <option name="closed" value="true" />
+      <created>1782400302476</created>
+      <option name="number" value="00025" />
+      <option name="presentableId" value="LOCAL-00025" />
+      <option name="project" value="LOCAL" />
+      <updated>1782400302476</updated>
+    </task>
+    <task id="LOCAL-00026" summary="Fix (target bin stack-return): prevent violation of return-stack/top-of-stack invariant">
+      <option name="closed" value="true" />
+      <created>1782400980777</created>
+      <option name="number" value="00026" />
+      <option name="presentableId" value="LOCAL-00026" />
+      <option name="project" value="LOCAL" />
+      <updated>1782400980777</updated>
+    </task>
+    <task id="LOCAL-00027" summary="Fix (return-stack): allow original and random return-stack selection when stack is in a port buffer zone">
+      <option name="closed" value="true" />
+      <created>1782401469179</created>
+      <option name="number" value="00027" />
+      <option name="presentableId" value="LOCAL-00027" />
+      <option name="project" value="LOCAL" />
+      <updated>1782401469179</updated>
+    </task>
+    <task id="LOCAL-00028" summary="Fix (missing attribute in Test-Dummy)">
+      <option name="closed" value="true" />
+      <created>1782401805626</created>
+      <option name="number" value="00028" />
+      <option name="presentableId" value="LOCAL-00028" />
+      <option name="project" value="LOCAL" />
+      <updated>1782401805626</updated>
+    </task>
+    <task id="LOCAL-00029" summary="Fix (robot-collision): prevent robot collisions">
+      <option name="closed" value="true" />
+      <created>1782403947653</created>
+      <option name="number" value="00029" />
+      <option name="presentableId" value="LOCAL-00029" />
+      <option name="project" value="LOCAL" />
+      <updated>1782403947653</updated>
+    </task>
+    <task id="LOCAL-00030" summary="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected.">
+      <option name="closed" value="true" />
+      <created>1782486205069</created>
+      <option name="number" value="00030" />
+      <option name="presentableId" value="LOCAL-00030" />
+      <option name="project" value="LOCAL" />
+      <updated>1782486205071</updated>
+    </task>
+    <option name="localTasksCounter" value="31" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -204,14 +438,39 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="Initial project structure" />
-    <MESSAGE value="Storage initialization done" />
-    <MESSAGE value="Fixed dependencies and updated" />
     <MESSAGE value="Establish connections between key classes, execute initial smoke tests and resolve related bugs" />
-    <option name="LAST_COMMIT_MESSAGE" value="Establish connections between key classes, execute initial smoke tests and resolve related bugs" />
+    <MESSAGE value="Added responsive 2D UI for localhost" />
+    <MESSAGE value="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning" />
+    <MESSAGE value="Work Package 2 and 3 finished: Adjusted movement costs and implemented pick station service with decoupled roboters" />
+    <MESSAGE value="Work Package 4 finished: Formally ensure the return process" />
+    <MESSAGE value="Work Package 5 finished: Implemented complex request consistency, batching and robust return handling" />
+    <MESSAGE value="Work Package 6 finished: Simple Relocation logic for blocking bins" />
+    <MESSAGE value="Work Package 7 finished: New bin request probability distribution (ABC) implemented" />
+    <MESSAGE value="Work Package 7 finished: Debugged and enhanced the newly implemented metrics" />
+    <MESSAGE value="Work Package 8 finished: Debugged and enhanced the newly implemented metrics" />
+    <MESSAGE value="Work Package 9 finished: implemented multi-agent AutoStore traffic system with reservation-based pathfinding and pickstations" />
+    <MESSAGE value="Work Package 10 finished: implemented Top-Down-Visualization" />
+    <MESSAGE value="Markdown-Summary of the current state of the simulation (not productive)." />
+    <MESSAGE value="Work Package 2.0 finished: Implemented fundamental enhancements to the strategy system" />
+    <MESSAGE value="Work Package 2.1 finished: Implemented AutoStore Baseline (LOFI + Random-TargetBin-Placement)" />
+    <MESSAGE value="Work Package 2.2 finished: Implemented ABC-Strategy (ABC-Reordering + ABC-Placement)" />
+    <MESSAGE value="Work Package 2.3 - 2.5 finished: Implemented Popularity-aware Strategy (Popularity-Reordering + Popularity-Placement) and Metrics for RQ3/RQ4: Steady state and bin-distribution" />
+    <MESSAGE value="Work Package 2.6 finished: Implemented Experiment-Runner and Export" />
+    <MESSAGE value="Work Packages 3-5 finished: WP 3: First Debugs and Tests, WP 4: Enhanced Pickstation logic to resolve blocking issues at pickstations and WP 5: new basic strategys (Random Relocation + Random Return and Local Relocation + Nearest Return)" />
+    <MESSAGE value="Fix (port-reservation): prevent ports from being reserved by None" />
+    <MESSAGE value="Fix (target bin stack-return): prevent violation of return-stack/top-of-stack invariant" />
+    <MESSAGE value="Fix (return-stack): allow original and random return-stack selection when stack is in a port buffer zone" />
+    <MESSAGE value="Fix (missing attribute in Test-Dummy)" />
+    <MESSAGE value="Fix (robot-collision): prevent robot collisions" />
+    <MESSAGE value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
+    <option name="LAST_COMMIT_MESSAGE" value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/compact_storage_simulation$test_traffic_system.coverage" NAME="test_traffic_system Coverage Results" MODIFIED="1779203543042" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/compact_storage_simulation$test_pickstation.coverage" NAME="test_pickstation Coverage Results" MODIFIED="1779195451315" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$web_visualizer.coverage" NAME="web_visualizer Coverage Results" MODIFIED="1777992567636" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/utils" />
-    <SUITE FILE_PATH="coverage/compact_storage_simulation$main.coverage" NAME="main Coverage Results" MODIFIED="1777995227568" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/compact_storage_simulation$manual_run_medium.coverage" NAME="manual_run_medium Coverage Results" MODIFIED="1782560319989" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tests" />
+    <SUITE FILE_PATH="coverage/compact_storage_simulation$main.coverage" NAME="main Coverage Results" MODIFIED="1779205058446" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>

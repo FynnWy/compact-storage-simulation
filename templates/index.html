@@ -16,6 +16,34 @@
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #555; }
+
+        /* View Container Styles */
+        .view-container {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* View Switch Button Styles */
+        .view-switch-btn {
+            padding: 6px 16px;
+            border: 2px solid #3b82f6;
+            background: white;
+            color: #3b82f6;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.75rem;
+            transition: all 0.2s;
+        }
+
+        .view-switch-btn:hover {
+            background: #eff6ff;
+        }
+
+        .view-switch-btn.active {
+            background: #3b82f6;
+            color: white;
+        }
     </style>
 </head>
 <body class="h-screen flex flex-col overflow-hidden">
@@ -71,8 +99,24 @@
 
         <!-- Visualization Area -->
         <section class="flex-1 flex flex-col bg-gray-100 relative min-w-0 min-h-0">
-            <div id="viz-container" class="flex-1 grid-container p-2 overflow-auto min-h-0">
+            <!-- View Switcher -->
+            <div class="bg-white border-b border-gray-200 px-3 py-2 flex justify-center gap-2">
+                <button class="view-switch-btn active" data-view="side" onclick="switchView('side')">
+                    <i class="fas fa-bars"></i> Side View
+                </button>
+                <button class="view-switch-btn" data-view="topdown" onclick="switchView('topdown')">
+                    <i class="fas fa-th"></i> Top-Down View
+                </button>
+            </div>
+
+            <!-- Side View Container (initially visible) -->
+            <div id="side-view-container" class="view-container flex-1 grid-container p-2 overflow-auto min-h-0" style="display: block;">
                 <svg id="viz-svg"></svg>
+            </div>
+            
+            <!-- Top-Down View Container (initially hidden) -->
+            <div id="top-down-view-container" class="view-container flex-1 grid-container p-2 overflow-auto min-h-0" style="display: none;">
+                <svg id="top-down-svg"></svg>
             </div>
 
             <!-- Controls -->
@@ -93,6 +137,12 @@
         </section>
     </main>
 
+    <!-- Scripts: Reihenfolge ist wichtig! -->
+    <script src="/static/js/views/base_view.js"></script>
+    <script src="/static/js/views/side_view.js"></script>
+    <script src="/static/js/views/top_down_view.js"></script>
+    <script src="/static/js/view_manager.js"></script>
     <script src="/static/js/visualizer.js"></script>
+    <script src="/static/js/main.js"></script>
 </body>
 </html>

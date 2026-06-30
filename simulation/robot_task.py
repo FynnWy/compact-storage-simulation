@@ -1,0 +1,381 @@
+class RobotTask:
+    """
+    Hält den fachlichen Fortschritt eines aktiven Requests.
+    """
+
+    PHASE_RETRIEVE_TARGET = "retrieve_target"
+    PHASE_RESTORE_BLOCKERS = "restore_blockers"
+    PHASE_WAIT_FOR_PICKSTATION = "wait_for_pickstation"
+    PHASE_RETURN_TARGET = "return_target"
+    PHASE_COMPLETE = "complete"
+
+    def __init__(self, request):
+        self.request = request
+        self.phase = self.PHASE_RETRIEVE_TARGET
+
+        self.target_stack_id = None
+        self.target_removed = False
+        self.target_at_pickstation = False
+        self.pickstation_completed = False
+        self.target_returned = False
+        
+        # NEU: Referenz zur zugewiesenen Pickstation
+        self.assigned_pickstation = None
+
+        # NEU: Tatsächlicher Rückgabe-Stack der Target-Bin
+        # (kann vom ursprünglichen target_stack_id abweichen, z.B. bei RANDOM-Placement)
+        self.actual_return_stack_id = None
+
+        # LIFO: zuletzt ausgelagerte Bin wird zuerst zurückgelegt.
+        self.temp_storage = []
+
+        # Requests, die an der Pickstation gemeinsam mit diesem Task abgearbeitet werden.
+        # Jeder Eintrag ist ein Request-Objekt.
+        self.batched_requests = []
+
+        # NEU: Flag, ob Blocking-Bins bereits für die Rücklagerung umsortiert wurden
+        self.blockers_reordered = False
+
+        # NEU: Tracking für Validierung
+        self.initial_blocker_count = None  # Wird bei Planung gesetzt
+        self.last_validated_time = None     # Zeitpunkt der letzten Validierung
+
+    @property
+    def request_id(self):
+        return self.request.request_id
+
+    @property
+    def target_bin_id(self):
+        return self.request.target_box_id
+
+    def add_batched_request(self, request):
+        """
+        Fügt einen weiteren Request hinzu, der dieselbe Target-Bin benötigt
+        und an der Pickstation gemeinsam bedient wird.
+        """
+        if request.request_id == self.request_id:
+            raise RuntimeError(
+                f"Cannot batch request {request.request_id} with itself"
+            )
+
+        if request.request_id in {r.request_id for r in self.batched_requests}:
+            return  # Idempotenz: kein Doppeleintrag
+
+        self.batched_requests.append(request)
+
+    def all_requests(self):
+        """
+        Gibt alle Requests zurück, die dieser Task abarbeitet (primär + gebatcht).
+        """
+        return [self.request] + list(self.batched_requests)
+
+    def remember_relocation(self, bin_id, from_stack, buffer_stack):
+        self.temp_storage.append({
+            "bin_id": bin_id,
+            "from_stack": from_stack,
+            "buffer_stack": buffer_stack,
+        })
+
+    def clear_all_relocations(self):
+        """
+        Entfernt alle temporären Relocation-Einträge.
+
+        Wird verwendet, wenn Blocking-Bins NICHT zurückgelegt werden sollen
+        (Strategien RR+RR, LR+NR).
+        """
+        self.temp_storage.clear()
+        # Verhindert, dass später noch ein Reordering-Versuch angestoßen wird
+        self.blockers_reordered = True
+
+    def peek_last_relocation(self):
+        """
+        Gibt die nächste zurückzulagernde Relocation zurück, ohne sie zu entfernen.
+        """
+        if not self.temp_storage:
+            return None
+
+        return self.temp_storage[-1]
+
+    def mark_last_relocation_restored(self, bin_id, from_stack, to_stack):
+        """
+        Markiert eine zuvor ausgelagerte Bin als erfolgreich zurückgelagert.
+
+        Verhalten:
+        - Wenn diese Bin noch in temp_storage des Tasks geführt wird:
+          * passenden Eintrag finden
+          * from_stack / to_stack validieren
+          * Eintrag entfernen.
+        - Wenn die Bin NICHT (mehr) in temp_storage dieses Tasks existiert:
+          * kein Fehler – ein anderer Task oder kein Blocker dieses Tasks.
+        """
+        if not self.temp_storage:
+            # Dieser Task hat aktuell keine offenen Blocker-Relocations.
+            # Wenn hier eine fremde Bin gemeldet wird, ignorieren wir das.
+            return
+
+        # Suche von hinten (bevorzugt LIFO)
+        matched_index = None
+        relocation = None
+
+        for idx in range(len(self.temp_storage) - 1, -1, -1):
+            candidate = self.temp_storage[idx]
+            if candidate["bin_id"] == bin_id:
+                matched_index = idx
+                relocation = candidate
+                break
+
+        if relocation is None:
+            # Bin wird von diesem Task gar nicht (mehr) als Blocker geführt.
+            # Z.B. nach Ownership-Transfer oder wenn ein anderer Task sie zurücklegt.
+            # Für die Abschlussinvariante dieses Tasks ist das unkritisch.
+            return
+
+        if relocation["buffer_stack"] != from_stack:
+            raise RuntimeError(
+                f"Cannot mark relocation restored for bin {bin_id}: "
+                f"expected from_stack {relocation['buffer_stack']}, got {from_stack}"
+            )
+
+        if relocation["from_stack"] != to_stack:
+            raise RuntimeError(
+                f"Cannot mark relocation restored for bin {bin_id}: "
+                f"expected to_stack {relocation['from_stack']}, got {to_stack}"
+            )
+
+        # Entferne genau den gefundenen Eintrag
+        self.temp_storage.pop(matched_index)
+
+    def release_blocker_ownership(self, bin_id):
+        """
+        Gibt die Ownership einer blockierenden Bin auf (Ownership-Transfer, R-B3).
+
+        Darf nur aufgerufen werden, wenn ein anderer Task die Bin übernimmt.
+        Entfernt den Eintrag aus temp_storage, sodass dieser Task sie nicht
+        mehr zurücklegen muss.
+
+        Gibt den Relocation-Eintrag zurück, damit der übernehmende Task ihn
+        ggf. verwenden kann.
+        """
+        for i, reloc in enumerate(self.temp_storage):
+            if reloc["bin_id"] == bin_id:
+                return self.temp_storage.pop(i)
+
+        raise RuntimeError(
+            f"Cannot release ownership of bin {bin_id} from task {self.request_id}: "
+            f"bin not found in temp_storage"
+        )
+
+    def update_return_stack_for_blocker(self, bin_id, new_to_stack):
+        """
+        Aktualisiert den Ziel-Stack für die Rücklagerung einer blockierenden Bin.
+
+        Notwendig, wenn der ursprüngliche Ziel-Stack inzwischen blockiert ist (R-D2).
+        """
+        for reloc in self.temp_storage:
+            if reloc["bin_id"] == bin_id:
+                reloc["from_stack"] = new_to_stack
+                return
+
+        raise RuntimeError(
+            f"Cannot update return stack for bin {bin_id} in task {self.request_id}: "
+            f"bin not found in temp_storage"
+        )
+
+    def pop_last_relocation(self):
+        if not self.temp_storage:
+            return None
+
+        return self.temp_storage.pop()
+
+    def has_blockers_to_restore(self):
+        return len(self.temp_storage) > 0
+
+    def mark_target_at_pickstation(self):
+        self.mark_waiting_at_pickstation()
+
+    def mark_waiting_at_pickstation(self):
+        """
+        Variante B: Target-Bin ist an der Pickstation.
+        Roboter wird entkoppelt, Task bleibt aktiv.
+        """
+        self.target_removed = True
+        self.target_at_pickstation = True
+        self.phase = self.PHASE_WAIT_FOR_PICKSTATION
+
+    def mark_pickstation_completed(self):
+        """
+        Pickstation-Bearbeitung abgeschlossen.
+        Zuerst Blocker zurücklegen, dann Target-Bin.
+        """
+        self.pickstation_completed = True
+
+        if self.phase == self.PHASE_WAIT_FOR_PICKSTATION:
+            self.phase = self.PHASE_RESTORE_BLOCKERS
+
+    def mark_target_returned(self):
+        self.target_returned = True
+        self.phase = self.PHASE_COMPLETE
+
+    def reorder_blockers_for_return(self, state, reordering_selector):
+        """
+        Sortiert die Blocking-Bins in temp_storage für die Rücklagerung
+        mithilfe der übergebenen Reordering-Strategie.
+
+        Args:
+            state:
+                Aktueller Simulationszustand (für Bin-Lookups).
+            reordering_selector:
+                Instanz von ReorderingSelector.
+        """
+        if self.blockers_reordered:
+            return
+
+        if not self.temp_storage:
+            self.blockers_reordered = True
+            return
+
+        # Blocking-Bins in Auslagerungsreihenfolge (erste = zuerst ausgelagert = lag oben)
+        blocker_bins = []
+        for reloc in self.temp_storage:
+            bin_obj = state.get_bin_by_id(reloc["bin_id"])
+            if bin_obj is None:
+                raise RuntimeError(
+                    f"Cannot reorder blockers: bin {reloc['bin_id']} not found in state"
+                )
+            blocker_bins.append(bin_obj)
+
+        # Von Strategie sortieren lassen (Rücklagerungsreihenfolge)
+        ordered_blockers = reordering_selector.reorder_blockers(blocker_bins)
+
+        # Mapping Bin-ID -> Zielindex in der Rücklagerungsreihenfolge
+        order_index = {bin_obj.bin_id: idx for idx, bin_obj in enumerate(ordered_blockers)}
+
+        # temp_storage entsprechend der neuen Reihenfolge sortieren
+        try:
+            self.temp_storage.sort(key=lambda reloc: order_index[reloc["bin_id"]])
+        except KeyError as exc:
+            raise RuntimeError(
+                f"Cannot reorder blockers for task {self.request_id}: "
+                f"missing order index for bin {exc}"
+            ) from exc
+
+        self.blockers_reordered = True
+
+    def can_complete_consistently(self, state):
+        """
+        Prüft die formale Abschlussinvariante eines Requests.
+
+        NEU:
+        - Die Ziel-Bin muss am Ende auf einem konsistenten Rückgabe-Stack liegen.
+        - Dieser Stack kann der ursprüngliche target_stack_id ODER ein von der
+          Placement-Strategie gewählter alternativer Stack
+          (actual_return_stack_id) sein.
+        """
+        # Effektiver Rückgabe-Stack: bevorzugt den tatsächlich verwendeten Stack,
+        # fällt sonst auf den ursprünglichen Ziel-Stack zurück.
+        effective_stack_id = self.actual_return_stack_id or self.target_stack_id
+
+        if effective_stack_id is None:
+            return False, "no return stack known for target"
+
+        if not self.target_removed:
+            return False, "target was not removed"
+
+        if not self.target_at_pickstation:
+            return False, "target was not at pickstation"
+
+        if not self.pickstation_completed:
+            return False, "pickstation service is not completed"
+
+        if self.has_blockers_to_restore():
+            return False, "there are still blockers to restore"
+
+        if not self.target_returned:
+            return False, "target was not returned"
+
+        # Stack, auf dem die Ziel-Bin am Ende liegen soll
+        target_stack = self._get_stack_by_id(state, effective_stack_id)
+
+        if target_stack is None:
+            return False, f"return stack {effective_stack_id} does not exist"
+
+        # Prüfe, ob die Ziel-Bin überhaupt noch im System existiert
+        bin_obj = state.get_bin_by_id(self.target_bin_id)
+        if bin_obj is None:
+            return False, f"target bin {self.target_bin_id} no longer exists in state"
+
+        # Effektive Stack-Position aus Stack-ID ableiten
+        # (unterstützt sowohl Tuple als auch 'S_x_y')
+        effective_pos = None
+        stack_id = effective_stack_id
+        if isinstance(stack_id, tuple) and len(stack_id) == 2:
+            effective_pos = stack_id
+        elif isinstance(stack_id, str) and stack_id.startswith("S_"):
+            parts = stack_id.split("_")
+            if len(parts) == 3:
+                try:
+                    effective_pos = (int(parts[1]), int(parts[2]))
+                except ValueError:
+                    # Fallback: direkte ID vergleichen
+                    effective_pos = stack_id
+        else:
+            effective_pos = stack_id
+
+        # Jetzt prüfen wir die Bin-Metadaten:
+        # Sie muss auf dem erwarteten Rückgabe-Stack liegen,
+        # aber nicht zwingend ganz oben.
+        if bin_obj.get_stack() != effective_pos:
+            return (
+                False,
+                f"target bin {self.target_bin_id} is on stack {bin_obj.get_stack()}, "
+                f"expected {effective_pos}"
+            )
+
+        # Optional: zusätzliche Sicherheitsprüfung, dass die Bin im Stack enthalten ist.
+        # (Engine-validierungen sollten dies ohnehin sicherstellen.)
+        if bin_obj not in target_stack.bins:
+            return (
+                False,
+                f"target bin {self.target_bin_id} metadata says stack {effective_pos}, "
+                f"but bin not found in that stack's bin list"
+            )
+
+        return True, "task is consistently completed"
+
+    def require_consistently_completed(self, state):
+        can_complete, reason = self.can_complete_consistently(state)
+
+        if not can_complete:
+            raise RuntimeError(
+                f"Cannot complete request {self.request_id}: {reason}"
+            )
+
+    def _get_stack_by_id(self, state, stack_id):
+        if stack_id is None:
+            return None
+
+        if isinstance(stack_id, tuple):
+            x, y = stack_id
+            return state.grid.get_stack(x, y)
+
+        for stack in state.grid.all_stacks():
+            if stack.stack_id == stack_id:
+                return stack
+
+        return None
+
+    def __repr__(self):
+        return (
+            f"RobotTask("
+            f"request_id={self.request_id}, "
+            f"target_bin_id={self.target_bin_id}, "
+            f"phase={self.phase}, "
+            f"target_stack_id={self.target_stack_id}, "
+            f"target_at_pickstation={self.target_at_pickstation}, "
+            f"pickstation_completed={self.pickstation_completed}, "
+            f"target_returned={self.target_returned}, "
+            f"actual_return_stack_id={self.actual_return_stack_id}, "
+            f"temp_storage={len(self.temp_storage)}, "
+            f"batched_requests={len(self.batched_requests)}"
+            f")"
+        )

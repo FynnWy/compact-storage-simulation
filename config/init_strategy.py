@@ -9,6 +9,10 @@ def _all_stack_positions(grid):
 
     for x in range(grid.width):
         for y in range(grid.depth):
+            # Wenn das Grid Port-Positionen kennt, nur echte Storage-Positionen verwenden. Pickstations nicht betrachten.
+            if hasattr(grid, "is_storage_position"):
+                if not grid.is_storage_position(x, y):
+                    continue
             positions.append((x, y))
 
     return positions
@@ -63,6 +67,46 @@ def init_random_distribution(grid, bins, random_seed=None, max_stack_height=None
         stack.push(bin_obj)
 
 
+def assign_abc_classes(bins, abc_threshold_a, abc_threshold_b):
+    """
+    Weist allen Bins eine ABC-Klasse basierend auf ihrer bin_id zu.
+
+    Annahmen:
+    - Niedrige bin_ids haben höhere Request-Wahrscheinlichkeit (Zipf-artig).
+    - Grenzen:
+        bin_id < bin_num * abc_threshold_a -> "A"
+        bin_id < bin_num * abc_threshold_b -> "B"
+        sonst -> "C"
+    """
+    if not bins:
+        return
+
+    bin_num = len(bins)
+
+    # Defensive Bounds
+    abc_threshold_a = max(0.0, min(1.0, abc_threshold_a))
+    abc_threshold_b = max(0.0, min(1.0, abc_threshold_b))
+
+    if abc_threshold_b < abc_threshold_a:
+        raise ValueError(
+            f"Invalid ABC thresholds: abc_threshold_b ({abc_threshold_b}) "
+            f"must be >= abc_threshold_a ({abc_threshold_a})"
+        )
+
+    a_limit = int(bin_num * abc_threshold_a)
+    b_limit = int(bin_num * abc_threshold_b)
+
+    for bin_obj in bins:
+        bin_id = bin_obj.bin_id
+
+        if bin_id < a_limit:
+            bin_obj.set_abc_class("A")
+        elif bin_id < b_limit:
+            bin_obj.set_abc_class("B")
+        else:
+            bin_obj.set_abc_class("C")
+
+
 def initialize_bins(
     grid,
     bins,
@@ -70,6 +114,8 @@ def initialize_bins(
     hot_bin_ids=None,
     random_seed=None,
     max_stack_height=None,
+    abc_threshold_a=0.2,
+    abc_threshold_b=0.5,
 ):
     """
     Zentrale Einstiegsmethode für die Initialverteilung.
@@ -80,6 +126,9 @@ def initialize_bins(
     Grund:
     Hot Items sollen requestseitig simuliert werden, nicht durch eine besondere
     initiale Lagerposition.
+
+    Zusätzlich:
+    - Weist allen Bins eine ABC-Klasse zu (Zipf-basiert über bin_id).
     """
     if init_strategy == "random_distribution":
         init_random_distribution(
@@ -87,6 +136,13 @@ def initialize_bins(
             bins=bins,
             random_seed=random_seed,
             max_stack_height=max_stack_height,
+        )
+
+        # Nach der Platzierung: ABC-Klassen vergeben
+        assign_abc_classes(
+            bins=bins,
+            abc_threshold_a=abc_threshold_a,
+            abc_threshold_b=abc_threshold_b,
         )
         return
 

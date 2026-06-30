@@ -5,16 +5,26 @@ class BaseStrategy(ABC):
     """
     Base class for all storage access strategies.
 
-    A strategy creates an abstract action plan.
-    Every plan ends with a request_complete action.
+    Neuer Standard:
+    Eine Strategie plant genau die nächste Aktion für einen aktiven Task.
+
+    Legacy:
+    Die vollständige Planerzeugung bleibt vorerst vorhanden, wird im neuen
+    Next-Step-Flow aber nicht mehr verwendet.
     """
+
+    @abstractmethod
+    def next_action(self, state, task):
+        """
+        Create exactly one next action for the given task.
+        """
+        raise NotImplementedError("Subclasses must implement next_action.")
 
     def plan(self, state, request):
         """
-        Create a complete plan for a request.
+        Legacy: Create a complete plan for a request.
 
-        Subclasses create the physical actions in `_create_plan`.
-        The final request_complete action is appended here centrally.
+        Der neue Scheduler nutzt diese Methode nicht mehr.
         """
         plan = self._create_plan(state, request)
         plan.append(self._create_request_complete_action(request))
@@ -23,9 +33,7 @@ class BaseStrategy(ABC):
     @abstractmethod
     def _create_plan(self, state, request):
         """
-        Create the physical action plan for a request.
-
-        Subclasses must not append request_complete themselves.
+        Legacy: Create the physical action plan for a request.
         """
         raise NotImplementedError("Subclasses must implement the _create_plan method.")
 

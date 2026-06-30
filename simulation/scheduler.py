@@ -1,4 +1,13 @@
+from simulation.robot_task import RobotTask
+
+
 class Scheduler:
+    # NEU: Prioritätsdefinitionen
+    PRIORITY_PICKSTATION_DELIVERY = 1  # Höchste: Bin zur Pickstation bringen
+    PRIORITY_DIGGING = 2               # Mittel: Blocker räumen
+    PRIORITY_RETURN_STORAGE = 3        # Niedrig: Zurücklagerung
+    PRIORITY_IDLE = 4                  # Niedrigste: Idle
+    
     def __init__(self, active_queue, strategy, scheduler_strategy="FIFO"):
         self.active_queue = active_queue
         self.strategy = strategy
@@ -6,37 +15,186 @@ class Scheduler:
 
     def try_schedule(self, state, current_time):
         """
-        Versucht, genau einen pending Request einem freien Roboter zuzuordnen.
+        Versucht, genau einen Task oder Request einem freien Roboter zuzuordnen.
 
-        Gibt ein Scheduling-Ergebnis zurück oder None, wenn nichts geplant werden kann.
+        Reihenfolge:
+        1. Wartende aktive Tasks fortsetzen.
+        2. Opportunistisch: Requests, deren Bin bereits oben zugänglich ist.
+        3. Neuen Request nach Scheduler-Strategie (FIFO/EDF).
         """
         robot = self._find_idle_robot(state)
 
         if robot is None:
             return None
 
+        waiting_task_result = self._try_schedule_waiting_task(
+            state=state,
+            robot=robot,
+            current_time=current_time,
+        )
+
+        if waiting_task_result is not None:
+            return waiting_task_result
+
         if not self.active_queue.has_unassigned_requests():
             return None
 
-        request = self._select_next_request()
+        # Opportunistisch: Bin liegt bereits oben und ist frei erreichbar (R-E1)
+        opportunistic = self._try_schedule_opportunistic(state, robot, current_time)
+        if opportunistic is not None:
+            return opportunistic
+
+        request = self._select_next_request(state)
 
         if request is None:
             return None
 
-        robot.assign_task(request.request_id)
+        task = RobotTask(request)
+
+        robot.assign_task(task)
         self.active_queue.mark_assigned(request, robot)
 
-        plan = self.strategy.plan(state, request)
+        action = self.strategy.next_action(state, task)
 
+        # NEU: Prüfen ob Bewegung erforderlich ist
+        # Dies wird im EventHandler genauer behandelt, hier nur Metadaten sammeln
         return {
             "request": request,
             "robot": robot,
-            "plan": plan,
+            "task": task,
+            "action": action,
+            "start_time": current_time,
+            "requires_movement": self._action_requires_movement(action),
+        }
+    
+    def _action_requires_movement(self, action):
+        """Prüft ob Aktion Roboter-Bewegung erfordert."""
+        if action is None:
+            return False
+        
+        action_type = action.get("type")
+        return action_type in ("relocate", "remove_target", "return")
+
+    def _try_schedule_waiting_task(self, state, robot, current_time):
+        if not self.active_queue.has_waiting_tasks():
+            return None
+
+        task = self.active_queue.pop_waiting_task()
+        robot.assign_task(task)
+        self.active_queue.mark_task_assigned(task, robot)
+
+        action = self.strategy.next_action(state, task)
+
+        if action is None:
+            robot.clear_task()
+            self.active_queue.add_waiting_task(task)
+            return None
+
+        return {
+            "request": task.request,
+            "robot": robot,
+            "task": task,
+            "action": action,
             "start_time": current_time,
         }
 
-    def _select_next_request(self):
-        blocked_bin_ids = self.active_queue.get_assigned_target_bin_ids()
+    def _try_schedule_opportunistic(self, state, robot, current_time):
+        """
+        Prüft, ob ein pending Request eine Target-Bin hat, die bereits oben
+        auf ihrem Stack liegt und frei (nicht reserviert) ist.
+
+        Falls ja: Dieser Request wird bevorzugt, weil kein Relocation-Aufwand entsteht.
+        Spart Blocker-Räumen, wenn die Bin bereits zugänglich ist (R-E1).
+
+        Erweitert um: Blocker-Bins, die im Buffer liegen und deren
+        eigentlicher Owner sie zurücklegen müsste, können übernommen werden.
+        """
+        reserved = self.active_queue.get_all_reserved_bin_ids()
+
+        for request in list(self.active_queue.pending):
+            bin_id = request.target_box_id
+
+            if bin_id in reserved:
+                # Prüfen: Ist die Bin als Blocker reserviert und im Buffer zugänglich?
+                owner_task = self.active_queue.get_blocker_owner(bin_id)
+                if owner_task is not None:
+                    # Opportunistischer Transfer: Request B übernimmt Blocker-Bin von Task A
+                    bin_obj = state.get_bin_by_id(bin_id)
+                    if bin_obj is not None:
+                        stack = self._get_stack_for_bin(state, bin_obj)
+                        if stack is not None:
+                            top_bin = stack.peek()
+                            if top_bin is not None and top_bin.bin_id == bin_id:
+                                # Bin liegt oben im Buffer → Transfer durchführen
+                                self.active_queue.pending.remove(request)
+                                task = RobotTask(request)
+                                robot.assign_task(task)
+                                self.active_queue.mark_assigned(request, robot)
+
+                                # ✅ Ownership-Transfer: DEFENSIV
+                                released = owner_task.release_blocker_ownership(bin_id)
+
+                                # ✅ Nur wenn erfolgreich freigegeben, Ownership übernehmen
+                                if released is not None:
+                                    self.active_queue.release_blocker_ownership(bin_id)
+                                else:
+                                    # Ownership war bereits weg → trotzdem fortfahren
+                                    print(
+                                        f"[INFO] Opportunistic transfer of bin {bin_id}: "
+                                        f"ownership already released, proceeding anyway"
+                                    )
+
+                                action = self.strategy.next_action(state, task)
+                                return {
+                                    "request": request,
+                                    "robot": robot,
+                                    "task": task,
+                                    "action": action,
+                                    "start_time": current_time,
+                                }
+                continue
+
+            # Normale opportunistische Bedienung: Bin liegt oben und ist frei
+            bin_obj = state.get_bin_by_id(bin_id)
+            if bin_obj is None:
+                continue
+
+            stack = self._get_stack_for_bin(state, bin_obj)
+            if stack is None:
+                continue
+
+            top_bin = stack.peek()
+            if top_bin is not None and top_bin.bin_id == bin_id:
+                # Bin liegt bereits oben – opportunistisch vorziehen
+                self.active_queue.pending.remove(request)
+                task = RobotTask(request)
+                robot.assign_task(task)
+                self.active_queue.mark_assigned(request, robot)
+                action = self.strategy.next_action(state, task)
+                return {
+                    "request": request,
+                    "robot": robot,
+                    "task": task,
+                    "action": action,
+                    "start_time": current_time,
+                }
+
+        return None
+
+    def _get_accessible_bin_ids(self, state):
+        """
+        Gibt Bin-IDs zurück, die aktuell oben auf einem Stack liegen
+        und keinen Eigentümer haben (also sofort bedienbar sind).
+        """
+        accessible = set()
+        for stack in state.grid.all_stacks():
+            top_bin = stack.peek()
+            if top_bin is not None and not top_bin.in_transit:
+                accessible.add(top_bin.bin_id)
+        return accessible
+
+    def _select_next_request(self, state):
+        blocked_bin_ids = self.active_queue.get_all_reserved_bin_ids()
 
         if self.scheduler_strategy == "FIFO":
             return self._pop_next_fifo_excluding(blocked_bin_ids)
@@ -72,5 +230,86 @@ class Scheduler:
         for robot in state.robots:
             if robot.status == "idle":
                 return robot
+
+        return None
+
+    def _get_task_priority(self, task):
+        """
+        Bestimmt Priorität eines Tasks für Queue-Scheduling.
+        
+        Wird verwendet für:
+        - Pickstation-Queue (wenn PRIORITY-Strategie aktiv)
+        - Deadlock-Resolution (später in Phase 5)
+        
+        Returns:
+            int: Prioritätswert (niedriger = höhere Priorität)
+        """
+        from simulation.robot_task import RobotTask
+        
+        if task.phase == RobotTask.PHASE_RETRIEVE_TARGET:
+            if task.target_removed:
+                return self.PRIORITY_PICKSTATION_DELIVERY
+            return self.PRIORITY_DIGGING
+        
+        if task.phase in (RobotTask.PHASE_RESTORE_BLOCKERS, RobotTask.PHASE_RETURN_TARGET):
+            return self.PRIORITY_RETURN_STORAGE
+        
+        return self.PRIORITY_IDLE
+    
+    def _get_stack_for_bin(self, state, bin_obj):
+        stack_id = bin_obj.get_stack()
+        if stack_id is None:
+            return None
+
+        if isinstance(stack_id, tuple):
+            x, y = stack_id
+            return state.grid.get_stack(x, y)
+
+        for stack in state.grid.all_stacks():
+            if stack.stack_id == stack_id:
+                return stack
+
+        return None
+
+    def _get_available_robot(self, state):
+        """
+        Findet einen idle Robot, der für neue Tasks verfügbar ist.
+
+        Ein Robot ist verfügbar, wenn:
+        - status == "idle"
+        - current_task == None
+        - NICHT auf einer Pickstation steht
+
+        Returns:
+            Robot oder None
+        """
+        for robot in state.robots:
+            # Status muss idle sein
+            if robot.status != "idle":
+                continue
+
+            # Kein aktiver Task
+            if robot.current_task is not None:
+                continue
+
+            # ✅ Prüfe ob Robot auf Pickstation steht
+            robot_pos = robot.get_position()
+            if robot_pos is None:
+                # Robot ohne Position → nicht verfügbar
+                continue
+
+            # Prüfe alle Pickstations
+            on_pickstation = False
+            for ps in state.pickstations:
+                if robot_pos == ps.position:
+                    on_pickstation = True
+                    break
+
+            if on_pickstation:
+                # Robot steht auf Pickstation → nicht verfügbar
+                continue
+
+            # Robot ist verfügbar
+            return robot
 
         return None

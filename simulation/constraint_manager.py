@@ -19,13 +19,11 @@ class ConstraintManager:
 
     def can_execute_with_reason(self, action, state):
         """
-        Gibt (can_execute, reason) zurück.
+        Prüft ob eine Aktion ausgeführt werden kann.
 
-        reason ist besonders für Debugging wichtig, um hohe retry_count-Werte
-        nachvollziehen zu können.
+        Returns:
+            (can_execute: bool, reason: str | None)
         """
-        self._validate_basic_action(action)
-
         action_type = action.get("type")
 
         if action_type == "relocate":
@@ -37,11 +35,57 @@ class ConstraintManager:
         if action_type == "return":
             return self._can_return_with_reason(action, state)
 
-        raise ValueError(f"Unknown physical action type: {action_type}")
+        if action_type == "pickup_from_pickstation":
+            # Neue Action: Bin von Pickstation abholen
+            return self._can_pickup_from_pickstation_with_reason(action, state)
 
-    # ------------------------------------------------------------------
-    # Action-specific checks
-    # ------------------------------------------------------------------
+        if action_type == "request_complete":
+            return True, None
+
+        return False, f"Unknown action type: {action_type}"
+
+    def _can_pickup_from_pickstation_with_reason(self, action, state):
+        """
+        Prüft ob Bin von Pickstation abgeholt werden kann.
+
+        Bedingungen:
+        - Pickstation existiert
+        - Bin ist an dieser Pickstation
+        """
+        pickstation_id = action.get("pickstation_id")
+        bin_id = action.get("bin_id")
+
+        if pickstation_id is None:
+            return False, "No pickstation_id in action"
+
+        if bin_id is None:
+            return False, "No bin_id in action"
+
+        pickstation = state.get_pickstation(pickstation_id)
+        if pickstation is None:
+            return False, f"Pickstation {pickstation_id} not found"
+
+        # Prüfe ob Bin an Pickstation ist
+        bin_obj = state.get_bin_by_id(bin_id)
+        if bin_obj is None:
+            return False, f"Bin {bin_id} not found"
+
+        if bin_obj.get_status() != "at_pickstation":
+            return False, f"Bin {bin_id} not at pickstation (status: {bin_obj.get_status()})"
+
+        return True, None
+
+    def _check_not_in_transit(self, bin_id, state):
+        """
+        Gibt eine Fehlermeldung zurück, wenn die Bin gerade in Transit ist,
+        sonst None.
+        """
+        bin_obj = state.get_bin_by_id(bin_id)
+
+        if bin_obj is not None and getattr(bin_obj, "in_transit", False):
+            return f"action blocked: bin {bin_id} is currently in_transit"
+
+        return None
 
     def _can_relocate_with_reason(self, action, state):
         from_stack = self._get_stack_by_id(state, action.get("from_stack"))
