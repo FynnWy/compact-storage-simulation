@@ -4,12 +4,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (robot-collision): prevent robot collisions">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" beforeDir="false" afterPath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/robot_task.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/robot_task.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategies/target_bin_placement_selector.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/target_bin_placement_selector.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/test_port_integration.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_port_integration.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -17,7 +13,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="98" />
+    <option name="cachedIndexableFilesCount" value="99" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -78,6 +74,7 @@
   &quot;keyToString&quot;: {
     &quot;Node.js.side_view.js.executor&quot;: &quot;Run&quot;,
     &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.manual_run_medium.executor&quot;: &quot;Run&quot;,
     &quot;Python.test_pickstation.executor&quot;: &quot;Run&quot;,
     &quot;Python.test_traffic_system.executor&quot;: &quot;Run&quot;,
     &quot;Python.test_view.executor&quot;: &quot;Run&quot;,
@@ -166,7 +163,10 @@
       <workItem from="1781008376416" duration="13114000" />
       <workItem from="1781165506702" duration="14789000" />
       <workItem from="1782378360201" duration="14671000" />
-      <workItem from="1782474389777" duration="5576000" />
+      <workItem from="1782474389777" duration="6158000" />
+      <workItem from="1782559975859" duration="232000" />
+      <workItem from="1782560250870" duration="360000" />
+      <workItem from="1782817588087" duration="173000" />
     </task>
     <task id="LOCAL-00001" summary="Initial project structure">
       <option name="closed" value="true" />
@@ -400,7 +400,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782403947653</updated>
     </task>
-    <option name="localTasksCounter" value="30" />
+    <task id="LOCAL-00030" summary="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected.">
+      <option name="closed" value="true" />
+      <created>1782486205069</created>
+      <option name="number" value="00030" />
+      <option name="presentableId" value="LOCAL-00030" />
+      <option name="project" value="LOCAL" />
+      <updated>1782486205071</updated>
+    </task>
+    <option name="localTasksCounter" value="31" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -430,7 +438,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="Fixed dependencies and updated" />
     <MESSAGE value="Establish connections between key classes, execute initial smoke tests and resolve related bugs" />
     <MESSAGE value="Added responsive 2D UI for localhost" />
     <MESSAGE value="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning" />
@@ -455,13 +462,15 @@
     <MESSAGE value="Fix (return-stack): allow original and random return-stack selection when stack is in a port buffer zone" />
     <MESSAGE value="Fix (missing attribute in Test-Dummy)" />
     <MESSAGE value="Fix (robot-collision): prevent robot collisions" />
-    <option name="LAST_COMMIT_MESSAGE" value="Fix (robot-collision): prevent robot collisions" />
+    <MESSAGE value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
+    <option name="LAST_COMMIT_MESSAGE" value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_traffic_system.coverage" NAME="test_traffic_system Coverage Results" MODIFIED="1779203543042" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_pickstation.coverage" NAME="test_pickstation Coverage Results" MODIFIED="1779195451315" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$web_visualizer.coverage" NAME="web_visualizer Coverage Results" MODIFIED="1777992567636" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/utils" />
+    <SUITE FILE_PATH="coverage/compact_storage_simulation$manual_run_medium.coverage" NAME="manual_run_medium Coverage Results" MODIFIED="1782560319989" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tests" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$main.coverage" NAME="main Coverage Results" MODIFIED="1779205058446" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>
