@@ -130,6 +130,12 @@ class EventHandler:
                         other.robot_id != robot.robot_id
                         and other.get_position() == next_waypoint
                 ):
+                    if event.retry_count >= 20:
+                        # Defensiv gegen Livelock im PS-Bereich:
+                        # blockierenden Idle-Roboter aus dem Weg fahren lassen.
+                        if other.current_task is None and other.status == "idle":
+                            self._handle_robot_becomes_idle(other)
+
                     print(
                         f"[WARNING] Robot {robot.robot_id} blocked at PS-area cell "
                         f"{next_waypoint} (occupied by robot {other.robot_id}) "
@@ -185,6 +191,11 @@ class EventHandler:
             if other.robot_id == robot.robot_id:
                 continue
             if other.get_position() == next_waypoint:
+                if event.retry_count >= 20:
+                    # Defensiv gegen Livelock: blockierenden Idle-Roboter ausparken.
+                    if other.current_task is None and other.status == "idle":
+                        self._handle_robot_becomes_idle(other)
+
                 print(
                     f"[WARNING] Robot {robot.robot_id} blocked at occupied cell "
                     f"{next_waypoint} by robot {other.robot_id} at time {self.state.t}, "

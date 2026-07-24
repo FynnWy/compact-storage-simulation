@@ -5,7 +5,10 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected.">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/compact-storage-simulation.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/compact-storage-simulation.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/scheduler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/scheduler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/strategies/top_access_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/top_access_strategy.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -59,6 +62,65 @@
     <commands />
     <urls />
   </component>
+  <component name="NextEditCompletionFeaturesState">
+    <decayedCancelled>
+      <entry key="MS100" value="2.1169861732709654" />
+      <entry key="MS500" value="5.6507955863173125" />
+      <entry key="S2" value="12.404290858249926" />
+      <entry key="S5" value="16.80242421628637" />
+      <entry key="S10" value="19.06517095377899" />
+      <entry key="S30" value="20.931867788981958" />
+      <entry key="S60" value="21.577396326223564" />
+      <entry key="M2" value="24.451728480448633" />
+      <entry key="M5" value="45.11636933937925" />
+      <entry key="M10" value="85.17678918810348" />
+      <entry key="M15" value="115.25588341221325" />
+      <entry key="M30" value="163.45136884853332" />
+      <entry key="H1" value="197.88605550411333" />
+      <entry key="H2" value="218.56991824084088" />
+      <entry key="H4" value="229.91881551286042" />
+      <entry key="D1" value="239.93354805449246" />
+      <entry key="W1" value="241.7034686831018" />
+    </decayedCancelled>
+    <decayedSelected>
+      <entry key="MS100" value="0.0" />
+      <entry key="MS500" value="0.0" />
+      <entry key="S2" value="0.0" />
+      <entry key="S5" value="0.0" />
+      <entry key="S10" value="0.0" />
+      <entry key="S30" value="0.0" />
+      <entry key="S60" value="0.0" />
+      <entry key="M2" value="0.0" />
+      <entry key="M5" value="0.0" />
+      <entry key="M10" value="0.0" />
+      <entry key="M15" value="0.0" />
+      <entry key="M30" value="0.0" />
+      <entry key="H1" value="0.0" />
+      <entry key="H2" value="0.0" />
+      <entry key="H4" value="0.0" />
+      <entry key="D1" value="0.0" />
+      <entry key="W1" value="0.0" />
+    </decayedSelected>
+    <decayedShown>
+      <entry key="MS100" value="1.9444985584696788" />
+      <entry key="MS500" value="5.579363659385556" />
+      <entry key="S2" value="12.370575609034605" />
+      <entry key="S5" value="16.783095398528147" />
+      <entry key="S10" value="19.053724343547916" />
+      <entry key="S30" value="20.92752039799447" />
+      <entry key="S60" value="21.575136524823076" />
+      <entry key="M2" value="24.450485989002416" />
+      <entry key="M5" value="45.11556485184749" />
+      <entry key="M10" value="85.17607844515705" />
+      <entry key="M15" value="115.25525297147978" />
+      <entry key="M30" value="163.45092733161098" />
+      <entry key="H1" value="197.88578944400388" />
+      <entry key="H2" value="218.56977158002243" />
+      <entry key="H4" value="229.91873843968546" />
+      <entry key="D1" value="239.93353465821414" />
+      <entry key="W1" value="241.7034667554393" />
+    </decayedShown>
+  </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 3
 }</component>
@@ -70,35 +132,35 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;Node.js.side_view.js.executor&quot;: &quot;Run&quot;,
-    &quot;Python.main.executor&quot;: &quot;Run&quot;,
-    &quot;Python.manual_run_medium.executor&quot;: &quot;Run&quot;,
-    &quot;Python.test_pickstation.executor&quot;: &quot;Run&quot;,
-    &quot;Python.test_traffic_system.executor&quot;: &quot;Run&quot;,
-    &quot;Python.test_view.executor&quot;: &quot;Run&quot;,
-    &quot;Python.web_visualizer.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
-    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
-    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;fynn__dev&quot;,
-    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
-    &quot;last_opened_file_path&quot;: &quot;/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation&quot;,
-    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
-    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
-    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
-    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
-    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;ml.llm.LLMConfigurable&quot;,
-    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
-    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Node.js.side_view.js.executor": "Run",
+    "Python.main.executor": "Run",
+    "Python.manual_run_medium.executor": "Run",
+    "Python.test_pickstation.executor": "Run",
+    "Python.test_traffic_system.executor": "Run",
+    "Python.test_view.executor": "Run",
+    "Python.web_visualizer.executor": "Run",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "ai.playground.ignore.import.keys.banner.in.settings": "true",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "hendrik__dev__new",
+    "junie.onboarding.icon.badge.shown": "true",
+    "last_opened_file_path": "/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "settings.editor.selected.configurable": "ml.llm.LLMConfigurable",
+    "to.speed.mode.migration.done": "true",
+    "vue.rearranger.settings.migration": "true"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$" />
@@ -425,7 +487,7 @@
                   <entry key="branch">
                     <value>
                       <list>
-                        <option value="fynn_dev" />
+                        <option value="origin/hendrik_dev_new" />
                       </list>
                     </value>
                   </entry>

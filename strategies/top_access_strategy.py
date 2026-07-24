@@ -216,6 +216,29 @@ class TopAccessStrategy(BaseStrategy):
             )
 
         if bin_obj.get_status() != "at_pickstation":
+            # Defensiv gegen veraltete Task-Fortsetzungen:
+            # Die Bin kann bereits durch einen früheren/konkurrierenden Event-Pfad
+            # zurückgelegt worden sein (status='stored').
+            if bin_obj.get_status() == "stored":
+                expected_stack_id = task.actual_return_stack_id or task.target_stack_id
+                expected_stack_pos = expected_stack_id
+
+                if isinstance(expected_stack_id, str) and expected_stack_id.startswith("S_"):
+                    parts = expected_stack_id.split("_")
+                    if len(parts) == 3:
+                        try:
+                            expected_stack_pos = (int(parts[1]), int(parts[2]))
+                        except ValueError:
+                            expected_stack_pos = expected_stack_id
+
+                if bin_obj.get_stack() == expected_stack_pos:
+                    task.mark_target_returned()
+                    return {
+                        "type": "request_complete",
+                        "request_id": task.request_id,
+                        "bin_id": task.target_bin_id,
+                    }
+
             # ConstraintManager würde das auch abfangen, aber hier ist es klarer
             raise RuntimeError(
                 f"Cannot return target bin {task.target_bin_id}: "
