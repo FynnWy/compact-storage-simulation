@@ -461,6 +461,32 @@ class SimulationEngine:
             bins.append(bin_obj)
         return bins
 
+    """
+    def _create_robots(self, num_robots):
+        """"""
+        Erstellt alle Roboter.
+
+        Roboter starten idle und mit zufälliger Startposition
+        innerhalb des Grids.
+
+        Hintergrund:
+        - Realistische Initialisierung: Roboter stehen irgendwo im Lager.
+        - Alle Bewegungen erfolgen danach über Pathfinder/ReservationTable,
+          es gibt keine Teleports mehr.
+        """"""
+        robots = []
+
+        for robot_id in range(num_robots):
+            # Zufällige Startposition im Grid
+            x = int(self.rng.integers(0, self.config.grid_width))
+            y = int(self.rng.integers(0, self.config.grid_depth))
+
+            start_pos = (x, y)
+            robots.append(Robot(robot_id=robot_id, position=start_pos))
+
+        return robots
+        """
+
     def _create_robots(self, num_robots):
         """
         Erstellt alle Roboter.
@@ -472,15 +498,33 @@ class SimulationEngine:
         - Realistische Initialisierung: Roboter stehen irgendwo im Lager.
         - Alle Bewegungen erfolgen danach über Pathfinder/ReservationTable,
           es gibt keine Teleports mehr.
+        - WICHTIG: Jeder Roboter muss eine eindeutige Startposition haben.
         """
         robots = []
+        occupied_positions = set()
 
         for robot_id in range(num_robots):
-            # Zufällige Startposition im Grid
-            x = int(self.rng.integers(0, self.config.grid_width))
-            y = int(self.rng.integers(0, self.config.grid_depth))
+            # Zufällige Startposition im Grid, die noch nicht belegt ist
+            max_attempts = self.config.grid_width * self.config.grid_depth
+            attempts = 0
 
-            start_pos = (x, y)
+            while attempts < max_attempts:
+                x = int(self.rng.integers(0, self.config.grid_width))
+                y = int(self.rng.integers(0, self.config.grid_depth))
+                start_pos = (x, y)
+
+                if start_pos not in occupied_positions:
+                    occupied_positions.add(start_pos)
+                    break
+
+                attempts += 1
+            else:
+                raise RuntimeError(
+                    f"Cannot find unique start position for robot {robot_id}. "
+                    f"Grid size ({self.config.grid_width}x{self.config.grid_depth}) "
+                    f"may be too small for {num_robots} robots."
+                )
+
             robots.append(Robot(robot_id=robot_id, position=start_pos))
 
         return robots

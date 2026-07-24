@@ -92,7 +92,7 @@ def main():
     config.max_stack_height = 6
     config.bin_num = 70
     config.num_robots = 4
-    config.simulation_time = 70
+    config.simulation_time = 100
 
     config.init_strategy = "random_distribution"
 
