@@ -79,7 +79,27 @@ class Scheduler:
         if not self.active_queue.has_waiting_tasks():
             return None
 
-        task = self.active_queue.pop_waiting_task()
+        # Defensiv: veraltete/abgeschlossene Tasks aus der Waiting-Queue überspringen.
+        # Kann auftreten, wenn alte Events einen Task noch einmal in waiting schieben,
+        # obwohl er fachlich bereits abgeschlossen ist.
+        task = None
+        while self.active_queue.has_waiting_tasks():
+            candidate = self.active_queue.pop_waiting_task()
+            if candidate is None:
+                break
+
+            if getattr(candidate, "target_returned", False):
+                continue
+
+            if getattr(candidate, "phase", None) == RobotTask.PHASE_COMPLETE:
+                continue
+
+            task = candidate
+            break
+
+        if task is None:
+            return None
+
         robot.assign_task(task)
         self.active_queue.mark_task_assigned(task, robot)
 
