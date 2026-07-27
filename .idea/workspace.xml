@@ -4,8 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected.">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Manual run medium running succesfully">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/simulation_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/simulation_engine.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/utils/web_visualizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils/web_visualizer.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -13,7 +15,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="99" />
+    <option name="cachedIndexableFilesCount" value="102" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -44,9 +46,17 @@
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="GitHubPullRequestSearchHistory">{
+  &quot;history&quot;: [
+    {
+      &quot;state&quot;: &quot;OPEN&quot;,
+      &quot;assignee&quot;: &quot;FynnWy&quot;,
+      &quot;author&quot;: &quot;hendrikhondelink&quot;
+    }
+  ],
   &quot;lastFilter&quot;: {
     &quot;state&quot;: &quot;OPEN&quot;,
-    &quot;assignee&quot;: &quot;FynnWy&quot;
+    &quot;assignee&quot;: &quot;FynnWy&quot;,
+    &quot;author&quot;: &quot;hendrikhondelink&quot;
   }
 }</component>
   <component name="GithubPullRequestsUISettings">{
@@ -58,6 +68,65 @@
   <component name="McpProjectServerCommands">
     <commands />
     <urls />
+  </component>
+  <component name="NextEditCompletionFeaturesState">
+    <decayedCancelled>
+      <entry key="MS100" value="2.0616167673856376" />
+      <entry key="MS500" value="5.131156046944326" />
+      <entry key="S2" value="11.400319943038152" />
+      <entry key="S5" value="22.9977855541867" />
+      <entry key="S10" value="43.698185112706426" />
+      <entry key="S30" value="90.83796066626014" />
+      <entry key="S60" value="114.96915165896174" />
+      <entry key="M2" value="130.5122437030854" />
+      <entry key="M5" value="142.6547050949737" />
+      <entry key="M10" value="157.7361733026065" />
+      <entry key="M15" value="177.97294379162486" />
+      <entry key="M30" value="233.637799277774" />
+      <entry key="H1" value="294.0820469799615" />
+      <entry key="H2" value="339.584644468004" />
+      <entry key="H4" value="367.6444782964561" />
+      <entry key="D1" value="394.2813877452573" />
+      <entry key="W1" value="399.17468225160593" />
+    </decayedCancelled>
+    <decayedSelected>
+      <entry key="MS100" value="0.0" />
+      <entry key="MS500" value="0.0" />
+      <entry key="S2" value="0.0" />
+      <entry key="S5" value="0.0" />
+      <entry key="S10" value="0.0" />
+      <entry key="S30" value="0.0" />
+      <entry key="S60" value="0.0" />
+      <entry key="M2" value="0.0" />
+      <entry key="M5" value="0.0" />
+      <entry key="M10" value="0.0" />
+      <entry key="M15" value="0.0" />
+      <entry key="M30" value="0.0" />
+      <entry key="H1" value="0.0" />
+      <entry key="H2" value="0.0" />
+      <entry key="H4" value="0.0" />
+      <entry key="D1" value="0.0" />
+      <entry key="W1" value="0.0" />
+    </decayedSelected>
+    <decayedShown>
+      <entry key="MS100" value="1.960073632687401" />
+      <entry key="MS500" value="5.081324757555469" />
+      <entry key="S2" value="11.376021841698858" />
+      <entry key="S5" value="22.98025992922461" />
+      <entry key="S10" value="43.681905605089966" />
+      <entry key="S30" value="90.82645835179368" />
+      <entry key="S60" value="114.96180176489165" />
+      <entry key="M2" value="130.50804747281683" />
+      <entry key="M5" value="142.65284104967316" />
+      <entry key="M10" value="157.73510209721215" />
+      <entry key="M15" value="177.9721117928416" />
+      <entry key="M30" value="233.63722741838674" />
+      <entry key="H1" value="294.0816780556962" />
+      <entry key="H2" value="339.5844289987765" />
+      <entry key="H4" value="367.6443610318091" />
+      <entry key="D1" value="394.2813666960511" />
+      <entry key="W1" value="399.17467920511285" />
+    </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 3
@@ -86,7 +155,7 @@
     &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
     &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
     &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;fynn__dev&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;hendrik__dev__new&quot;,
     &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
     &quot;last_opened_file_path&quot;: &quot;/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
@@ -408,7 +477,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782486205071</updated>
     </task>
-    <option name="localTasksCounter" value="31" />
+    <task id="LOCAL-00031" summary="Manual run medium running succesfully">
+      <option name="closed" value="true" />
+      <created>1784881078343</created>
+      <option name="number" value="00031" />
+      <option name="presentableId" value="LOCAL-00031" />
+      <option name="project" value="LOCAL" />
+      <updated>1784881078343</updated>
+    </task>
+    <option name="localTasksCounter" value="32" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -425,7 +502,7 @@
                   <entry key="branch">
                     <value>
                       <list>
-                        <option value="fynn_dev" />
+                        <option value="origin/hendrik_dev_new" />
                       </list>
                     </value>
                   </entry>
@@ -438,7 +515,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="Establish connections between key classes, execute initial smoke tests and resolve related bugs" />
     <MESSAGE value="Added responsive 2D UI for localhost" />
     <MESSAGE value="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning" />
     <MESSAGE value="Work Package 2 and 3 finished: Adjusted movement costs and implemented pick station service with decoupled roboters" />
@@ -463,7 +539,8 @@
     <MESSAGE value="Fix (missing attribute in Test-Dummy)" />
     <MESSAGE value="Fix (robot-collision): prevent robot collisions" />
     <MESSAGE value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
-    <option name="LAST_COMMIT_MESSAGE" value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
+    <MESSAGE value="Manual run medium running succesfully" />
+    <option name="LAST_COMMIT_MESSAGE" value="Manual run medium running succesfully" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />

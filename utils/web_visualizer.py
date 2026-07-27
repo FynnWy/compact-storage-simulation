@@ -77,6 +77,15 @@ class WebVisualizer:
 
         grid_data = []
         for (x, y), stack in state.grid.stacks.items():
+            if stack is None:
+                grid_data.append({
+                    "x": x,
+                    "y": y,
+                    "bins": [],
+                    "locked_by": None,
+                })
+                continue
+
             grid_data.append({
                 "x": x,
                 "y": y,
@@ -96,7 +105,7 @@ class WebVisualizer:
                 "id": robot.robot_id,
                 "pos": robot.position,
                 "status": robot.status,
-                "task": robot.current_task,
+                "task": self._serialize_task(robot.current_task),
             })
 
         pickstation_bins = [
@@ -172,6 +181,39 @@ class WebVisualizer:
             "target_bin": getattr(request, "target_box_id", None),
             "arrival_time": getattr(request, "arrival_time", None),
             "latest_time": getattr(request, "latest_time", None),
+        }
+
+    def _serialize_robot_task(self, task):
+        """Serialisiert ein RobotTask-Objekt für JSON."""
+        if task is None:
+            return None
+
+        return {
+            "request_id": getattr(task, "request_id", None),
+            "target_bin_id": getattr(task, "target_bin_id", None),
+            "phase": getattr(task, "phase", None),
+            "target_stack_id": task.target_stack_id,
+            "target_removed": task.target_removed,
+            "target_at_pickstation": task.target_at_pickstation,
+            "pickstation_completed": task.pickstation_completed,
+            "target_returned": task.target_returned,
+            "blockers_count": len(task.temp_storage) if task.temp_storage else 0,
+        }
+
+    def _serialize_task(self, task):
+        """Serialisiert einen RobotTask für JSON-Ausgabe."""
+        if task is None:
+            return None
+
+        return {
+            "request_id": task.request_id,
+            "target_bin_id": task.target_bin_id,
+            "phase": task.phase,
+            "target_stack_id": task.target_stack_id,
+            "target_at_pickstation": task.target_at_pickstation,
+            "pickstation_completed": task.pickstation_completed,
+            "target_returned": task.target_returned,
+            "blockers_remaining": len(task.temp_storage),
         }
 
     def _restore_snapshot(self, index):
