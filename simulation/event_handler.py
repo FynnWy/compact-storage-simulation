@@ -27,7 +27,7 @@ class EventHandler:
         self.event_builder = event_builder
         # Maximale Anzahl Blockierungs-Retries für dieselbe Aktion,
         # bevor der Task als „veraltet“ gilt und neu verplant wird.
-        self.max_action_retries_before_replan = 20
+        self.max_action_retries_before_replan = 3
 
         # Intelligente Port-Priorisierung (WP4)
         move_cost = getattr(
@@ -108,6 +108,7 @@ class EventHandler:
         else:
             raise ValueError(f"Unknown event_type: {event.event_type}")
     """
+
     def _handle_robot_move(self, event):
         """
         Verarbeitet einen einzelnen Bewegungsschritt eines Roboters.
@@ -159,7 +160,7 @@ class EventHandler:
                         other.robot_id != robot.robot_id
                         and other.get_position() == next_waypoint
                 ):
-                    if event.retry_count >= 20:
+                    if event.retry_count >= 3:
                         # Defensiv gegen Livelock im PS-Bereich:
                         # blockierenden Idle-Roboter aus dem Weg fahren lassen.
                         if other.current_task is None and other.status == "idle":
@@ -220,10 +221,110 @@ class EventHandler:
             if other.robot_id == robot.robot_id:
                 continue
             if other.get_position() == next_waypoint:
-                if event.retry_count >= 20:
+
+                # In _handle_robot_move, nach der Zeile:
+                # "if other.get_position() == next_waypoint:"
+
+                for other in self.state.robots:
+                    if other.robot_id == robot.robot_id:
+                        continue
+                    if other.get_position() == next_waypoint:
+                        # ✅ NEU: Starvation-basiertes Ausweichen nach N ZE
+                        starvation_threshold = 3  # Konfigurierbar
+
+                        # Wartezeit des blockierten Roboters prüfen
+                        wait_time = 0
+                        if hasattr(self.state, "traffic_manager") and self.state.traffic_manager is not None:
+                            wait_time = self.state.traffic_manager.deadlock_detector.get_wait_time(
+                                robot.robot_id, self.state.t
+                            )
+
+                        if wait_time >= starvation_threshold:
+                            # Prioritäten vergleichen: Wer muss ausweichen?
+                            my_priority = self._get_robot_priority(robot)
+                            other_priority = self._get_robot_priority(other)
+
+                            print(
+                                f"[STARVATION] t={self.state.t} robot={robot.robot_id} "
+                                f"(prio={my_priority}) waited {wait_time} ZE for robot={other.robot_id} "
+                                f"(prio={other_priority})"
+                            )
+
+                            # Der mit NIEDRIGERER Priorität (höherer Wert) weicht aus
+                            if other_priority > my_priority:
+                                # Der blockierende Roboter hat niedrigere Priorität → er weicht aus
+                                evasion_success = self._force_robot_evasion(other, robot.get_position())
+
+                                if evasion_success:
+                                    print(
+                                        f"[EVASION] t={self.state.t} robot={other.robot_id} "
+                                        f"forced to evade for robot={robot.robot_id}"
+                                    )
+                                    # Event erneut versuchen (mit reset retry_count)
+                                    retry_event = self.event_builder.build_robot_move_event(
+                                        robot=robot,
+                                        time=self.state.t + 1,
+                                    )
+                                    self.event_queue.push(retry_event)
+                                    return
+                            elif my_priority > other_priority:
+                                # Ich habe niedrigere Priorität → ich weiche aus
+                                evasion_success = self._force_robot_evasion(robot, other.get_position())
+
+                                if evasion_success:
+                                    print(
+                                        f"[EVASION] t={self.state.t} robot={robot.robot_id} "
+                                        f"evading for higher-priority robot={other.robot_id}"
+                                    )
+                                    return
+                            # Bei gleicher Priorität: Fallback auf Replanning (bestehende Logik)
+                # Optional: nach einigen Retries aktiv replannen
+                max_move_retries_before_replan = 5
+
+                if event.retry_count >= max_move_retries_before_replan:
+                    # Lokales Replanning über TrafficManager
+                    target = self._get_current_path_target(robot)
+
+                    if hasattr(self.state, "traffic_manager") and self.state.traffic_manager is not None:
+                        print(
+                            f"[REPLAN][MOVE] t={self.state.t} robot={robot.robot_id} "
+                            f"stuck at {robot.get_position()} → replan to {target}"
+                        )
+
+                        new_path = self.state.traffic_manager.replan(
+                            robot=robot,
+                            target=target,
+                            current_time=self.state.t,
+                        )
+
+                        if new_path:
+                            # Neuen Pfad setzen und erstes Move-Event planen
+                            robot.set_path(new_path, robot.path_target_action)
+                            move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
+                            next_move_event = self.event_builder.build_robot_move_event(
+                                robot=robot,
+                                time=self.state.t + move_cost,
+                            )
+                            self.event_queue.push(next_move_event)
+
+                            # Wartestatus im DeadlockDetector löschen
+                            self.state.traffic_manager.deadlock_detector.clear_wait(robot.robot_id)
+                            return
+                        # Falls Replanning fehlschlägt, machen wir unten einen normalen Retry
+
+                if event.retry_count >= 3:
                     # Defensiv gegen Livelock: blockierenden Idle-Roboter ausparken.
                     if other.current_task is None and other.status == "idle":
                         self._handle_robot_becomes_idle(other)
+
+                # Laufzeit-Wait-For-Relation registrieren
+                if hasattr(self.state, "traffic_manager") and self.state.traffic_manager is not None:
+                    self.state.traffic_manager.deadlock_detector.register_wait(
+                        waiting_robot_id=robot.robot_id,
+                        blocking_robot_id=other.robot_id,
+                        reason="cell_occupied",
+                        current_time=self.state.t,
+                    )
 
                 print(
                     f"[WARNING] Robot {robot.robot_id} blocked at occupied cell "
@@ -250,6 +351,11 @@ class EventHandler:
         except RuntimeError as e:
             print(f"[WARNING] Robot {robot.robot_id} move failed: {e}")
             return
+
+        # ✅ Sobald der Roboter sich tatsächlich bewegt hat,
+        # gilt er nicht mehr als wartend.
+        if hasattr(self.state, "traffic_manager") and self.state.traffic_manager is not None:
+            self.state.traffic_manager.deadlock_detector.clear_wait(robot.robot_id)
 
         # NEU: Bounds-Check nach dem Move
         gx, gy = new_position
@@ -312,17 +418,124 @@ class EventHandler:
         self.event_queue.push(next_move_event)
 
     """Hier neuer Code"""
+
     # ... existing code ...
+
+    def _get_robot_priority(self, robot):
+        """
+        Bestimmt Priorität eines Roboters basierend auf seinem Task.
+
+        Niedrigerer Wert = höhere Priorität (wichtiger).
+
+        Returns:
+            int: Prioritätswert
+        """
+        if robot.current_task is None:
+            return 999  # Idle = niedrigste Priorität
+
+        return self.scheduler._get_task_priority(robot.current_task)
+
+    def _force_robot_evasion(self, robot, blocked_position):
+        """
+        Zwingt einen Roboter, auf ein freies Nachbarfeld auszuweichen.
+
+        Args:
+            robot: Der Roboter, der ausweichen soll
+            blocked_position: Die Position, die NICHT betreten werden darf
+
+        Returns:
+            bool: True wenn Ausweichen erfolgreich geplant wurde
+        """
+        current_pos = robot.get_position()
+        if current_pos is None:
+            return False
+
+        # Finde ein freies Nachbarfeld
+        neighbors = [
+            (current_pos[0] + dx, current_pos[1] + dy)
+            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        ]
+
+        # Filtere: innerhalb Grid, nicht blocked_position, nicht von anderem Roboter belegt
+        valid_neighbors = []
+        for nx, ny in neighbors:
+            # Grid-Grenzen prüfen
+            if not (0 <= nx < self.state.grid.width and 0 <= ny < self.state.grid.depth):
+                continue
+
+            # Nicht die blockierte Position
+            if (nx, ny) == blocked_position:
+                continue
+
+            # Nicht von anderem Roboter belegt
+            occupied = False
+            for other in self.state.robots:
+                if other.robot_id != robot.robot_id and other.get_position() == (nx, ny):
+                    occupied = True
+                    break
+
+            if not occupied:
+                valid_neighbors.append((nx, ny))
+
+        if not valid_neighbors:
+            print(
+                f"[WARNING] Robot {robot.robot_id} cannot evade: "
+                f"no free neighbor cells from {current_pos}"
+            )
+            return False
+
+        # Wähle das Feld, das am weitesten von blocked_position entfernt ist
+        def distance_to_blocked(pos):
+            return abs(pos[0] - blocked_position[0]) + abs(pos[1] - blocked_position[1])
+
+        evasion_target = max(valid_neighbors, key=distance_to_blocked)
+
+        # Alten Pfad löschen
+        robot.clear_path()
+
+        # Neuen Ausweich-Pfad setzen
+        robot.set_path([evasion_target], target_action=None)
+
+        # Reservierung für Ausweichposition
+        if self.state.reservation_table is not None:
+            self.state.reservation_table.reserve(
+                robot.robot_id,
+                evasion_target[0],
+                evasion_target[1],
+                self.state.t + 1,
+            )
+
+        # Move-Event für Ausweichen erstellen
+        move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
+        evasion_event = self.event_builder.build_robot_move_event(
+            robot=robot,
+            time=self.state.t + move_cost,
+        )
+        self.event_queue.push(evasion_event)
+
+        # Nach dem Ausweichen: Task fortsetzen (falls vorhanden)
+        if robot.current_task is not None:
+            # Task zurück in Waiting-Queue, wird später erneut geplant
+            self.active_queue.add_waiting_task(robot.current_task)
+            robot.clear_task()
+
+        return True
+
+    # ... existing code ...
+
+    def _get_current_path_target(self, robot):
+        """
+        Bestimmt das aktuelle Ziel eines Roboters basierend auf seinem geplanten Pfad.
+
+        Falls kein Pfad existiert, wird die aktuelle Position zurückgegeben.
+        """
+        if getattr(robot, "planned_path", None):
+            return robot.planned_path[-1]
+        return robot.get_position()
+
     def _handle_robot_pickup(self, event):
         """
         Verarbeitet Phase 1 einer Zwei-Phasen-Aktion: Roboter nimmt Bin auf.
-
-        Nach erfolgreichem Pickup:
-        1. Bin wird aus dem Stack entfernt (bei relocate/remove_target)
-        2. Bin wird als "carried by robot" markiert
-        3. Pfad zum Ziel wird geplant
-        4. ROBOT_MOVE Events werden erzeugt
-        5. Am Ende: ROBOT_DROP Event
         """
         robot = event.payload.get("robot")
         action = event.payload.get("action")
@@ -333,6 +546,68 @@ class EventHandler:
 
         action_type = action.get("type")
         bin_id = action.get("bin_id")
+        from_stack_id = action.get("from_stack")
+
+        # NEU: Prüfen ob Roboter am richtigen Ort steht!
+        expected_position = self._resolve_position(from_stack_id)
+        robot_position = robot.get_position()
+
+        if expected_position is not None and robot_position != expected_position:
+            # Roboter ist NICHT am Stack -> Event verzögern oder neu planen
+            print(
+                f"[BLOCKED][PICKUP] t={self.state.t} robot={robot.robot_id} "
+                f"not at from_stack position: robot at {robot_position}, "
+                f"expected {expected_position} (from_stack={from_stack_id})"
+            )
+
+            # Pfad zum Stack planen und Pickup später ausführen
+            path = self.event_builder.cost_model.calculate_path(
+                from_position=robot_position,
+                to_position=expected_position,
+                robot=robot,
+                state=self.state,
+                current_time=self.state.t,
+            )
+
+            if not path:
+                # Pfad kann nicht berechnet werden -> verzögern
+                delayed_event = self.event_builder.delay_event(event, self.state.t)
+                self.event_queue.push(delayed_event)
+                return
+
+            # ROBOT_MOVE Events zum Stack erstellen
+            robot.set_path(path, target_action=None)
+
+            move_time = self.state.t
+            move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
+
+            for _ in range(len(path)):
+                move_time += move_cost
+                move_event = self.event_builder.build_robot_move_event(
+                    robot=robot,
+                    time=move_time,
+                )
+                self.event_queue.push(move_event)
+
+            # PICKUP Event nach den Moves
+            pickup_event = self.event_builder.build_robot_pickup_event(
+                robot=robot,
+                action=action,
+                request=request,
+                time=move_time + 1,
+            )
+            self.event_queue.push(pickup_event)
+            return
+
+        # ✅ NEU: Nach erfolgreichem Pickup sofort nächsten Move planen,
+        # falls der Roboter noch einen Pfad hat
+        if not robot.has_reached_destination():
+            move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
+            next_move_event = self.event_builder.build_robot_move_event(
+                robot=robot,
+                time=self.state.t + move_cost,
+            )
+            self.event_queue.push(next_move_event)
 
         # Constraint-Prüfung für Pickup
         can_pickup, reason = self._can_pickup(action, self.state)

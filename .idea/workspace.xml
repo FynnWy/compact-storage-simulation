@@ -4,13 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected.">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/events/event_types.py" beforeDir="false" afterPath="$PROJECT_DIR$/events/event_types.py" afterDir="false" />
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Es funktioniert!!! (Roboter holt Kisten ab, lagert um, bringt zur Pickstation, holt an Pickstation ab)">
+      <change beforePath="$PROJECT_DIR$/.idea/compact-storage-simulation.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/compact-storage-simulation.iml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/event_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_builder.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/simulation_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/simulation_engine.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/traffic/deadlock_detector.py" beforeDir="false" afterPath="$PROJECT_DIR$/traffic/deadlock_detector.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -413,7 +411,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782486205071</updated>
     </task>
-    <option name="localTasksCounter" value="31" />
+    <task id="LOCAL-00031" summary="Es funktioniert!!! (Roboter holt Kisten ab, lagert um, bringt zur Pickstation, holt an Pickstation ab)">
+      <option name="closed" value="true" />
+      <created>1785154833023</created>
+      <option name="number" value="00031" />
+      <option name="presentableId" value="LOCAL-00031" />
+      <option name="project" value="LOCAL" />
+      <updated>1785154833023</updated>
+    </task>
+    <option name="localTasksCounter" value="32" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -443,7 +449,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="Establish connections between key classes, execute initial smoke tests and resolve related bugs" />
     <MESSAGE value="Added responsive 2D UI for localhost" />
     <MESSAGE value="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning" />
     <MESSAGE value="Work Package 2 and 3 finished: Adjusted movement costs and implemented pick station service with decoupled roboters" />
@@ -468,7 +473,8 @@
     <MESSAGE value="Fix (missing attribute in Test-Dummy)" />
     <MESSAGE value="Fix (robot-collision): prevent robot collisions" />
     <MESSAGE value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
-    <option name="LAST_COMMIT_MESSAGE" value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
+    <MESSAGE value="Es funktioniert!!! (Roboter holt Kisten ab, lagert um, bringt zur Pickstation, holt an Pickstation ab)" />
+    <option name="LAST_COMMIT_MESSAGE" value="Es funktioniert!!! (Roboter holt Kisten ab, lagert um, bringt zur Pickstation, holt an Pickstation ab)" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
@@ -476,6 +482,6 @@
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_pickstation.coverage" NAME="test_pickstation Coverage Results" MODIFIED="1779195451315" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$web_visualizer.coverage" NAME="web_visualizer Coverage Results" MODIFIED="1777992567636" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/utils" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$manual_run_medium.coverage" NAME="manual_run_medium Coverage Results" MODIFIED="1782560319989" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tests" />
-    <SUITE FILE_PATH="coverage/compact_storage_simulation$main.coverage" NAME="main Coverage Results" MODIFIED="1785154653024" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/compact_storage_simulation$main.coverage" NAME="main Coverage Results" MODIFIED="1785162520964" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>

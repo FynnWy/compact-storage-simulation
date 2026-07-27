@@ -134,6 +134,38 @@ class DeadlockDetector:
     def __repr__(self):
         return f"DeadlockDetector(waiting_robots={len(self._wait_graph)})"
 
+    def detect_starvation(self, current_time, threshold=3):
+        """
+        Erkennt Roboter, die zu lange auf einen anderen warten (Starvation).
+
+        Dies ergänzt detect_cycle() für Fälle, wo KEIN Zyklus vorliegt,
+        aber ein Roboter trotzdem blockiert wird (z.B. Robot A wartet auf
+        Robot B, aber B wartet auf nichts – nur auf ein späteres Event).
+
+        Args:
+            current_time: Aktueller Zeitpunkt
+            threshold: Maximale Wartezeit in ZE bevor Starvation erkannt wird
+
+        Returns:
+            list[dict]: Liste von Starvation-Fällen mit:
+                - waiting_robot_id: Der wartende Roboter
+                - blocking_robot_id: Der blockierende Roboter
+                - wait_time: Wie lange bereits gewartet wird
+        """
+        starving = []
+
+        for robot_id, wait_info in self._wait_graph.items():
+            wait_time = current_time - wait_info["since"]
+
+            if wait_time >= threshold:
+                starving.append({
+                    "waiting_robot_id": robot_id,
+                    "blocking_robot_id": wait_info["waiting_for"],
+                    "wait_time": wait_time,
+                    "reason": wait_info.get("reason", ""),
+                })
+
+        return starving
 
 class DeadlockResolver:
     """
