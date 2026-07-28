@@ -59,6 +59,35 @@ class EventHandler:
             "Time advancement is handled by SimulationEngine."
         )
 
+    """Neuer Code"""
+
+    def handle(self, event):
+        if event.event_type == EventType.ARRIVAL:
+            request = event.payload
+            self.active_queue.add(request)
+
+        elif event.event_type == EventType.ROBOT_ACTION:
+            self._handle_robot_action(event)
+
+        elif event.event_type == EventType.ROBOT_MOVE:
+            self._handle_robot_move(event)
+
+        # NEU: Zwei-Phasen-Aktionen
+        elif event.event_type == EventType.ROBOT_PICKUP:
+            self._handle_robot_pickup(event)
+
+        elif event.event_type == EventType.ROBOT_DROP:
+            self._handle_robot_drop(event)
+
+        elif event.event_type == EventType.PICKSTATION_COMPLETE:
+            self._handle_pickstation_complete(event)
+
+        elif event.event_type == EventType.REQUEST_COMPLETE:
+            self._handle_request_complete(event)
+
+        else:
+            raise ValueError(f"Unknown event_type: {event.event_type}")
+    """
     def handle(self, event):
         if event.event_type == EventType.ARRIVAL:
             request = event.payload
@@ -78,7 +107,7 @@ class EventHandler:
 
         else:
             raise ValueError(f"Unknown event_type: {event.event_type}")
-
+    """
     def _handle_robot_move(self, event):
         """
         Verarbeitet einen einzelnen Bewegungsschritt eines Roboters.
@@ -282,6 +311,494 @@ class EventHandler:
         )
         self.event_queue.push(next_move_event)
 
+    """Hier neuer Code"""
+    # ... existing code ...
+    def _handle_robot_pickup(self, event):
+        """
+        Verarbeitet Phase 1 einer Zwei-Phasen-Aktion: Roboter nimmt Bin auf.
+
+        Nach erfolgreichem Pickup:
+        1. Bin wird aus dem Stack entfernt (bei relocate/remove_target)
+        2. Bin wird als "carried by robot" markiert
+        3. Pfad zum Ziel wird geplant
+        4. ROBOT_MOVE Events werden erzeugt
+        5. Am Ende: ROBOT_DROP Event
+        """
+        robot = event.payload.get("robot")
+        action = event.payload.get("action")
+        request = event.payload.get("request")
+
+        if robot is None:
+            raise RuntimeError("Cannot handle robot pickup: event has no robot")
+
+        action_type = action.get("type")
+        bin_id = action.get("bin_id")
+
+        # Constraint-Prüfung für Pickup
+        can_pickup, reason = self._can_pickup(action, self.state)
+
+        if not can_pickup:
+            print(
+                f"[BLOCKED][PICKUP] t={self.state.t} robot={robot.robot_id} "
+                f"action={action_type} bin={bin_id} reason={reason}"
+            )
+            delayed_event = self.event_builder.delay_event(event, self.state.t)
+            self.event_queue.push(delayed_event)
+            return
+
+        # Bin aus Stack entfernen
+        from_stack = self._get_stack_by_id(self.state, action.get("from_stack"))
+
+        if from_stack is not None:
+            bin_obj = from_stack.pop()
+
+            if bin_obj.bin_id != bin_id:
+                raise RuntimeError(
+                    f"Pickup mismatch: expected bin {bin_id}, got {bin_obj.bin_id}"
+                )
+
+            # Bin als "in transit" / "carried" markieren
+            bin_obj.mark_in_transit()
+            bin_obj.set_stack(None)
+            bin_obj.set_level(None)
+
+            # Sync Stack-Metadata
+            self._sync_stack_bin_metadata(from_stack)
+
+        print(
+            f"[TRACE][PICKUP] t={self.state.t} robot={robot.robot_id} "
+            f"bin={bin_id} from={action.get('from_stack')}"
+        )
+
+        # Zielposition bestimmen
+        target_position = self._get_drop_position_for_action(action)
+
+        if target_position is None:
+            raise RuntimeError(
+                f"Cannot determine drop position for action {action_type}"
+            )
+
+        current_position = robot.get_position()
+
+        # Pfad zum Ziel berechnen
+        path = self.event_builder.cost_model.calculate_path(
+            from_position=current_position,
+            to_position=target_position,
+            robot=robot,
+            state=self.state,
+            current_time=self.state.t,
+        )
+
+        # Pickup-Dauer (Arm runter, greifen, Arm hoch)
+        pickup_duration = self._calculate_pickup_duration(action, self.state)
+        drop_time = self.state.t + pickup_duration
+
+        if not path:
+            # Roboter ist bereits am Ziel - direkt Drop
+            drop_event = self.event_builder.build_robot_drop_event(
+                robot=robot,
+                action=action,
+                request=request,
+                time=drop_time,
+            )
+            self.event_queue.push(drop_event)
+            return
+
+        # Pfad-Events erzeugen
+        robot.set_path(path, target_action=None)
+
+        current_time = drop_time
+        move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
+
+        for _ in range(len(path)):
+            current_time += move_cost
+            move_event = self.event_builder.build_robot_move_event(
+                robot=robot,
+                time=current_time,
+            )
+            self.event_queue.push(move_event)
+
+        # Nach allen Moves: Drop-Event
+        drop_duration = self._calculate_drop_duration(action, self.state)
+        drop_event = self.event_builder.build_robot_drop_event(
+            robot=robot,
+            action=action,
+            request=request,
+            time=current_time + drop_duration,
+        )
+        self.event_queue.push(drop_event)
+
+
+    def _handle_robot_drop(self, event):
+        """
+        Verarbeitet Phase 2 einer Zwei-Phasen-Aktion: Roboter legt Bin ab.
+
+        Nach erfolgreichem Drop:
+        1. Bin wird in den Ziel-Stack eingefügt
+        2. Bin-Status wird aktualisiert
+        3. Task-Status wird aktualisiert
+        4. Nächste Aktion wird geplant
+        """
+        robot = event.payload.get("robot")
+        action = event.payload.get("action")
+        request = event.payload.get("request")
+
+        if robot is None:
+            raise RuntimeError("Cannot handle robot drop: event has no robot")
+
+        action_type = action.get("type")
+        bin_id = action.get("bin_id")
+
+        # Constraint-Prüfung für Drop
+        can_drop, reason = self._can_drop(action, self.state)
+
+        if not can_drop:
+            print(
+                f"[BLOCKED][DROP] t={self.state.t} robot={robot.robot_id} "
+                f"action={action_type} bin={bin_id} reason={reason}"
+            )
+            delayed_event = self.event_builder.delay_event(event, self.state.t)
+            self.event_queue.push(delayed_event)
+            return
+
+        bin_obj = self.state.get_bin_by_id(bin_id)
+
+        if bin_obj is None:
+            raise RuntimeError(f"Cannot drop: bin {bin_id} not found")
+
+        if action_type == "relocate":
+            # Bin auf Buffer-Stack ablegen
+            to_stack = self._get_stack_by_id(self.state, action.get("to_stack"))
+
+            if to_stack is None:
+                raise RuntimeError(f"Cannot drop: to_stack not found")
+
+            to_stack.push(bin_obj)
+            bin_obj.mark_transit_done()
+            self._sync_stack_bin_metadata(to_stack)
+
+            print(
+                f"[TRACE][DROP_RELOCATE] t={self.state.t} robot={robot.robot_id} "
+                f"bin={bin_id} to={action.get('to_stack')}"
+            )
+
+        elif action_type == "remove_target":
+            # Bin an Pickstation abgeben
+            bin_obj.set_status("at_pickstation")
+            bin_obj.mark_transit_done()
+
+            print(
+                f"[TRACE][DROP_TARGET] t={self.state.t} robot={robot.robot_id} "
+                f"bin={bin_id} to=pickstation"
+            )
+
+        elif action_type == "return":
+            # Bin zurück in Stack legen
+            to_stack = self._get_stack_by_id(self.state, action.get("to_stack"))
+
+            if to_stack is None:
+                raise RuntimeError(f"Cannot return: to_stack not found")
+
+            to_stack.push(bin_obj)
+            bin_obj.mark_transit_done()
+            self._sync_stack_bin_metadata(to_stack)
+
+            print(
+                f"[TRACE][DROP_RETURN] t={self.state.t} robot={robot.robot_id} "
+                f"bin={bin_id} to={action.get('to_stack')}"
+            )
+
+        # Task-Update
+        self._update_task_after_successful_action_new(event)
+
+        # Spezialfall: remove_target -> Pickstation-Service starten
+        if action_type == "remove_target":
+            self._attach_batched_requests_to_task(event)
+            self._start_pickstation_service_and_release_robot(event)
+            return
+
+        # Spezialfall: Target-Return -> Request abschließen
+        if action_type == "return" and action.get("return_kind") == "target":
+            return
+
+        # Nächste Aktion planen
+        self._schedule_next_action_for_same_task_new(event)
+
+
+    def _can_pickup(self, action, state):
+        """Prüft ob Pickup möglich ist."""
+        action_type = action.get("type")
+
+        if action_type in ("relocate", "remove_target"):
+            from_stack = self._get_stack_by_id(state, action.get("from_stack"))
+            bin_id = action.get("bin_id")
+
+            if from_stack is None:
+                return False, "from_stack not found"
+
+            if from_stack.is_locked():
+                return False, "from_stack is locked"
+
+            top_bin = from_stack.peek()
+            if top_bin is None or top_bin.bin_id != bin_id:
+                return False, f"expected bin {bin_id} not on top"
+
+            return True, None
+
+        if action_type == "return":
+            from_stack_id = action.get("from_stack")
+            bin_id = action.get("bin_id")
+
+            if from_stack_id is None:
+                # Return von Pickstation
+                bin_obj = state.get_bin_by_id(bin_id)
+                if bin_obj is None:
+                    return False, "bin not found"
+                if bin_obj.get_status() != "at_pickstation":
+                    return False, "bin not at pickstation"
+                return True, None
+
+            # Return von Buffer
+            from_stack = self._get_stack_by_id(state, from_stack_id)
+            if from_stack is None:
+                return False, "from_stack not found"
+
+            top_bin = from_stack.peek()
+            if top_bin is None or top_bin.bin_id != bin_id:
+                return False, f"expected bin {bin_id} not on top"
+
+            return True, None
+
+        return False, f"unknown action type: {action_type}"
+
+
+    def _can_drop(self, action, state):
+        """Prüft ob Drop möglich ist."""
+        action_type = action.get("type")
+
+        if action_type == "remove_target":
+            # Drop an Pickstation - immer möglich
+            return True, None
+
+        if action_type in ("relocate", "return"):
+            to_stack = self._get_stack_by_id(state, action.get("to_stack"))
+
+            if to_stack is None:
+                return False, "to_stack not found"
+
+            if to_stack.is_locked():
+                return False, "to_stack is locked"
+
+            # Kapazitätsprüfung
+            max_height = getattr(state.config, "max_stack_height", None)
+            if max_height is not None and to_stack.height() >= max_height:
+                return False, "to_stack is full"
+
+            return True, None
+
+        return False, f"unknown action type: {action_type}"
+
+
+    def _get_drop_position_for_action(self, action):
+        """Bestimmt die Zielposition für den Drop."""
+        action_type = action.get("type")
+
+        if action_type == "relocate":
+            return self._resolve_position(action.get("to_stack"))
+
+        if action_type == "remove_target":
+            # Zur Pickstation
+            if self.state.pickstations:
+                return self.state.pickstations[0].position
+            return self.event_builder.cost_model.config.pickstation_position
+
+        if action_type == "return":
+            return self._resolve_position(action.get("to_stack"))
+
+        return None
+
+
+    def _calculate_pickup_duration(self, action, state):
+        """Berechnet Dauer für Pickup (Arm runter, greifen, Arm hoch)."""
+        config = self.event_builder.cost_model.config
+
+        from_stack = self._get_stack_by_id(state, action.get("from_stack"))
+        access_depth = 0
+        if from_stack is not None:
+            access_depth = max(0, from_stack.height() - 1)
+
+        arm_cost = 2 * access_depth * config.arm_move_cost_per_level
+        grip_cost = config.grip_cost
+
+        return arm_cost + grip_cost
+
+
+    def _calculate_drop_duration(self, action, state):
+        """Berechnet Dauer für Drop (Arm runter, loslassen, Arm hoch)."""
+        config = self.event_builder.cost_model.config
+
+        action_type = action.get("type")
+
+        if action_type == "remove_target":
+            # Drop an Pickstation - kein Stack-Tiefenzugang
+            return config.drop_cost
+
+        to_stack = self._get_stack_by_id(state, action.get("to_stack"))
+        access_depth = 0
+        if to_stack is not None:
+            access_depth = max(0, to_stack.height())
+
+        arm_cost = 2 * access_depth * config.arm_move_cost_per_level
+        drop_cost = config.drop_cost
+
+        return arm_cost + drop_cost
+
+
+    def _sync_stack_bin_metadata(self, stack):
+        """Synchronisiert Bin-Metadaten nach Stack-Änderung."""
+        stack_position = self._parse_stack_position(stack)
+
+        for level, bin_obj in enumerate(stack.bins):
+            bin_obj.set_stack(stack_position)
+            bin_obj.set_level(level)
+            bin_obj.set_status("stored")
+
+
+    def _parse_stack_position(self, stack):
+        """Wandelt Stack-ID in (x, y) um."""
+        stack_id = stack.stack_id
+
+        if isinstance(stack_id, tuple):
+            return stack_id
+
+        if isinstance(stack_id, str) and stack_id.startswith("S_"):
+            parts = stack_id.split("_")
+            if len(parts) == 3:
+                return int(parts[1]), int(parts[2])
+
+        return stack_id
+
+
+    def _update_task_after_successful_action_new(self, event):
+        """Task-Update nach erfolgreichem Drop."""
+        robot = event.payload.get("robot")
+        if robot is None:
+            return
+
+        task = robot.current_task
+        if task is None:
+            return
+
+        action = event.payload.get("action")
+        action_type = action.get("type")
+
+        if action_type == "relocate":
+            bin_id = action.get("bin_id")
+            task.remember_relocation(
+                bin_id=bin_id,
+                from_stack=action.get("from_stack"),
+                buffer_stack=action.get("to_stack"),
+            )
+            self.active_queue.register_blocker_ownership(bin_id, task)
+
+        elif action_type == "remove_target":
+            task.target_removed = True
+
+        elif action_type == "return":
+            self._update_task_after_successful_return(task, action, robot)
+
+    def _schedule_next_action_for_same_task_new(self, event):
+        """Plant nächste Aktion als Zwei-Phasen-Aktion."""
+        robot = event.payload.get("robot")
+        if robot is None:
+            return
+
+        task = robot.current_task
+        if task is None:
+            return
+
+        next_action = self.scheduler.strategy.next_action(self.state, task)
+
+        if next_action is None:
+            self.active_queue.add_waiting_task(task)
+            robot.clear_task()
+            return
+
+        action_type = next_action.get("type")
+
+        # Physische Aktionen: Zwei-Phasen-System
+        if action_type in ("relocate", "remove_target", "return"):
+            # Plane Fahrt zum Pickup-Ort
+            pickup_position = self._get_target_position_for_action(next_action)
+
+            if pickup_position is None:
+                raise RuntimeError(
+                    f"Cannot determine pickup position for action {action_type}"
+                )
+
+            current_position = robot.get_position()
+
+            path = self.event_builder.cost_model.calculate_path(
+                from_position=current_position,
+                to_position=pickup_position,
+                robot=robot,
+                state=self.state,
+                current_time=self.state.t,
+            )
+
+            if not path:
+                # Bereits am Pickup-Ort - direkt Pickup-Event
+                pickup_event = self.event_builder.build_robot_pickup_event(
+                    robot=robot,
+                    action=next_action,
+                    request=task.request,
+                    time=self.state.t + 1,
+                )
+                self.event_queue.push(pickup_event)
+                return
+
+            # Pfad-Events zum Pickup-Ort
+            robot.set_path(path, target_action=None)
+
+            current_time = self.state.t
+            move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
+
+            for _ in range(len(path)):
+                current_time += move_cost
+                move_event = self.event_builder.build_robot_move_event(
+                    robot=robot,
+                    time=current_time,
+                )
+                self.event_queue.push(move_event)
+
+            # Nach allen Moves: Pickup-Event
+            pickup_event = self.event_builder.build_robot_pickup_event(
+                robot=robot,
+                action=next_action,
+                request=task.request,
+                time=current_time + 1,
+            )
+            self.event_queue.push(pickup_event)
+            return
+
+        # Nicht-physische Aktionen (request_complete etc.)
+        duration = self.event_builder.calculate_action_duration(
+            action=next_action,
+            state=self.state,
+            robot=robot,
+        )
+
+        next_event = self.event_builder.build_event_from_action(
+            action=next_action,
+            request=task.request,
+            robot=robot,
+            time=self.state.t + duration,
+        )
+
+        self.event_queue.push(next_event)
+
+        # ... existing code ...
+
     def _handle_robot_becomes_idle(self, robot):
         """
         Behandelt Roboter der idle wird.
@@ -456,7 +973,7 @@ class EventHandler:
                             f"relocate for bin {bin_id} skipped: "
                             f"bin not on any stack anymore (already moved or processed)"
                         )
-                        self._schedule_next_action_for_same_task(event)
+                        self._schedule_next_action_for_same_task_new(event)
                         return
 
                     if actual_stack.stack_id != from_stack_id:
@@ -477,7 +994,7 @@ class EventHandler:
                         # nicht künstlich, sondern fragen einfach die nächste Aktion
                         # aus der Strategie ab. Die Strategie sieht den aktuellen
                         # echten Zustand (Bin steht woanders) und plant entsprechend neu.
-                        self._schedule_next_action_for_same_task(event)
+                        self._schedule_next_action_for_same_task_new(event)
                         return
 
             # ✅ NEU: REVALIDIERUNG bei remove_target
@@ -496,7 +1013,7 @@ class EventHandler:
 
                         # Frage Strategie nach neuer Relocation-Sequenz
                         # (wird beim nächsten next_action() neu berechnet)
-                        self._schedule_next_action_for_same_task(event)
+                        self._schedule_next_action_for_same_task_new(event)
                         return
 
             # ----------------------------------------------------------
@@ -605,7 +1122,7 @@ class EventHandler:
         if action.get("type") == "return" and action.get("return_kind") == "target":
             return
 
-        self._schedule_next_action_for_same_task(event)
+        self._schedule_next_action_for_same_task_new(event)
 
     def _stack_state_changed(self, task):
         """
@@ -1431,10 +1948,102 @@ class EventHandler:
         
         return None
 
+    """Hier neuer Code"""
     def schedule_available_robots(self, current_time):
         """
         Scheduled so viele Requests oder wartende Tasks, wie freie Roboter vorhanden sind.
         """
+        while True:
+            scheduling_result = self.scheduler.try_schedule(self.state, current_time)
+
+            if scheduling_result is None:
+                return
+
+            action = scheduling_result["action"]
+
+            if action is None:
+                return
+
+            robot = scheduling_result["robot"]
+            request = scheduling_result["request"]
+
+            action_type = action.get("type")
+
+            # NEU: Zwei-Phasen-Aktionen für physische Bewegungen
+            if action_type in ("relocate", "remove_target", "return"):
+                # Pickup-Position bestimmen (= from_stack Position)
+                pickup_position = self._get_target_position_for_action(action)
+                current_position = robot.get_position()
+
+                if current_position is None:
+                    raise RuntimeError(
+                        f"Robot {robot.robot_id} has no position when scheduling"
+                    )
+
+                path = self.event_builder.cost_model.calculate_path(
+                    from_position=current_position,
+                    to_position=pickup_position,
+                    robot=robot,
+                    state=self.state,
+                    current_time=current_time,
+                )
+
+                if not path:
+                    # Bereits am Pickup-Ort - direkt Pickup-Event
+                    pickup_event = self.event_builder.build_robot_pickup_event(
+                        robot=robot,
+                        action=action,
+                        request=request,
+                        time=current_time + 1,
+                    )
+                    self.event_queue.push(pickup_event)
+                    continue
+
+                # Pfad-Events zum Pickup-Ort (OHNE target_action!)
+                robot.set_path(path, target_action=None)
+
+                move_time = current_time
+                move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
+
+                for _ in range(len(path)):
+                    move_time += move_cost
+                    move_event = self.event_builder.build_robot_move_event(
+                        robot=robot,
+                        time=move_time,
+                    )
+                    self.event_queue.push(move_event)
+
+                # Nach allen Moves: Pickup-Event (nicht Action-Event!)
+                pickup_event = self.event_builder.build_robot_pickup_event(
+                    robot=robot,
+                    action=action,
+                    request=request,
+                    time=move_time + 1,
+                )
+                self.event_queue.push(pickup_event)
+                continue
+
+            # Nicht-physische Aktionen (request_complete etc.) - alte Logik
+            duration = self.event_builder.calculate_action_duration(
+                action=action,
+                state=self.state,
+                robot=robot,
+            )
+
+            event = self.event_builder.build_event_from_action(
+                action=action,
+                request=request,
+                robot=robot,
+                time=scheduling_result["start_time"] + duration,
+            )
+
+            self.event_queue.push(event)
+
+    """
+    def schedule_available_robots(self, current_time):
+        """"""
+        Scheduled so viele Requests oder wartende Tasks, wie freie Roboter vorhanden sind.
+        """"""
         while True:
             scheduling_result = self.scheduler.try_schedule(self.state, current_time)
 
@@ -1527,6 +2136,7 @@ class EventHandler:
 
             for path_event in path_events:
                 self.event_queue.push(path_event)
+    """
 
     def _find_bin_location(self, bin_id):
         """

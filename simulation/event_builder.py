@@ -250,6 +250,71 @@ class EventBuilder:
 
         return EventType.ROBOT_ACTION
 
+    """Hier neuer Code"""
+    def build_robot_pickup_event(self, robot, action, request, time):
+        """
+        Baut ein ROBOT_PICKUP Event - Roboter nimmt Bin auf.
+
+        Dies ist Phase 1 einer Zwei-Phasen-Aktion.
+        Nach dem Pickup muss der Roboter zum Ziel fahren.
+        """
+        return Event(
+            time=time,
+            event_type=EventType.ROBOT_PICKUP,
+            payload={
+                "robot": robot,
+                "action": action,
+                "request": request,
+            },
+            priority=self._resolve_priority(EventType.ROBOT_PICKUP),
+        )
+
+    def build_robot_drop_event(self, robot, action, request, time):
+        """
+        Baut ein ROBOT_DROP Event - Roboter legt Bin ab.
+
+        Dies ist Phase 2 einer Zwei-Phasen-Aktion.
+        Nach dem Drop ist die Aktion abgeschlossen.
+        """
+        return Event(
+            time=time,
+            event_type=EventType.ROBOT_DROP,
+            payload={
+                "robot": robot,
+                "action": action,
+                "request": request,
+            },
+            priority=self._resolve_priority(EventType.ROBOT_DROP),
+        )
+
+    def _resolve_priority(self, event_type):
+        if event_type == EventType.REQUEST_COMPLETE:
+            return 0
+
+        if event_type == EventType.PICKSTATION_COMPLETE:
+            return 1
+
+        if event_type == EventType.ARRIVAL:
+            return 2
+
+        if event_type == EventType.ROBOT_ACTION:
+            return 3
+
+        # NEU: Pickup/Drop Prioritäten
+        if event_type == EventType.ROBOT_PICKUP:
+            return 3
+
+        if event_type == EventType.ROBOT_DROP:
+            return 3
+
+        # NEU: ROBOT_MOVE hat niedrigere Priorität als Actions
+        if event_type == EventType.ROBOT_MOVE:
+            return 4
+
+        return 99
+
+
+"""
     # Zuerst werden REQUEST_COMPLETE-Events priorisiert,
     # damit Roboter bei gleicher ZE zuerst frei gemacht werden.
     def _resolve_priority(self, event_type):
@@ -270,3 +335,4 @@ class EventBuilder:
             return 4
 
         return 99
+"""
