@@ -91,7 +91,7 @@ def main():
     config.grid_depth = 5
     config.max_stack_height = 6
     config.bin_num = 70
-    config.num_robots = 1
+    config.num_robots = 4
     config.simulation_time = 100
 
     config.init_strategy = "random_distribution"

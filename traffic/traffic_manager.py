@@ -67,45 +67,47 @@ class TrafficManager:
         # Statistiken
         self._deadlocks_detected = 0
         self._deadlocks_resolved = 0
-    
+
     def request_path(
-        self,
-        robot,
-        target,
-        current_time,
-        allow_waiting=True,
-        max_attempts=3,
+            self,
+            robot,
+            target,
+            current_time,
+            allow_waiting=True,
+            max_attempts=3,
+            blocked_cells=None,  # NEU: Zusätzliche blockierte Zellen
     ):
         """
         Plant Pfad und reserviert ihn.
-        
+
         Wenn Pfad nicht sofort reserviert werden kann, werden mehrere
         Versuche mit leicht verzögertem Start unternommen.
-        
+
         Args:
             robot: Robot-Instanz
             target: (x, y) Zielposition
             current_time: Aktueller Zeitpunkt
             allow_waiting: Ob Warten als Aktion erlaubt ist
             max_attempts: Maximale Versuche mit zeitlicher Verzögerung
-        
+            blocked_cells: Optional - Set von (x, y) Positionen, die gemieden werden sollen
+
         Returns:
             list[(x, y)] | None: Pfad (ohne Startposition) oder None bei Fehler
         """
         start = robot.get_position()
-        
+
         if start is None:
             # Roboter hat noch keine Position - setze auf Ziel
             return []
-        
+
         if start == target:
             # Bereits am Ziel
             return []
-        
+
         # Mehrere Versuche mit zeitlicher Verzögerung
         for attempt in range(max_attempts):
             start_time = current_time + attempt
-            
+
             # Pfad berechnen
             path = self.pathfinder.find_path(
                 start=start,
@@ -113,6 +115,7 @@ class TrafficManager:
                 start_time=start_time,
                 robot_id=robot.robot_id,
                 allow_waiting=allow_waiting,
+                blocked_cells=blocked_cells,  # NEU: Weitergeben an Pathfinder
             )
             
             if path is None:

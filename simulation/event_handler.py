@@ -214,21 +214,25 @@ class EventHandler:
             return
 
         # ✅ NEU: Harte Laufzeit-Kollisionsvermeidung für ALLE Zellen
-        # Falls ein anderer Roboter aktuell physisch auf next_waypoint steht,
-        # darf dieser Robot dort nicht hinfahren – unabhängig von Reservierungen.
         for other in self.state.robots:
             if other.robot_id == robot.robot_id:
                 continue
             if other.get_position() == next_waypoint:
-                if event.retry_count >= 20:
-                    # Defensiv gegen Livelock: blockierenden Idle-Roboter ausparken.
-                    if other.current_task is None and other.status == "idle":
-                        self._handle_robot_becomes_idle(other)
+                # NEU: Sofortiges Replanning nach wenigen Retries
+                if event.retry_count >= 3:  # Statt 20!
+                    # Neuen Pfad berechnen, der die Blockade umgeht
+                    print(
+                        f"[REPLAN] Robot {robot.robot_id} replanning path to avoid "
+                        f"robot {other.robot_id} at {next_waypoint}"
+                    )
+                    self._replan_path_around_obstacle(robot, next_waypoint, event)
+                    return
 
+                # Erste Retries: Kurz warten
                 print(
                     f"[WARNING] Robot {robot.robot_id} blocked at occupied cell "
                     f"{next_waypoint} by robot {other.robot_id} at time {self.state.t}, "
-                    f"retrying..."
+                    f"retrying... (attempt {event.retry_count + 1}/3)"
                 )
                 delayed_event = self.event_builder.delay_event(
                     event=event,
@@ -311,8 +315,55 @@ class EventHandler:
         )
         self.event_queue.push(next_move_event)
 
-    """Hier neuer Code"""
-    # ... existing code ...
+    def _replan_path_around_obstacle(self, robot, blocked_position, event):
+        """
+        Berechnet einen neuen Pfad für den Roboter, der die blockierte Position umgeht.
+        """
+        # Aktuelles Ziel aus dem geplanten Pfad holen
+        if not robot.planned_path:
+            return
+
+        final_destination = robot.planned_path[-1]
+        current_position = robot.get_position()
+
+        # Blockierte Zellen für Pathfinding markieren
+        blocked_cells = {blocked_position}
+
+        # Neuen Pfad berechnen
+        new_path = self.event_builder.cost_model.calculate_path(
+            from_position=current_position,
+            to_position=final_destination,
+            robot=robot,
+            state=self.state,
+            current_time=self.state.t,
+            blocked_cells=blocked_cells,  # NEU: Zusätzliche Blockaden
+        )
+
+        if new_path and len(new_path) > 0:
+            # Alte Reservierungen freigeben
+            self.state.traffic_manager.release_robot_reservations(robot)
+
+            # Neuen Pfad reservieren und setzen
+            success, _ = self.state.reservation_table.reserve_path(
+                robot_id=robot.robot_id,
+                path=new_path,
+                start_time=self.state.t,
+            )
+
+            if success:
+                robot.set_path(new_path, robot.path_target_action)
+                # Neues Move-Event erzeugen
+                move_event = self.event_builder.build_robot_move_event(
+                    robot=robot,
+                    time=self.state.t + 1,
+                )
+                self.event_queue.push(move_event)
+                return
+
+        # Fallback: Wenn kein Alternativpfad gefunden, weiter warten
+        delayed_event = self.event_builder.delay_event(event, self.state.t)
+        self.event_queue.push(delayed_event)
+
     def _handle_robot_pickup(self, event):
         """
         Verarbeitet Phase 1 einer Zwei-Phasen-Aktion: Roboter nimmt Bin auf.
@@ -334,6 +385,24 @@ class EventHandler:
         action_type = action.get("type")
         bin_id = action.get("bin_id")
 
+        # ✅ NEU: Prüfe ob Roboter physisch auf dem Stack steht
+        from_stack = self._get_stack_by_id(self.state, action.get("from_stack"))
+
+        if from_stack is not None:
+            stack_position = self._parse_stack_position(from_stack)
+            robot_position = robot.get_position()
+
+            if robot_position != stack_position:
+                # Roboter ist noch nicht am Ziel angekommen → Pickup verzögern
+                print(
+                    f"[BLOCKED][PICKUP] t={self.state.t} robot={robot.robot_id} "
+                    f"not at stack {action.get('from_stack')} "
+                    f"(robot at {robot_position}, stack at {stack_position}) - retrying"
+                )
+                delayed_event = self.event_builder.delay_event(event, self.state.t)
+                self.event_queue.push(delayed_event)
+                return
+
         # Constraint-Prüfung für Pickup
         can_pickup, reason = self._can_pickup(action, self.state)
 
@@ -347,8 +416,6 @@ class EventHandler:
             return
 
         # Bin aus Stack entfernen
-        from_stack = self._get_stack_by_id(self.state, action.get("from_stack"))
-
         if from_stack is not None:
             bin_obj = from_stack.pop()
 
