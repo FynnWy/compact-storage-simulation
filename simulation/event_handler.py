@@ -219,12 +219,58 @@ class EventHandler:
                 continue
             if other.get_position() == next_waypoint:
                 # NEU: Sofortiges Replanning nach wenigen Retries
-                if event.retry_count >= 3:  # Statt 20!
+                if event.retry_count >= 3:
+                    # NEU: Prüfe ob der blockierende Roboter selbst feststeckt
+                    if event.retry_count >= 5:
+                        # Versuche den blockierenden Roboter zur Neuplanung zu zwingen
+                        if self._force_stale_robot_to_replan(other):
+                            # Blockierender Robot plant neu → kurz warten und erneut versuchen
+                            delayed_event = self.event_builder.delay_event(event, self.state.t)
+                            self.event_queue.push(delayed_event)
+                            return
+
                     # Neuen Pfad berechnen, der die Blockade umgeht
                     print(
                         f"[REPLAN] Robot {robot.robot_id} replanning path to avoid "
                         f"robot {other.robot_id} at {next_waypoint}"
                     )
+
+                    # NEU: Deadlock-Check VOR dem Replanning
+                    if hasattr(self.state, 'traffic_manager'):
+                        tm = self.state.traffic_manager
+                        # Wartebeziehung registrieren
+                        tm.deadlock_detector.register_wait(
+                            waiting_robot_id=robot.robot_id,
+                            blocking_robot_id=other.robot_id,
+                            reason="path_blocked",
+                            current_time=self.state.t,
+                        )
+
+                        # Prüfen ob Deadlock entstanden ist
+                        victim_id = tm.check_and_resolve_deadlock(
+                            robots=self.state.robots,
+                            scheduler=self.scheduler,
+                            current_time=self.state.t,
+                        )
+
+                        if victim_id is not None:
+                            # Deadlock erkannt – Victim muss ausweichen
+                            victim = next(
+                                (r for r in self.state.robots if r.robot_id == victim_id),
+                                None
+                            )
+                            if victim is not None and victim.robot_id == robot.robot_id:
+                                # Dieser Robot soll ausweichen – warte kurz und versuche erneut
+                                print(
+                                    f"[DEADLOCK] Robot {robot.robot_id} yielding to resolve deadlock"
+                                )
+                                delayed_event = self.event_builder.delay_event(event, self.state.t)
+                                self.event_queue.push(delayed_event)
+                                return
+                            elif victim is not None:
+                                # Anderer Robot soll ausweichen – normal fortfahren
+                                pass
+
                     self._replan_path_around_obstacle(robot, next_waypoint, event)
                     return
 
@@ -406,14 +452,37 @@ class EventHandler:
         # Constraint-Prüfung für Pickup
         can_pickup, reason = self._can_pickup(action, self.state)
 
+        ##############
         if not can_pickup:
             print(
                 f"[BLOCKED][PICKUP] t={self.state.t} robot={robot.robot_id} "
                 f"action={action_type} bin={bin_id} reason={reason}"
             )
+
+            # NEU: Bei "not on top" → Task muss neu planen, nicht blind retry
+            if reason and "not on top" in reason:
+                task = robot.current_task
+                if task is not None:
+                    # Die Bin liegt nicht mehr oben – der Stack-Zustand hat sich geändert.
+                    # Anstatt blind zu warten, holen wir eine neue Action von der Strategie.
+                    new_action = self.scheduler.strategy.next_action(self.state, task)
+                    if new_action is not None:
+                        print(
+                            f"[REPLAN][PICKUP] t={self.state.t} robot={robot.robot_id} "
+                            f"task replanning due to stale stack state"
+                        )
+                        self._schedule_next_action_for_task_new(
+                            robot=robot,
+                            task=task,
+                            next_action=new_action,
+                            base_time=self.state.t,
+                        )
+                        return
+
             delayed_event = self.event_builder.delay_event(event, self.state.t)
             self.event_queue.push(delayed_event)
             return
+        #############
 
         # Bin aus Stack entfernen
         if from_stack is not None:
@@ -774,8 +843,8 @@ class EventHandler:
         elif action_type == "return":
             self._update_task_after_successful_return(task, action, robot)
 
-    def _schedule_next_action_for_same_task_new(self, event):
-        """Plant nächste Aktion als Zwei-Phasen-Aktion."""
+    def _update_task_after_successful_action_new(self, event):
+        """Task-Update nach erfolgreichem Drop."""
         robot = event.payload.get("robot")
         if robot is None:
             return
@@ -784,7 +853,51 @@ class EventHandler:
         if task is None:
             return
 
-        next_action = self.scheduler.strategy.next_action(self.state, task)
+        action = event.payload.get("action")
+        action_type = action.get("type")
+
+        if action_type == "relocate":
+            bin_id = action.get("bin_id")
+            task.remember_relocation(
+                bin_id=bin_id,
+                from_stack=action.get("from_stack"),
+                buffer_stack=action.get("to_stack"),
+            )
+            self.active_queue.register_blocker_ownership(bin_id, task)
+
+        elif action_type == "remove_target":
+            task.target_removed = True
+
+        elif action_type == "return":
+            self._update_task_after_successful_return(task, action, robot)
+
+    def _schedule_next_action_for_same_task_new(self, event):
+        """Plant nächste Aktion als Zwei-Phasen-Aktion (event-basierter Entry-Point)."""
+        robot = event.payload.get("robot")
+        if robot is None:
+            return
+
+        task = robot.current_task
+        if task is None:
+            return
+
+        self._schedule_next_action_for_task_new(
+            robot=robot,
+            task=task,
+            next_action=None,
+            base_time=self.state.t,
+        )
+
+    def _schedule_next_action_for_task_new(self, robot, task, next_action=None, base_time=None):
+        """Plant nächste Aktion als Zwei-Phasen-Aktion (task-basierter Helper)."""
+        if robot is None or task is None:
+            return
+
+        if base_time is None:
+            base_time = self.state.t
+
+        if next_action is None:
+            next_action = self.scheduler.strategy.next_action(self.state, task)
 
         if next_action is None:
             self.active_queue.add_waiting_task(task)
@@ -795,7 +908,6 @@ class EventHandler:
 
         # Physische Aktionen: Zwei-Phasen-System
         if action_type in ("relocate", "remove_target", "return"):
-            # Plane Fahrt zum Pickup-Ort
             pickup_position = self._get_target_position_for_action(next_action)
 
             if pickup_position is None:
@@ -810,24 +922,22 @@ class EventHandler:
                 to_position=pickup_position,
                 robot=robot,
                 state=self.state,
-                current_time=self.state.t,
+                current_time=base_time,
             )
 
             if not path:
-                # Bereits am Pickup-Ort - direkt Pickup-Event
                 pickup_event = self.event_builder.build_robot_pickup_event(
                     robot=robot,
                     action=next_action,
                     request=task.request,
-                    time=self.state.t + 1,
+                    time=base_time + 1,
                 )
                 self.event_queue.push(pickup_event)
                 return
 
-            # Pfad-Events zum Pickup-Ort
             robot.set_path(path, target_action=None)
 
-            current_time = self.state.t
+            current_time = base_time
             move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
 
             for _ in range(len(path)):
@@ -838,7 +948,6 @@ class EventHandler:
                 )
                 self.event_queue.push(move_event)
 
-            # Nach allen Moves: Pickup-Event
             pickup_event = self.event_builder.build_robot_pickup_event(
                 robot=robot,
                 action=next_action,
@@ -859,12 +968,11 @@ class EventHandler:
             action=next_action,
             request=task.request,
             robot=robot,
-            time=self.state.t + duration,
+            time=base_time + duration,
         )
 
         self.event_queue.push(next_event)
 
-        # ... existing code ...
 
     def _handle_robot_becomes_idle(self, robot):
         """
@@ -894,6 +1002,48 @@ class EventHandler:
             else:
                 # Keine Parkposition frei (sollte selten sein)
                 print(f"[WARNING] No parking position for robot {robot.robot_id}")
+
+
+    ###############
+    def _force_stale_robot_to_replan(self, robot):
+        """
+        Zwingt einen blockierten Roboter, dessen Task veraltet ist, zur Neuplanung.
+
+        Wird aufgerufen, wenn ein anderer Roboter durch diesen Robot blockiert wird
+        und festgestellt wird, dass der blockierende Robot selbst nicht vorankommt.
+        """
+        task = robot.current_task
+        if task is None:
+            return False
+
+        # Prüfe ob der Task noch gültig ist
+        new_action = self.scheduler.strategy.next_action(self.state, task)
+
+        if new_action is None:
+            # Task ist in einem Wartezustand (z.B. WAIT_FOR_PICKSTATION)
+            return False
+
+        # Prüfe ob die aktuelle Aktion noch durchführbar ist
+        can_execute, reason = self.constraint_manager.can_execute_with_reason(
+            new_action, self.state
+        )
+
+        if not can_execute and reason and "not on top" in reason:
+            # Task hat veralteten State → Neuplanung
+            print(
+                f"[FORCE_REPLAN] t={self.state.t} robot={robot.robot_id} "
+                f"forced to replan due to stale state: {reason}"
+            )
+            self._schedule_next_action_for_task_new(
+                robot=robot,
+                task=task,
+                next_action=new_action,
+                base_time=self.state.t,
+            )
+            return True
+
+        return False
+
 
     def _plan_idle_move(self, robot, target_position):
         """

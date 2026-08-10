@@ -4,14 +4,12 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Simulation läuft jetzt auch mit mehreren Robotern (teilweise mehrere ZE ohne Bewegung -&gt; woran kann das liegen?)">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected.">
       <change beforePath="$PROJECT_DIR$/.idea/compact-storage-simulation.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/compact-storage-simulation.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_27_07_26,_13_21_[Changes]/shelved.patch" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_27_07_26__13_21__Changes_.xml" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/action_cost_model.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/action_cost_model.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/traffic/pathfinder.py" beforeDir="false" afterPath="$PROJECT_DIR$/traffic/pathfinder.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/traffic/traffic_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/traffic/traffic_manager.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -19,7 +17,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="106" />
+    <option name="cachedIndexableFilesCount" value="111" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -44,7 +42,7 @@
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
-        <entry key="$PROJECT_DIR$" value="fynn_dev" />
+        <entry key="$PROJECT_DIR$" value="hendrik_dev_new" />
       </map>
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -65,6 +63,65 @@
     <commands />
     <urls />
   </component>
+  <component name="NextEditCompletionFeaturesState">
+    <decayedCancelled>
+      <entry key="MS100" value="1.1224275371983659" />
+      <entry key="MS500" value="1.6570158135782984" />
+      <entry key="S2" value="1.9100732976419117" />
+      <entry key="S5" value="3.2455426857441156" />
+      <entry key="S10" value="10.452965388605474" />
+      <entry key="S30" value="39.418488926827145" />
+      <entry key="S60" value="59.884952231016186" />
+      <entry key="M2" value="80.0211473850826" />
+      <entry key="M5" value="119.67168598811412" />
+      <entry key="M10" value="189.30453457387074" />
+      <entry key="M15" value="250.28510731469683" />
+      <entry key="M30" value="363.7743582518194" />
+      <entry key="H1" value="456.0490172482271" />
+      <entry key="H2" value="515.7145667885212" />
+      <entry key="H4" value="549.7599783522467" />
+      <entry key="D1" value="580.5579404381207" />
+      <entry key="W1" value="586.0737554338203" />
+    </decayedCancelled>
+    <decayedSelected>
+      <entry key="MS100" value="0.0" />
+      <entry key="MS500" value="0.0" />
+      <entry key="S2" value="0.0" />
+      <entry key="S5" value="0.0" />
+      <entry key="S10" value="0.0" />
+      <entry key="S30" value="0.0" />
+      <entry key="S60" value="0.0" />
+      <entry key="M2" value="0.0" />
+      <entry key="M5" value="0.0" />
+      <entry key="M10" value="0.0" />
+      <entry key="M15" value="0.0" />
+      <entry key="M30" value="0.0" />
+      <entry key="H1" value="0.0" />
+      <entry key="H2" value="0.0" />
+      <entry key="H4" value="0.0" />
+      <entry key="D1" value="0.0" />
+      <entry key="W1" value="0.0" />
+    </decayedSelected>
+    <decayedShown>
+      <entry key="MS100" value="0.8246814056248897" />
+      <entry key="MS500" value="1.5805037622055074" />
+      <entry key="S2" value="1.8894776270910525" />
+      <entry key="S5" value="3.2360337008844375" />
+      <entry key="S10" value="10.444737200241317" />
+      <entry key="S30" value="39.41070700369077" />
+      <entry key="S60" value="59.87923204049385" />
+      <entry key="M2" value="80.01745880888765" />
+      <entry key="M5" value="119.66964729006217" />
+      <entry key="M10" value="189.30296709039632" />
+      <entry key="M15" value="250.28369756404922" />
+      <entry key="M30" value="363.77328226498486" />
+      <entry key="H1" value="456.04831884742487" />
+      <entry key="H2" value="515.7141641449368" />
+      <entry key="H4" value="549.7597615561176" />
+      <entry key="D1" value="580.5579019513829" />
+      <entry key="W1" value="586.0737498752023" />
+    </decayedShown>
+  </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 3
 }</component>
@@ -79,7 +136,6 @@
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
     "Node.js.side_view.js.executor": "Run",
-    "Python.deadlock_detector.executor": "Run",
     "Python.main.executor": "Run",
     "Python.manual_run_medium.executor": "Run",
     "Python.test_pickstation.executor": "Run",
@@ -93,7 +149,7 @@
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "ai.playground.ignore.import.keys.banner.in.settings": "true",
     "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "c973271e",
+    "git-widget-placeholder": "working__sim",
     "junie.onboarding.icon.badge.shown": "true",
     "last_opened_file_path": "/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation",
     "node.js.detected.package.eslint": "true",
@@ -117,6 +173,33 @@
       <recent name="$PROJECT_DIR$/events" />
       <recent name="$PROJECT_DIR$/entities" />
     </key>
+  </component>
+  <component name="RunManager">
+    <configuration name="main" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
+      <module name="compact-storage-simulation" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="SDK_NAME" value="Python 3.13 (compact-storage-simulation)" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="DEBUG_JUST_MY_CODE" value="false" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/main.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
   </component>
   <component name="SharedIndexes">
     <attachedChunks>
@@ -415,15 +498,7 @@
       <option name="project" value="LOCAL" />
       <updated>1782486205071</updated>
     </task>
-    <task id="LOCAL-00031" summary="Es funktioniert!!! (Roboter holt Kisten ab, lagert um, bringt zur Pickstation, holt an Pickstation ab)">
-      <option name="closed" value="true" />
-      <created>1785154833023</created>
-      <option name="number" value="00031" />
-      <option name="presentableId" value="LOCAL-00031" />
-      <option name="project" value="LOCAL" />
-      <updated>1785154833023</updated>
-    </task>
-    <option name="localTasksCounter" value="32" />
+    <option name="localTasksCounter" value="31" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -453,6 +528,8 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
+    <MESSAGE value="Establish connections between key classes, execute initial smoke tests and resolve related bugs" />
+    <MESSAGE value="Added responsive 2D UI for localhost" />
     <MESSAGE value="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning" />
     <MESSAGE value="Work Package 2 and 3 finished: Adjusted movement costs and implemented pick station service with decoupled roboters" />
     <MESSAGE value="Work Package 4 finished: Formally ensure the return process" />
@@ -476,17 +553,14 @@
     <MESSAGE value="Fix (missing attribute in Test-Dummy)" />
     <MESSAGE value="Fix (robot-collision): prevent robot collisions" />
     <MESSAGE value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
-    <MESSAGE value="Es funktioniert!!! (Roboter holt Kisten ab, lagert um, bringt zur Pickstation, holt an Pickstation ab)" />
-    <MESSAGE value="Simulation läuft jetzt auch mit mehreren Robotern (teilweise mehrere ZE ohne Bewegung -&gt; woran kann das liegen?)" />
-    <option name="LAST_COMMIT_MESSAGE" value="Simulation läuft jetzt auch mit mehreren Robotern (teilweise mehrere ZE ohne Bewegung -&gt; woran kann das liegen?)" />
+    <option name="LAST_COMMIT_MESSAGE" value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_traffic_system.coverage" NAME="test_traffic_system Coverage Results" MODIFIED="1779203543042" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_pickstation.coverage" NAME="test_pickstation Coverage Results" MODIFIED="1779195451315" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/compact_storage_simulation$deadlock_detector.coverage" NAME="deadlock_detector Coverage Results" MODIFIED="1785415752755" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/traffic" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$web_visualizer.coverage" NAME="web_visualizer Coverage Results" MODIFIED="1777992567636" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/utils" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$manual_run_medium.coverage" NAME="manual_run_medium Coverage Results" MODIFIED="1782560319989" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tests" />
-    <SUITE FILE_PATH="coverage/compact_storage_simulation$main.coverage" NAME="main Coverage Results" MODIFIED="1785419222923" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/compact_storage_simulation$main.coverage" NAME="main Coverage Results" MODIFIED="1785154653024" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>
