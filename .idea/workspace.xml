@@ -5,11 +5,12 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected.">
-      <change beforePath="$PROJECT_DIR$/.idea/compact-storage-simulation.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/compact-storage-simulation.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_27_07_26,_13_21_[Changes]/shelved.patch" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_27_07_26__13_21__Changes_.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Checkout_at_30_07_26,_14_10_[Changes]/shelved.patch" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Checkout_at_30_07_26__14_10__Changes_.xml" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/strategies/top_access_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/top_access_strategy.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -17,7 +18,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="111" />
+    <option name="cachedIndexableFilesCount" value="109" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -65,23 +66,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.1224275371983659" />
-      <entry key="MS500" value="1.6570158135782984" />
-      <entry key="S2" value="1.9100732976419117" />
-      <entry key="S5" value="3.2455426857441156" />
-      <entry key="S10" value="10.452965388605474" />
-      <entry key="S30" value="39.418488926827145" />
-      <entry key="S60" value="59.884952231016186" />
-      <entry key="M2" value="80.0211473850826" />
-      <entry key="M5" value="119.67168598811412" />
-      <entry key="M10" value="189.30453457387074" />
-      <entry key="M15" value="250.28510731469683" />
-      <entry key="M30" value="363.7743582518194" />
-      <entry key="H1" value="456.0490172482271" />
-      <entry key="H2" value="515.7145667885212" />
-      <entry key="H4" value="549.7599783522467" />
-      <entry key="D1" value="580.5579404381207" />
-      <entry key="W1" value="586.0737554338203" />
+      <entry key="MS100" value="1.6712452168047558" />
+      <entry key="MS500" value="3.565145578435979" />
+      <entry key="S2" value="9.712866382389736" />
+      <entry key="S5" value="24.345984840817245" />
+      <entry key="S10" value="45.88488723046554" />
+      <entry key="S30" value="90.6251021585467" />
+      <entry key="S60" value="114.98933072747187" />
+      <entry key="M2" value="138.00398806799066" />
+      <entry key="M5" value="171.522994010491" />
+      <entry key="M10" value="211.9020018915054" />
+      <entry key="M15" value="242.23341682609424" />
+      <entry key="M30" value="302.6624861372248" />
+      <entry key="H1" value="382.8805403663072" />
+      <entry key="H2" value="470.11875208240673" />
+      <entry key="H4" value="539.2893575299938" />
+      <entry key="D1" value="651.7191310493142" />
+      <entry key="W1" value="1024.404383089028" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -103,23 +104,23 @@
       <entry key="W1" value="0.0" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="0.8246814056248897" />
-      <entry key="MS500" value="1.5805037622055074" />
-      <entry key="S2" value="1.8894776270910525" />
-      <entry key="S5" value="3.2360337008844375" />
-      <entry key="S10" value="10.444737200241317" />
-      <entry key="S30" value="39.41070700369077" />
-      <entry key="S60" value="59.87923204049385" />
-      <entry key="M2" value="80.01745880888765" />
-      <entry key="M5" value="119.66964729006217" />
-      <entry key="M10" value="189.30296709039632" />
-      <entry key="M15" value="250.28369756404922" />
-      <entry key="M30" value="363.77328226498486" />
-      <entry key="H1" value="456.04831884742487" />
-      <entry key="H2" value="515.7141641449368" />
-      <entry key="H4" value="549.7597615561176" />
-      <entry key="D1" value="580.5579019513829" />
-      <entry key="W1" value="586.0737498752023" />
+      <entry key="MS100" value="1.6244047967276272" />
+      <entry key="MS500" value="3.54384572361475" />
+      <entry key="S2" value="9.698426053690008" />
+      <entry key="S5" value="24.33145124402307" />
+      <entry key="S10" value="45.87063398060619" />
+      <entry key="S30" value="90.61461586281241" />
+      <entry key="S60" value="114.98231745034816" />
+      <entry key="M2" value="137.99956183384424" />
+      <entry key="M5" value="171.52068120314973" />
+      <entry key="M10" value="211.90055633068494" />
+      <entry key="M15" value="242.2323152479412" />
+      <entry key="M30" value="302.66180077578827" />
+      <entry key="H1" value="382.88010918850006" />
+      <entry key="H2" value="470.1184884186358" />
+      <entry key="H4" value="539.2892066312859" />
+      <entry key="D1" value="651.7191000362133" />
+      <entry key="W1" value="1024.4043751694282" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -157,7 +158,7 @@
     "node.js.selected.package.eslint": "(autodetect)",
     "node.js.selected.package.tslint": "(autodetect)",
     "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable",
+    "settings.editor.selected.configurable": "preferences.keymap",
     "to.speed.mode.migration.done": "true",
     "vue.rearranger.settings.migration": "true"
   }

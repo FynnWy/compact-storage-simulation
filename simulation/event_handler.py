@@ -29,6 +29,10 @@ class EventHandler:
         # bevor der Task als „veraltet“ gilt und neu verplant wird.
         self.max_action_retries_before_replan = 20
 
+        # NEU: Spezifische Schutzschwellen für Pickup-Positionsfehler
+        self.max_pickup_position_retries_before_replan = 5
+        self.max_pickup_position_retries_before_requeue = 15
+
         # Intelligente Port-Priorisierung (WP4)
         move_cost = getattr(
             getattr(self.state, "config", None),
@@ -431,7 +435,7 @@ class EventHandler:
         action_type = action.get("type")
         bin_id = action.get("bin_id")
 
-        # ✅ NEU: Prüfe ob Roboter physisch auf dem Stack steht
+        # ✅ Prüfe ob Roboter physisch auf dem Stack steht
         from_stack = self._get_stack_by_id(self.state, action.get("from_stack"))
 
         if from_stack is not None:
@@ -439,11 +443,47 @@ class EventHandler:
             robot_position = robot.get_position()
 
             if robot_position != stack_position:
-                # Roboter ist noch nicht am Ziel angekommen → Pickup verzögern
+                task = robot.current_task
+
+                # 2. Schutzschwelle: Task hart zurück in waiting, um Livelock zu brechen
+                if (
+                    task is not None
+                    and event.retry_count >= self.max_pickup_position_retries_before_requeue
+                ):
+                    print(
+                        f"[REQUEUE][PICKUP_POS] t={self.state.t} robot={robot.robot_id} "
+                        f"action={action_type} bin={bin_id} "
+                        f"retry={event.retry_count} -> requeue task {task.request_id}"
+                    )
+                    robot.clear_task()
+                    self.active_queue.add_waiting_task(task)
+                    return
+
+                # 1. Schutzschwelle: früher Bewegungspfad zum Pickup neu planen
+                if (
+                    task is not None
+                    and event.retry_count >= self.max_pickup_position_retries_before_replan
+                ):
+                    print(
+                        f"[REPLAN][PICKUP_POS] t={self.state.t} robot={robot.robot_id} "
+                        f"action={action_type} bin={bin_id} "
+                        f"(robot at {robot_position}, stack at {stack_position}) "
+                        f"retry={event.retry_count} -> reschedule movement to pickup"
+                    )
+                    self._schedule_next_action_for_task_new(
+                        robot=robot,
+                        task=task,
+                        next_action=action,
+                        base_time=self.state.t,
+                    )
+                    return
+
+                # Vor Replan-Schwelle: normal verzögern
                 print(
                     f"[BLOCKED][PICKUP] t={self.state.t} robot={robot.robot_id} "
                     f"not at stack {action.get('from_stack')} "
-                    f"(robot at {robot_position}, stack at {stack_position}) - retrying"
+                    f"(robot at {robot_position}, stack at {stack_position}) "
+                    f"- retrying ({event.retry_count + 1}/{self.max_pickup_position_retries_before_replan})"
                 )
                 delayed_event = self.event_builder.delay_event(event, self.state.t)
                 self.event_queue.push(delayed_event)
@@ -452,19 +492,15 @@ class EventHandler:
         # Constraint-Prüfung für Pickup
         can_pickup, reason = self._can_pickup(action, self.state)
 
-        ##############
         if not can_pickup:
             print(
                 f"[BLOCKED][PICKUP] t={self.state.t} robot={robot.robot_id} "
                 f"action={action_type} bin={bin_id} reason={reason}"
             )
 
-            # NEU: Bei "not on top" → Task muss neu planen, nicht blind retry
             if reason and "not on top" in reason:
                 task = robot.current_task
                 if task is not None:
-                    # Die Bin liegt nicht mehr oben – der Stack-Zustand hat sich geändert.
-                    # Anstatt blind zu warten, holen wir eine neue Action von der Strategie.
                     new_action = self.scheduler.strategy.next_action(self.state, task)
                     if new_action is not None:
                         print(
@@ -482,7 +518,6 @@ class EventHandler:
             delayed_event = self.event_builder.delay_event(event, self.state.t)
             self.event_queue.push(delayed_event)
             return
-        #############
 
         # Bin aus Stack entfernen
         if from_stack is not None:

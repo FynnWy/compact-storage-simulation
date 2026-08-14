@@ -88,7 +88,17 @@ class TopAccessStrategy(BaseStrategy):
                 task.phase = RobotTask.PHASE_RESTORE_BLOCKERS
                 return self.next_action(state, task)
 
-            raise RuntimeError(f"Target bin {target_bin_id} not found in storage or pickstation")
+            if target_bin is not None and getattr(target_bin, "in_transit", False):
+                # Bin ist temporär zwischen Pickup und Drop unterwegs.
+                # Kein Fehlerzustand: Task kurz warten lassen und später neu versuchen.
+                return None
+
+            status = target_bin.get_status() if target_bin is not None else None
+            in_transit = getattr(target_bin, "in_transit", None) if target_bin is not None else None
+            raise RuntimeError(
+                f"Target bin {target_bin_id} not found in storage or pickstation "
+                f"(status={status}, in_transit={in_transit})"
+            )
 
         if task.target_stack_id is None:
             task.target_stack_id = target_stack.stack_id
