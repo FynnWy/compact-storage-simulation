@@ -1,5 +1,4 @@
 // static/js/visualizer.js
-
 const colors = {
     normalBin: "#90caf9",
     targetBin: "#ef5350",
@@ -7,6 +6,7 @@ const colors = {
     previousPosition: "#cbd5e1",
     emptyStack: "#94a3b8",
     robot: "#37474f",
+    robotTransporting: "#9ca3af",
     pickstation: "#ffca28",
     lockedStack: "#fde68a",
     lockedStackStroke: "#f59e0b",
@@ -39,6 +39,7 @@ function normalizeStateResponse(data) {
             pending: [],
             assigned: []
         },
+        summary: state?.summary ?? null,
         history_index: state?.history_index ?? 0,
         history_len: state?.history_len ?? 1,
         is_finished: state?.is_finished ?? false,
@@ -202,6 +203,7 @@ function updateUI() {
     updateEventCard();
     updatePickstation();
     updateActiveQueue();
+    updateSummary();
     updateRobots();
 
     // GEÄNDERT: Statt renderGrid() direkt aufzurufen, ViewManager verwenden
@@ -347,7 +349,12 @@ function updateRobots() {
         div.className = "p-1.5 border rounded text-[10px] flex flex-col gap-0.5";
 
         const status = robot.status ?? "unknown";
-        const statusColor = status === "busy" ? "text-red-500" : "text-teal-600";
+        const isTransporting = isRobotTransportingBin(robot);
+        const statusColor = isTransporting
+            ? "text-gray-500"
+            : status === "busy"
+                ? "text-red-500"
+                : "text-teal-600";
         const robotPosText = formatPosition(robot.pos);
 
         div.innerHTML = `
@@ -725,6 +732,35 @@ function renderXLabelIfNeeded(rowGroup, layout, stackX, x, y, maxHeight) {
         .text(`x=${x}`);
 }
 
+
+
+function isRobotTransportingBin(robot) {
+    if (!robot) {
+        return false;
+    }
+
+    // Explizite Felder (falls gesetzt)
+    if (robot.is_transporting === true || robot.carrying_bin === true) {
+        return true;
+    }
+
+    if (robot.transporting_bin_id !== null && robot.transporting_bin_id !== undefined) {
+        return true;
+    }
+
+    if (robot.loaded_bin_id !== null && robot.loaded_bin_id !== undefined) {
+        return true;
+    }
+
+    // Status-basierte Erkennung
+    const status = (robot.status ?? "").toString().toLowerCase();
+    if (["transporting", "carrying", "loaded"].includes(status)) {
+        return true;
+    }
+
+    return false;
+}
+
 function renderRobotsOnStack(rowGroup, layout, stackX, x, y) {
     currentState.robots.forEach(robot => {
         if (!Array.isArray(robot.pos) || robot.pos.length !== 2) {
@@ -735,10 +771,14 @@ function renderRobotsOnStack(rowGroup, layout, stackX, x, y) {
             return;
         }
 
+        const robotColor = isRobotTransportingBin(robot)
+            ? colors.robotTransporting
+            : colors.robot;
+
         rowGroup.append("path")
             .attr("d", d3.symbol().type(d3.symbolTriangle).size(Math.max(60, 100 * layout.scale))())
             .attr("transform", `translate(${stackX + layout.binW / 2}, ${-Math.max(8, 10 * layout.scale)}) rotate(180)`)
-            .attr("fill", colors.robot);
+            .attr("fill", robotColor);
 
         rowGroup.append("text")
             .attr("x", stackX + layout.binW / 2)
@@ -897,4 +937,45 @@ if (document.readyState === 'loading') {
 } else {
     // DOM already loaded
     initializeVisualizer();
+}
+
+
+
+function updateSummary() {
+    const section = getElement("summary-section");
+    const card = getElement("summary-card");
+
+    if (!section || !card) {
+        return;
+    }
+
+    const isFinished = currentState.status === "finished" || currentState.is_finished;
+    const summary = currentState.summary;
+
+    if (!isFinished || !summary) {
+        section.classList.add("hidden");
+        return;
+    }
+
+    section.classList.remove("hidden");
+
+    const compact = [
+        ["completed_requests", summary.completed_requests],
+        ["successful_requests", summary.successful_requests],
+        ["missed_deadline_requests", summary.missed_deadline_requests],
+        ["deadline_miss_rate", summary.deadline_miss_rate],
+        ["average_tardiness", summary.average_tardiness],
+        ["throughput", summary.throughput],
+        ["average_arrival_to_pickstation", summary.average_arrival_to_pickstation],
+        ["average_arrival_to_full_completion", summary.average_arrival_to_full_completion],
+        ["requests_completed", summary.requests_completed],
+        ["average_request_digging_depth", summary.average_request_digging_depth]
+    ];
+
+    card.innerHTML = `
+        <div class="font-bold text-emerald-700 mb-1">Simulation finished</div>
+        <div class="grid grid-cols-1 gap-0.5">
+            ${compact.map(([k, v]) => `<div><span class="text-slate-500">${k}:</span> <span class="font-semibold text-slate-800">${v ?? "-"}</span></div>`).join("")}
+        </div>
+    `;
 }

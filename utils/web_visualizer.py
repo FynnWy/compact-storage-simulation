@@ -126,6 +126,10 @@ class WebVisualizer:
 
         active_queue_info = self._serialize_active_queue(engine)
 
+        simulation_summary = None
+        if self.is_finished:
+            simulation_summary = engine.metrics.summary()
+
         return {
             "t": state.t,
             "grid_width": state.grid.width,
@@ -136,6 +140,7 @@ class WebVisualizer:
             "pickstation": pickstation_bins,
             "event": event_info,
             "active_queue": active_queue_info,
+            "summary": simulation_summary,
             "history_index": self.history_index,
             "history_len": len(self.history),
             "is_finished": self.is_finished,

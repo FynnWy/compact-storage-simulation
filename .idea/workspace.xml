@@ -4,13 +4,13 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected.">
-      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Checkout_at_30_07_26,_14_10_[Changes]/shelved.patch" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Checkout_at_30_07_26__14_10__Changes_.xml" beforeDir="false" />
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Kisten in transit erhalten status &quot;unavailable&quot;, damit bei Planung kein Fehler geschmissen wird">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategies/top_access_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/top_access_strategy.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/static/js/views/top_down_view.js" beforeDir="false" afterPath="$PROJECT_DIR$/static/js/views/top_down_view.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/static/js/visualizer.js" beforeDir="false" afterPath="$PROJECT_DIR$/static/js/visualizer.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/templates/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/templates/index.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/utils/web_visualizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils/web_visualizer.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -57,7 +57,7 @@
   <component name="GithubPullRequestsUISettings">{
   &quot;selectedUrlAndAccountId&quot;: {
     &quot;url&quot;: &quot;https://github.com/FynnWy/compact-storage-simulation.git&quot;,
-    &quot;accountId&quot;: &quot;19cea18e-2f61-4798-b1e0-d029cacd3cca&quot;
+    &quot;accountId&quot;: &quot;e57f2eab-60f7-49be-be17-0048383e8bb4&quot;
   }
 }</component>
   <component name="McpProjectServerCommands">
@@ -66,23 +66,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.6712452168047558" />
-      <entry key="MS500" value="3.565145578435979" />
-      <entry key="S2" value="9.712866382389736" />
-      <entry key="S5" value="24.345984840817245" />
-      <entry key="S10" value="45.88488723046554" />
-      <entry key="S30" value="90.6251021585467" />
-      <entry key="S60" value="114.98933072747187" />
-      <entry key="M2" value="138.00398806799066" />
-      <entry key="M5" value="171.522994010491" />
-      <entry key="M10" value="211.9020018915054" />
-      <entry key="M15" value="242.23341682609424" />
-      <entry key="M30" value="302.6624861372248" />
-      <entry key="H1" value="382.8805403663072" />
-      <entry key="H2" value="470.11875208240673" />
-      <entry key="H4" value="539.2893575299938" />
-      <entry key="D1" value="651.7191310493142" />
-      <entry key="W1" value="1024.404383089028" />
+      <entry key="MS100" value="1.4014230682288766" />
+      <entry key="MS500" value="2.7670293827198247" />
+      <entry key="S2" value="5.21073330347918" />
+      <entry key="S5" value="6.624133163179059" />
+      <entry key="S10" value="7.258331099526443" />
+      <entry key="S30" value="7.815304632028384" />
+      <entry key="S60" value="9.886835720632288" />
+      <entry key="M2" value="20.315870041131948" />
+      <entry key="M5" value="49.39452928744095" />
+      <entry key="M10" value="82.6953674627192" />
+      <entry key="M15" value="119.98813885110529" />
+      <entry key="M30" value="233.03963007801707" />
+      <entry key="H1" value="393.5262066196893" />
+      <entry key="H2" value="561.7150262578854" />
+      <entry key="H4" value="696.2085659332296" />
+      <entry key="D1" value="885.6566480114437" />
+      <entry key="W1" value="1274.1328675146317" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -104,23 +104,23 @@
       <entry key="W1" value="0.0" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.6244047967276272" />
-      <entry key="MS500" value="3.54384572361475" />
-      <entry key="S2" value="9.698426053690008" />
-      <entry key="S5" value="24.33145124402307" />
-      <entry key="S10" value="45.87063398060619" />
-      <entry key="S30" value="90.61461586281241" />
-      <entry key="S60" value="114.98231745034816" />
-      <entry key="M2" value="137.99956183384424" />
-      <entry key="M5" value="171.52068120314973" />
-      <entry key="M10" value="211.90055633068494" />
-      <entry key="M15" value="242.2323152479412" />
-      <entry key="M30" value="302.66180077578827" />
-      <entry key="H1" value="382.88010918850006" />
-      <entry key="H2" value="470.1184884186358" />
-      <entry key="H4" value="539.2892066312859" />
-      <entry key="D1" value="651.7191000362133" />
-      <entry key="W1" value="1024.4043751694282" />
+      <entry key="MS100" value="0.9565308098551689" />
+      <entry key="MS500" value="2.647200628343255" />
+      <entry key="S2" value="5.174544673054169" />
+      <entry key="S5" value="6.608345062303594" />
+      <entry key="S10" value="7.250145381716536" />
+      <entry key="S30" value="7.812492091961812" />
+      <entry key="S60" value="9.885282365817181" />
+      <entry key="M2" value="20.314707975596203" />
+      <entry key="M5" value="49.39361428004579" />
+      <entry key="M10" value="82.69460963932626" />
+      <entry key="M15" value="119.98739318051614" />
+      <entry key="M30" value="233.03890830824173" />
+      <entry key="H1" value="393.5256179131859" />
+      <entry key="H2" value="561.7146207978068" />
+      <entry key="H4" value="696.2083205821606" />
+      <entry key="D1" value="885.6565968704815" />
+      <entry key="W1" value="1274.1328565951214" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -134,35 +134,36 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Node.js.side_view.js.executor": "Run",
-    "Python.main.executor": "Run",
-    "Python.manual_run_medium.executor": "Run",
-    "Python.test_pickstation.executor": "Run",
-    "Python.test_traffic_system.executor": "Run",
-    "Python.test_view.executor": "Run",
-    "Python.web_visualizer.executor": "Run",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "ai.playground.ignore.import.keys.banner.in.settings": "true",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "working__sim",
-    "junie.onboarding.icon.badge.shown": "true",
-    "last_opened_file_path": "/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "preferences.keymap",
-    "to.speed.mode.migration.done": "true",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Node.js.side_view.js.executor&quot;: &quot;Run&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.manual_run_medium.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_pickstation.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_traffic_system.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_view.executor&quot;: &quot;Run&quot;,
+    &quot;Python.web_visualizer.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;working__sim&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.keymap&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$" />
@@ -205,8 +206,7 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-js-predefined-d6986cc7102b-9b0f141eb926-JavaScript-PY-253.33813.30" />
-        <option value="bundled-python-sdk-929bdeb5c976-6d6dccd035ac-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.33813.30" />
+        <option value="bundled-python-sdk-c59985aa861c-c2ffad84badb-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-261.24374.152" />
       </set>
     </attachedChunks>
   </component>
@@ -499,7 +499,23 @@
       <option name="project" value="LOCAL" />
       <updated>1782486205071</updated>
     </task>
-    <option name="localTasksCounter" value="31" />
+    <task id="LOCAL-00031" summary="Simulation läuft, aber teilweise lange Wartezeiten">
+      <option name="closed" value="true" />
+      <created>1786711188520</created>
+      <option name="number" value="00031" />
+      <option name="presentableId" value="LOCAL-00031" />
+      <option name="project" value="LOCAL" />
+      <updated>1786711188520</updated>
+    </task>
+    <task id="LOCAL-00032" summary="Kisten in transit erhalten status &quot;unavailable&quot;, damit bei Planung kein Fehler geschmissen wird">
+      <option name="closed" value="true" />
+      <created>1786711276237</created>
+      <option name="number" value="00032" />
+      <option name="presentableId" value="LOCAL-00032" />
+      <option name="project" value="LOCAL" />
+      <updated>1786711276237</updated>
+    </task>
+    <option name="localTasksCounter" value="33" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -529,8 +545,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="Establish connections between key classes, execute initial smoke tests and resolve related bugs" />
-    <MESSAGE value="Added responsive 2D UI for localhost" />
     <MESSAGE value="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning" />
     <MESSAGE value="Work Package 2 and 3 finished: Adjusted movement costs and implemented pick station service with decoupled roboters" />
     <MESSAGE value="Work Package 4 finished: Formally ensure the return process" />
@@ -554,7 +568,9 @@
     <MESSAGE value="Fix (missing attribute in Test-Dummy)" />
     <MESSAGE value="Fix (robot-collision): prevent robot collisions" />
     <MESSAGE value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
-    <option name="LAST_COMMIT_MESSAGE" value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
+    <MESSAGE value="Simulation läuft, aber teilweise lange Wartezeiten" />
+    <MESSAGE value="Kisten in transit erhalten status &quot;unavailable&quot;, damit bei Planung kein Fehler geschmissen wird" />
+    <option name="LAST_COMMIT_MESSAGE" value="Kisten in transit erhalten status &quot;unavailable&quot;, damit bei Planung kein Fehler geschmissen wird" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
