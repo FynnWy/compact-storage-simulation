@@ -4,12 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Simulation summary wenn Zeit durchgelaufen ist">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Junie hat gekocht und sagt, in_transit werden keine Fehler mehr geworfen. Zweite Verifikation folgt, Tests laufen aber an sich">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" beforeDir="false" afterPath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/test_workflow_integration.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_workflow_integration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_event_handler_smart_skip.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_event_handler_smart_skip.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -65,23 +64,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.615245507883246" />
-      <entry key="MS500" value="5.79405914665614" />
-      <entry key="S2" value="14.918913802101095" />
-      <entry key="S5" value="24.54006508270342" />
-      <entry key="S10" value="31.331318188393347" />
-      <entry key="S30" value="40.405962405020155" />
-      <entry key="S60" value="53.04074092943938" />
-      <entry key="M2" value="73.38849121566922" />
-      <entry key="M5" value="98.37807337239238" />
-      <entry key="M10" value="110.41349340900592" />
-      <entry key="M15" value="114.96679224954096" />
-      <entry key="M30" value="119.82206320068184" />
-      <entry key="H1" value="122.36935016037103" />
-      <entry key="H2" value="123.67408121477895" />
-      <entry key="H4" value="124.3344738484493" />
-      <entry key="D1" value="190.11553157520007" />
-      <entry key="W1" value="1009.8620719652434" />
+      <entry key="MS100" value="1.0" />
+      <entry key="MS500" value="1.0" />
+      <entry key="S2" value="1.0" />
+      <entry key="S5" value="1.0" />
+      <entry key="S10" value="1.0000000000129494" />
+      <entry key="S30" value="1.0064181759831483" />
+      <entry key="S60" value="2.209494719173538" />
+      <entry key="M2" value="18.86127827486667" />
+      <entry key="M5" value="93.85922837730449" />
+      <entry key="M10" value="168.42407808321306" />
+      <entry key="M15" value="210.41345649544326" />
+      <entry key="M30" value="274.77480123832163" />
+      <entry key="H1" value="337.2765302970423" />
+      <entry key="H2" value="401.975464796559" />
+      <entry key="H4" value="456.27781673569615" />
+      <entry key="D1" value="581.5208650327095" />
+      <entry key="W1" value="1409.3440583682027" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -103,23 +102,23 @@
       <entry key="W1" value="0.0" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.499391822123921" />
-      <entry key="MS500" value="5.725484122319716" />
-      <entry key="S2" value="14.87915865307401" />
-      <entry key="S5" value="24.514291245668765" />
-      <entry key="S10" value="31.314809789969367" />
-      <entry key="S30" value="40.398759269189654" />
-      <entry key="S60" value="53.035781075988154" />
-      <entry key="M2" value="73.38486150160067" />
-      <entry key="M5" value="98.37604470912977" />
-      <entry key="M10" value="110.41233893775183" />
-      <entry key="M15" value="114.96598715360221" />
-      <entry key="M30" value="119.82164172563648" />
-      <entry key="H1" value="122.3691344525613" />
-      <entry key="H2" value="123.67397208729754" />
-      <entry key="H4" value="124.33441896232515" />
-      <entry key="D1" value="190.11551857587872" />
-      <entry key="W1" value="1009.8620630162478" />
+      <entry key="MS100" value="0.02646079101132897" />
+      <entry key="MS500" value="0.483638164806966" />
+      <entry key="S2" value="0.833931043824964" />
+      <entry key="S5" value="0.9299338498830151" />
+      <entry key="S10" value="0.9643307782643782" />
+      <entry key="S30" value="0.9943833918165793" />
+      <entry key="S60" value="2.2033793147810896" />
+      <entry key="M2" value="18.857644197435395" />
+      <entry key="M5" value="93.85671527489026" />
+      <entry key="M10" value="168.42226875091217" />
+      <entry key="M15" value="210.41202888389714" />
+      <entry key="M30" value="274.7739059924034" />
+      <entry key="H1" value="337.27598660272207" />
+      <entry key="H2" value="401.9751402801476" />
+      <entry key="H4" value="456.27763182886287" />
+      <entry key="D1" value="581.5208261185448" />
+      <entry key="W1" value="1409.344045628925" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -522,7 +521,15 @@
       <option name="project" value="LOCAL" />
       <updated>1786715750547</updated>
     </task>
-    <option name="localTasksCounter" value="34" />
+    <task id="LOCAL-00034" summary="Junie hat gekocht und sagt, in_transit werden keine Fehler mehr geworfen. Zweite Verifikation folgt, Tests laufen aber an sich">
+      <option name="closed" value="true" />
+      <created>1787044722141</created>
+      <option name="number" value="00034" />
+      <option name="presentableId" value="LOCAL-00034" />
+      <option name="project" value="LOCAL" />
+      <updated>1787044722141</updated>
+    </task>
+    <option name="localTasksCounter" value="35" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -552,7 +559,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="Work Package 2 and 3 finished: Adjusted movement costs and implemented pick station service with decoupled roboters" />
     <MESSAGE value="Work Package 4 finished: Formally ensure the return process" />
     <MESSAGE value="Work Package 5 finished: Implemented complex request consistency, batching and robust return handling" />
     <MESSAGE value="Work Package 6 finished: Simple Relocation logic for blocking bins" />
@@ -577,7 +583,8 @@
     <MESSAGE value="Simulation läuft, aber teilweise lange Wartezeiten" />
     <MESSAGE value="Kisten in transit erhalten status &quot;unavailable&quot;, damit bei Planung kein Fehler geschmissen wird" />
     <MESSAGE value="Simulation summary wenn Zeit durchgelaufen ist" />
-    <option name="LAST_COMMIT_MESSAGE" value="Simulation summary wenn Zeit durchgelaufen ist" />
+    <MESSAGE value="Junie hat gekocht und sagt, in_transit werden keine Fehler mehr geworfen. Zweite Verifikation folgt, Tests laufen aber an sich" />
+    <option name="LAST_COMMIT_MESSAGE" value="Junie hat gekocht und sagt, in_transit werden keine Fehler mehr geworfen. Zweite Verifikation folgt, Tests laufen aber an sich" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />

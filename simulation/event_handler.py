@@ -33,6 +33,11 @@ class EventHandler:
         self.max_pickup_position_retries_before_replan = 5
         self.max_pickup_position_retries_before_requeue = 15
 
+        # Move-Blockaden: frühes Replaning und Duplikat-Schutz
+        self.max_move_retries_before_replan = 1
+        self.max_move_retries_before_force_replan = 2
+        self._last_move_handled_time_by_robot = {}
+
         # Intelligente Port-Priorisierung (WP4)
         move_cost = getattr(
             getattr(self.state, "config", None),
@@ -128,6 +133,12 @@ class EventHandler:
         if robot is None:
             raise RuntimeError("Cannot handle robot move: event has no robot")
 
+        # Duplikat-Schutz: pro Roboter nur ein Move-Handling pro Zeitschritt.
+        # Verhindert mehrfache Retry-Schleifen im selben t durch stale Events.
+        if self._last_move_handled_time_by_robot.get(robot.robot_id) == self.state.t:
+            return
+        self._last_move_handled_time_by_robot[robot.robot_id] = self.state.t
+
         next_waypoint = robot.get_next_waypoint()
 
         if next_waypoint is None:
@@ -163,16 +174,34 @@ class EventHandler:
                         other.robot_id != robot.robot_id
                         and other.get_position() == next_waypoint
                 ):
-                    if event.retry_count >= 20:
-                        # Defensiv gegen Livelock im PS-Bereich:
-                        # blockierenden Idle-Roboter aus dem Weg fahren lassen.
-                        if other.current_task is None and other.status == "idle":
-                            self._handle_robot_becomes_idle(other)
+                    if event.retry_count >= self.max_move_retries_before_replan:
+                        if event.retry_count >= self.max_move_retries_before_force_replan:
+                            # Blockierenden Roboter möglichst früh aus dem Port-Bereich lösen.
+                            if (
+                                    other.current_task is None
+                                    and other.status == "idle"
+                            ):
+                                self._handle_robot_becomes_idle(other)
+                            elif self._force_stale_robot_to_replan(other):
+                                delayed_event = self.event_builder.delay_event(
+                                    event=event,
+                                    current_time=self.state.t,
+                                )
+                                self.event_queue.push(delayed_event)
+                                return
+
+                        print(
+                            f"[REPLAN] Robot {robot.robot_id} replanning path to avoid "
+                            f"robot {other.robot_id} at {next_waypoint}"
+                        )
+                        self._replan_path_around_obstacle(robot, next_waypoint, event)
+                        return
 
                     print(
                         f"[WARNING] Robot {robot.robot_id} blocked at PS-area cell "
                         f"{next_waypoint} (occupied by robot {other.robot_id}) "
-                        f"at time {self.state.t}, retrying..."
+                        f"at time {self.state.t}, retrying... "
+                        f"(attempt {event.retry_count + 1}/{self.max_move_retries_before_replan + 1})"
                     )
                     delayed_event = self.event_builder.delay_event(
                         event=event,
@@ -223,15 +252,19 @@ class EventHandler:
                 continue
             if other.get_position() == next_waypoint:
                 # NEU: Sofortiges Replanning nach wenigen Retries
-                if event.retry_count >= 3:
+                if event.retry_count >= self.max_move_retries_before_replan:
                     # NEU: Prüfe ob der blockierende Roboter selbst feststeckt
-                    if event.retry_count >= 5:
+                    if event.retry_count >= self.max_move_retries_before_force_replan:
                         # Versuche den blockierenden Roboter zur Neuplanung zu zwingen
                         if self._force_stale_robot_to_replan(other):
                             # Blockierender Robot plant neu → kurz warten und erneut versuchen
                             delayed_event = self.event_builder.delay_event(event, self.state.t)
                             self.event_queue.push(delayed_event)
                             return
+
+                        # Idle-Blocker ohne Task frühzeitig aus dem Weg bewegen.
+                        if other.current_task is None and other.status == "idle":
+                            self._handle_robot_becomes_idle(other)
 
                     # Neuen Pfad berechnen, der die Blockade umgeht
                     print(
@@ -282,7 +315,7 @@ class EventHandler:
                 print(
                     f"[WARNING] Robot {robot.robot_id} blocked at occupied cell "
                     f"{next_waypoint} by robot {other.robot_id} at time {self.state.t}, "
-                    f"retrying... (attempt {event.retry_count + 1}/3)"
+                    f"retrying... (attempt {event.retry_count + 1}/{self.max_move_retries_before_replan + 1})"
                 )
                 delayed_event = self.event_builder.delay_event(
                     event=event,
@@ -684,15 +717,23 @@ class EventHandler:
                 f"bin={bin_id} to={action.get('to_stack')}"
             )
 
+
         elif action_type == "remove_target":
             # Bin an Pickstation abgeben
             bin_obj.set_status("at_pickstation")
             bin_obj.mark_transit_done()
-
             print(
                 f"[TRACE][DROP_TARGET] t={self.state.t} robot={robot.robot_id} "
                 f"bin={bin_id} to=pickstation"
             )
+            # NEU: Metrik für Pickstation-Ankunft erfassen
+            task = robot.current_task
+            if task is not None:
+                self.metrics.record_target_bin_at_pickstation(
+                    self.state,
+                    action,
+                    request=task.request
+                )
 
         elif action_type == "return":
             # Bin zurück in Stack legen
