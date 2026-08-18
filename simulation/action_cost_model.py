@@ -180,44 +180,46 @@ class ActionCostModel:
         
         # Fallback auf Config
         return self.config.pickstation_position
-    
-    def calculate_path(self, from_position, to_position, robot=None, state=None, current_time=0):
+
+    def calculate_path(self, from_position, to_position, robot=None, state=None, current_time=0, blocked_cells=None):
         """
         Berechnet Pfad zwischen zwei Positionen.
-        
+
         NEU: Nutzt TrafficManager falls vorhanden, sonst einfacher Manhattan-Pfad.
-        
+
         Args:
             from_position: (x, y) Startposition
             to_position: (x, y) Zielposition
             robot: Optional - Robot-Instanz (für TrafficManager)
             state: Optional - State-Instanz (für TrafficManager)
             current_time: Optional - Aktueller Zeitpunkt
-        
+            blocked_cells: Optional - Set von (x, y) Positionen, die gemieden werden sollen
+
         Returns:
             list[(x, y)]: Liste von Wegpunkten (ohne Start)
         """
         if from_position is None or to_position is None:
             return []
-        
+
         if from_position == to_position:
             return []
-        
+
         # NEU: Nutze TrafficManager falls vorhanden
-        if (state is not None and 
-            hasattr(state, 'traffic_manager') and 
-            state.traffic_manager is not None and
-            robot is not None):
-            
+        if (state is not None and
+                hasattr(state, 'traffic_manager') and
+                state.traffic_manager is not None and
+                robot is not None):
+
             path = state.traffic_manager.request_path(
                 robot=robot,
                 target=to_position,
                 current_time=current_time,
+                blocked_cells=blocked_cells,  # Weitergeben an TrafficManager
             )
-            
+
             if path is not None:
                 return path
-            
+
             # Fallback auf einfachen Pfad falls TrafficManager fehlschlägt
             print(f"[WARNING] TrafficManager failed for robot {robot.robot_id}, using simple path")
         

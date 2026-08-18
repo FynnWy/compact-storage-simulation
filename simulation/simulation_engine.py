@@ -386,6 +386,54 @@ class SimulationEngine:
             if bin_obj.get_status() == "at_pickstation"
         ]
 
+        # NEU: Bins die gerade vom Roboter getragen werden (in_transit)
+        bins_in_transit = [
+            bin_obj
+            for bin_obj in self.state.bins
+            if getattr(bin_obj, "in_transit", False)
+               and bin_obj.get_status() != "at_pickstation"  # Nicht doppelt zählen
+               and bin_obj not in bins_in_stacks  # Nicht doppelt zählen
+        ]
+
+        visible_bins = bins_in_stacks + bins_at_pickstation + bins_in_transit
+        visible_bin_ids = [bin_obj.bin_id for bin_obj in visible_bins]
+
+        duplicate_bin_ids = [
+            bin_id
+            for bin_id in set(visible_bin_ids)
+            if visible_bin_ids.count(bin_id) > 1
+        ]
+
+        if duplicate_bin_ids:
+            raise RuntimeError(
+                f"Invalid state: duplicate bin detected. "
+                f"duplicate_bin_ids={duplicate_bin_ids}"
+            )
+
+        if len(visible_bin_ids) != len(self.state.bins):
+            # Debug-Info für fehlende Bins
+            all_bin_ids = {b.bin_id for b in self.state.bins}
+            visible_ids = set(visible_bin_ids)
+            missing_ids = all_bin_ids - visible_ids
+
+            raise RuntimeError(
+                f"Invalid state: expected {len(self.state.bins)} bins, "
+                f"found {len(visible_bin_ids)} visible bins. "
+                f"Missing bin_ids: {missing_ids}"
+            )
+    """
+    def _validate_bin_uniqueness(self):
+        bins_in_stacks = []
+
+        for stack in self.state.grid.all_stacks():
+            bins_in_stacks.extend(stack.bins)
+
+        bins_at_pickstation = [
+            bin_obj
+            for bin_obj in self.state.bins
+            if bin_obj.get_status() == "at_pickstation"
+        ]
+
         visible_bins = bins_in_stacks + bins_at_pickstation
         visible_bin_ids = [bin_obj.bin_id for bin_obj in visible_bins]
 
@@ -405,7 +453,8 @@ class SimulationEngine:
             raise RuntimeError(
                 f"Invalid state: expected {len(self.state.bins)} bins, "
                 f"found {len(visible_bin_ids)} visible bins."
-            )
+            )    
+    """
 
     def _validate_stack_capacities(self):
         for stack in self.state.grid.all_stacks():

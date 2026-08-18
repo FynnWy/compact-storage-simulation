@@ -87,12 +87,12 @@ def main():
     # Erweiterter, aber noch übersichtlicher Smoke-Test
     config.random_seed = 42
 
-    config.grid_width = 5
-    config.grid_depth = 5
+    config.grid_width = 7
+    config.grid_depth = 7
     config.max_stack_height = 6
-    config.bin_num = 70
-    config.num_robots = 4
-    config.simulation_time = 100
+    config.bin_num = 200
+    config.num_robots = 1
+    config.simulation_time = 200
 
     config.init_strategy = "random_distribution"
 

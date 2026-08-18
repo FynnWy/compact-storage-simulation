@@ -173,12 +173,10 @@ class TopDownView extends BaseView {
 
         // Pickstation-Position ist bei (-1, y)
         // Wir zeichnen sie links vom Grid
-        if (pickstationBins.length === 0) return;
-
         const psX = padding - cellSize * 0.6;
         const psY = padding + (state.grid_depth || 0) * cellSize / 2;
 
-        // Pickstation als Rechteck
+        // Pickstation als Rechteck (immer sichtbar)
         svg.append("rect")
            .attr("x", psX - cellSize * 0.4)
            .attr("y", psY - cellSize * 0.4)
@@ -200,16 +198,14 @@ class TopDownView extends BaseView {
            .attr("font-weight", "bold")
            .text("PS");
 
-        // Anzahl Bins an Pickstation
-        if (pickstationBins.length > 0) {
-            svg.append("text")
-               .attr("x", psX)
-               .attr("y", psY + cellSize * 0.5)
-               .attr("text-anchor", "middle")
-               .attr("font-size", Math.min(cellSize * 0.15, 10))
-               .attr("fill", "#333")
-               .text(`(${pickstationBins.length})`);
-        }
+        // Anzahl Bins an Pickstation (auch 0 anzeigen)
+        svg.append("text")
+           .attr("x", psX)
+           .attr("y", psY + cellSize * 0.5)
+           .attr("text-anchor", "middle")
+           .attr("font-size", Math.min(cellSize * 0.15, 10))
+           .attr("fill", "#333")
+           .text(`(${pickstationBins.length})`);
     }
 
     _renderEmpty(svg) {

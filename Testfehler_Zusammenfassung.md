@@ -1,4 +1,34 @@
 
+## 7. Multi-Robot: Duplizierte Bin-IDs / inkonsistenter Bin-Ort, gelöst: JA
+
+**Fehlerbild (Reproduktion):**
+- `tests/test_multi_robot.py::TestNoCollisions::test_no_collision_three_robots` brach reproduzierbar mit
+  `RuntimeError: Duplicate bins detected in system! duplicate_bin_ids=[10]` ab.
+
+**Ursache (isoliert):**
+1. Im Zwei-Phasen-Flow (`ROBOT_PICKUP` → `ROBOT_DROP`) konnte beim `return` von der Pickstation
+   dieselbe Bin parallel von mehreren Robotern aufgenommen werden.
+2. Grund: beim Pickup `from_stack=None` fehlte eine exklusive Transit-Sperre der Bin.
+3. Folge: dieselbe Bin wurde mehrfach in Stacks zurückgelegt, wodurch die Eindeutigkeitsinvariante brach.
+
+**Umgesetzte Fixes:**
+1. `simulation/event_handler.py`
+   - `_can_pickup(return from pickstation)` prüft jetzt zusätzlich:
+     - Bin ist **nicht** bereits `in_transit`
+     - Bin ist **nicht** mehr einem Stack zugeordnet.
+   - `_handle_robot_pickup` markiert bei `return` aus Pickstation die Bin explizit als `in_transit`
+     (exklusive Mitnahme über die Bewegungsphase).
+   - `_can_drop(relocate/return)` verlangt nun eine Bin im Transit (`in_transit=True`) vor dem Ablegen.
+   - Stale-Return-Events: Wenn ein geblockter Return-Pickup eine bereits `stored` Bin betrifft,
+     wird sofort replanned statt bis zum Retry-Limit zu loopen.
+2. `tests/test_workflow_integration.py`
+   - Bin-Konsistenztests zählen jetzt zusätzlich valide `in_transit`-Bins (analog zur Runtime-Validierung),
+     damit während `ROBOT_PICKUP`/`ROBOT_DROP` keine falschen „Bin verloren“-Fehler auftreten.
+
+**Validierung nach Fix:**
+- `python3 -m pytest -q tests/test_multi_robot.py` → **6 passed**
+- `python3 -m pytest -q tests/test_workflow_integration.py tests/test_robot_task_completion.py tests/test_port_integration.py` → **24 passed**
+
 ## 1. Port-Reservierungsfehler, gelöst: JA
 **RuntimeError:** Robot X cannot enter port PS_0: reserved for robot None
 

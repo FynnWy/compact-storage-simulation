@@ -4,10 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Manual run medium running succesfully">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Junie hat gekocht und sagt, in_transit werden keine Fehler mehr geworfen. Zweite Verifikation folgt, Tests laufen aber an sich">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/simulation_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/simulation_engine.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/utils/web_visualizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils/web_visualizer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_event_handler_smart_skip.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_event_handler_smart_skip.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -15,7 +16,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="102" />
+    <option name="cachedIndexableFilesCount" value="109" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -40,29 +41,21 @@
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
-        <entry key="$PROJECT_DIR$" value="fynn_dev" />
+        <entry key="$PROJECT_DIR$" value="hendrik_dev_new" />
       </map>
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="GitHubPullRequestSearchHistory">{
-  &quot;history&quot;: [
-    {
-      &quot;state&quot;: &quot;OPEN&quot;,
-      &quot;assignee&quot;: &quot;FynnWy&quot;,
-      &quot;author&quot;: &quot;hendrikhondelink&quot;
-    }
-  ],
   &quot;lastFilter&quot;: {
     &quot;state&quot;: &quot;OPEN&quot;,
-    &quot;assignee&quot;: &quot;FynnWy&quot;,
-    &quot;author&quot;: &quot;hendrikhondelink&quot;
+    &quot;assignee&quot;: &quot;FynnWy&quot;
   }
 }</component>
   <component name="GithubPullRequestsUISettings">{
   &quot;selectedUrlAndAccountId&quot;: {
     &quot;url&quot;: &quot;https://github.com/FynnWy/compact-storage-simulation.git&quot;,
-    &quot;accountId&quot;: &quot;19cea18e-2f61-4798-b1e0-d029cacd3cca&quot;
+    &quot;accountId&quot;: &quot;e57f2eab-60f7-49be-be17-0048383e8bb4&quot;
   }
 }</component>
   <component name="McpProjectServerCommands">
@@ -71,23 +64,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="2.0616167673856376" />
-      <entry key="MS500" value="5.131156046944326" />
-      <entry key="S2" value="11.400319943038152" />
-      <entry key="S5" value="22.9977855541867" />
-      <entry key="S10" value="43.698185112706426" />
-      <entry key="S30" value="90.83796066626014" />
-      <entry key="S60" value="114.96915165896174" />
-      <entry key="M2" value="130.5122437030854" />
-      <entry key="M5" value="142.6547050949737" />
-      <entry key="M10" value="157.7361733026065" />
-      <entry key="M15" value="177.97294379162486" />
-      <entry key="M30" value="233.637799277774" />
-      <entry key="H1" value="294.0820469799615" />
-      <entry key="H2" value="339.584644468004" />
-      <entry key="H4" value="367.6444782964561" />
-      <entry key="D1" value="394.2813877452573" />
-      <entry key="W1" value="399.17468225160593" />
+      <entry key="MS100" value="1.0" />
+      <entry key="MS500" value="1.0" />
+      <entry key="S2" value="1.0" />
+      <entry key="S5" value="1.0" />
+      <entry key="S10" value="1.0000000000129494" />
+      <entry key="S30" value="1.0064181759831483" />
+      <entry key="S60" value="2.209494719173538" />
+      <entry key="M2" value="18.86127827486667" />
+      <entry key="M5" value="93.85922837730449" />
+      <entry key="M10" value="168.42407808321306" />
+      <entry key="M15" value="210.41345649544326" />
+      <entry key="M30" value="274.77480123832163" />
+      <entry key="H1" value="337.2765302970423" />
+      <entry key="H2" value="401.975464796559" />
+      <entry key="H4" value="456.27781673569615" />
+      <entry key="D1" value="581.5208650327095" />
+      <entry key="W1" value="1409.3440583682027" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -109,23 +102,23 @@
       <entry key="W1" value="0.0" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.960073632687401" />
-      <entry key="MS500" value="5.081324757555469" />
-      <entry key="S2" value="11.376021841698858" />
-      <entry key="S5" value="22.98025992922461" />
-      <entry key="S10" value="43.681905605089966" />
-      <entry key="S30" value="90.82645835179368" />
-      <entry key="S60" value="114.96180176489165" />
-      <entry key="M2" value="130.50804747281683" />
-      <entry key="M5" value="142.65284104967316" />
-      <entry key="M10" value="157.73510209721215" />
-      <entry key="M15" value="177.9721117928416" />
-      <entry key="M30" value="233.63722741838674" />
-      <entry key="H1" value="294.0816780556962" />
-      <entry key="H2" value="339.5844289987765" />
-      <entry key="H4" value="367.6443610318091" />
-      <entry key="D1" value="394.2813666960511" />
-      <entry key="W1" value="399.17467920511285" />
+      <entry key="MS100" value="0.02646079101132897" />
+      <entry key="MS500" value="0.483638164806966" />
+      <entry key="S2" value="0.833931043824964" />
+      <entry key="S5" value="0.9299338498830151" />
+      <entry key="S10" value="0.9643307782643782" />
+      <entry key="S30" value="0.9943833918165793" />
+      <entry key="S60" value="2.2033793147810896" />
+      <entry key="M2" value="18.857644197435395" />
+      <entry key="M5" value="93.85671527489026" />
+      <entry key="M10" value="168.42226875091217" />
+      <entry key="M15" value="210.41202888389714" />
+      <entry key="M30" value="274.7739059924034" />
+      <entry key="H1" value="337.27598660272207" />
+      <entry key="H2" value="401.9751402801476" />
+      <entry key="H4" value="456.27763182886287" />
+      <entry key="D1" value="581.5208261185448" />
+      <entry key="W1" value="1409.344045628925" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -154,8 +147,9 @@
     &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
     &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
     &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;hendrik__dev__new&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;working__sim&quot;,
     &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
     &quot;last_opened_file_path&quot;: &quot;/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
@@ -163,7 +157,7 @@
     &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
     &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
     &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;ml.llm.LLMConfigurable&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.keymap&quot;,
     &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
     &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
@@ -180,11 +174,37 @@
       <recent name="$PROJECT_DIR$/entities" />
     </key>
   </component>
+  <component name="RunManager">
+    <configuration name="main" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
+      <module name="compact-storage-simulation" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="SDK_NAME" value="Python 3.13 (compact-storage-simulation)" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="DEBUG_JUST_MY_CODE" value="false" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/main.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+  </component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-js-predefined-d6986cc7102b-9b0f141eb926-JavaScript-PY-253.33813.30" />
-        <option value="bundled-python-sdk-929bdeb5c976-6d6dccd035ac-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.33813.30" />
+        <option value="bundled-python-sdk-c59985aa861c-c2ffad84badb-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-261.24374.152" />
       </set>
     </attachedChunks>
   </component>
@@ -477,15 +497,39 @@
       <option name="project" value="LOCAL" />
       <updated>1782486205071</updated>
     </task>
-    <task id="LOCAL-00031" summary="Manual run medium running succesfully">
+    <task id="LOCAL-00031" summary="Simulation läuft, aber teilweise lange Wartezeiten">
       <option name="closed" value="true" />
-      <created>1784881078343</created>
+      <created>1786711188520</created>
       <option name="number" value="00031" />
       <option name="presentableId" value="LOCAL-00031" />
       <option name="project" value="LOCAL" />
-      <updated>1784881078343</updated>
+      <updated>1786711188520</updated>
     </task>
-    <option name="localTasksCounter" value="32" />
+    <task id="LOCAL-00032" summary="Kisten in transit erhalten status &quot;unavailable&quot;, damit bei Planung kein Fehler geschmissen wird">
+      <option name="closed" value="true" />
+      <created>1786711276237</created>
+      <option name="number" value="00032" />
+      <option name="presentableId" value="LOCAL-00032" />
+      <option name="project" value="LOCAL" />
+      <updated>1786711276237</updated>
+    </task>
+    <task id="LOCAL-00033" summary="Simulation summary wenn Zeit durchgelaufen ist">
+      <option name="closed" value="true" />
+      <created>1786715750547</created>
+      <option name="number" value="00033" />
+      <option name="presentableId" value="LOCAL-00033" />
+      <option name="project" value="LOCAL" />
+      <updated>1786715750547</updated>
+    </task>
+    <task id="LOCAL-00034" summary="Junie hat gekocht und sagt, in_transit werden keine Fehler mehr geworfen. Zweite Verifikation folgt, Tests laufen aber an sich">
+      <option name="closed" value="true" />
+      <created>1787044722141</created>
+      <option name="number" value="00034" />
+      <option name="presentableId" value="LOCAL-00034" />
+      <option name="project" value="LOCAL" />
+      <updated>1787044722141</updated>
+    </task>
+    <option name="localTasksCounter" value="35" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -502,7 +546,7 @@
                   <entry key="branch">
                     <value>
                       <list>
-                        <option value="origin/hendrik_dev_new" />
+                        <option value="fynn_dev" />
                       </list>
                     </value>
                   </entry>
@@ -515,9 +559,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="Added responsive 2D UI for localhost" />
-    <MESSAGE value="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning" />
-    <MESSAGE value="Work Package 2 and 3 finished: Adjusted movement costs and implemented pick station service with decoupled roboters" />
     <MESSAGE value="Work Package 4 finished: Formally ensure the return process" />
     <MESSAGE value="Work Package 5 finished: Implemented complex request consistency, batching and robust return handling" />
     <MESSAGE value="Work Package 6 finished: Simple Relocation logic for blocking bins" />
@@ -539,8 +580,11 @@
     <MESSAGE value="Fix (missing attribute in Test-Dummy)" />
     <MESSAGE value="Fix (robot-collision): prevent robot collisions" />
     <MESSAGE value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
-    <MESSAGE value="Manual run medium running succesfully" />
-    <option name="LAST_COMMIT_MESSAGE" value="Manual run medium running succesfully" />
+    <MESSAGE value="Simulation läuft, aber teilweise lange Wartezeiten" />
+    <MESSAGE value="Kisten in transit erhalten status &quot;unavailable&quot;, damit bei Planung kein Fehler geschmissen wird" />
+    <MESSAGE value="Simulation summary wenn Zeit durchgelaufen ist" />
+    <MESSAGE value="Junie hat gekocht und sagt, in_transit werden keine Fehler mehr geworfen. Zweite Verifikation folgt, Tests laufen aber an sich" />
+    <option name="LAST_COMMIT_MESSAGE" value="Junie hat gekocht und sagt, in_transit werden keine Fehler mehr geworfen. Zweite Verifikation folgt, Tests laufen aber an sich" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
@@ -548,6 +592,6 @@
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_pickstation.coverage" NAME="test_pickstation Coverage Results" MODIFIED="1779195451315" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$web_visualizer.coverage" NAME="web_visualizer Coverage Results" MODIFIED="1777992567636" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/utils" />
     <SUITE FILE_PATH="coverage/compact_storage_simulation$manual_run_medium.coverage" NAME="manual_run_medium Coverage Results" MODIFIED="1782560319989" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tests" />
-    <SUITE FILE_PATH="coverage/compact_storage_simulation$main.coverage" NAME="main Coverage Results" MODIFIED="1779205058446" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/compact_storage_simulation$main.coverage" NAME="main Coverage Results" MODIFIED="1785154653024" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>
