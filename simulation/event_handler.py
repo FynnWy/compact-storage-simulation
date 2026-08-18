@@ -710,6 +710,17 @@ class EventHandler:
         can_drop, reason = self._can_drop(action, self.state)
 
         if not can_drop:
+            # Defensiv: Veraltetes Return-Drop-Event kann auftreten,
+            # wenn ein älteres Retry-Event nach erfolgreicher Rückgabe
+            # noch in der Queue steht.
+            if action_type == "return" and reason == "bin not in transit":
+                print(
+                    f"[STALE][DROP_RETURN] t={self.state.t} robot={robot.robot_id} "
+                    f"bin={bin_id} reason={reason} -> skip stale event"
+                )
+                self._schedule_next_action_for_same_task_new(event)
+                return
+
             print(
                 f"[BLOCKED][DROP] t={self.state.t} robot={robot.robot_id} "
                 f"action={action_type} bin={bin_id} reason={reason}"
@@ -751,6 +762,8 @@ class EventHandler:
             # NEU: Metrik für Pickstation-Ankunft erfassen
             task = robot.current_task
             if task is not None:
+                digging_depth = self._resolve_digging_depth_for_task(task)
+                self.metrics.record_digging_depth(digging_depth)
                 self.metrics.record_target_bin_at_pickstation(
                     self.state,
                     action,
@@ -1423,16 +1436,8 @@ class EventHandler:
             # WP5/RQ3: Digging-Depth pro Retrieval erfassen
             robot = event.payload.get("robot")
             task = getattr(robot, "current_task", None)
-            digging_depth = 0
-            if task is not None and hasattr(task, "relocations"):
-                # Annahme: Jede Relocation entspricht genau einer Blocking-Bin
-                try:
-                    digging_depth = len(task.relocations)
-                except Exception:
-                    digging_depth = 0
-
-            if digging_depth is not None:
-                self.metrics.record_digging_depth(int(digging_depth))
+            digging_depth = self._resolve_digging_depth_for_task(task)
+            self.metrics.record_digging_depth(digging_depth)
 
             request = event.payload.get("request")
             self.metrics.record_target_bin_at_pickstation(self.state, action, request)
@@ -1514,6 +1519,29 @@ class EventHandler:
                 return True
 
         return False
+
+    def _resolve_digging_depth_for_task(self, task):
+        """
+        Liefert die Anzahl initialer Blocking-Bins für die Metrik-Erfassung.
+        """
+        if task is None:
+            return 0
+
+        initial_blocker_count = getattr(task, "initial_blocker_count", None)
+        if initial_blocker_count is not None:
+            try:
+                return max(0, int(initial_blocker_count))
+            except (TypeError, ValueError):
+                pass
+
+        temp_storage = getattr(task, "temp_storage", None)
+        if temp_storage is None:
+            return 0
+
+        try:
+            return max(0, len(temp_storage))
+        except TypeError:
+            return 0
 
     def _get_stack_by_id(self, state, stack_id):
         """

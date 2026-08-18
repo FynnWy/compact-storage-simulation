@@ -102,9 +102,9 @@ def main():
     config.grid_width = 7
     config.grid_depth = 7
     config.max_stack_height = 6
-    config.bin_num = 250
+    config.bin_num = 200
     config.num_robots = 4
-    config.simulation_time = 10000
+    config.simulation_time = 200
 
     config.init_strategy = "random_distribution"
 
@@ -116,7 +116,7 @@ def main():
     # Umschalten:
     # False = normale Simulation ohne Visualisierung
     # True = interaktive 2D-Visualisierung
-    config.enable_visualization = False
+    config.enable_visualization = True
 
     engine = SimulationEngine(config)
     print_state_summary(engine, "EXTENDED SMOKE TEST")

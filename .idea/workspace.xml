@@ -4,12 +4,14 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Junie hat gekocht und sagt, in_transit werden keine Fehler mehr geworfen. Zweite Verifikation folgt, Tests laufen aber an sich">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Simulationslauf mit 10000 ZE läuft durch, keine Fehler, ABER: wenig successfull tasks, extrem hohe tardiness, 0 average digging depth. Hier muss weiter geprüft werden">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/simulation_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/simulation_config.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/simulation/event_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_builder.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategies/top_access_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/strategies/top_access_strategy.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/metrics.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/metrics.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/simulation_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/simulation_engine.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_metrics_integration.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_metrics_integration.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -65,23 +67,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.693122753090079" />
-      <entry key="MS500" value="3.0247702329462713" />
-      <entry key="S2" value="7.606533699935932" />
-      <entry key="S5" value="16.65027716948682" />
-      <entry key="S10" value="26.64978693215363" />
-      <entry key="S30" value="40.171953954915544" />
-      <entry key="S60" value="46.399476863391534" />
-      <entry key="M2" value="56.186613716326505" />
-      <entry key="M5" value="84.20875878408042" />
-      <entry key="M10" value="140.26819183621748" />
-      <entry key="M15" value="189.75071291251805" />
-      <entry key="M30" value="284.7898974786041" />
-      <entry key="H1" value="378.7915870463104" />
-      <entry key="H2" value="466.97459126582663" />
-      <entry key="H4" value="537.3253765005584" />
-      <entry key="D1" value="679.8054166644065" />
-      <entry key="W1" value="1510.7340883468737" />
+      <entry key="MS100" value="1.0" />
+      <entry key="MS500" value="1.0" />
+      <entry key="S2" value="1.0" />
+      <entry key="S5" value="1.0" />
+      <entry key="S10" value="1.0" />
+      <entry key="S30" value="1.0" />
+      <entry key="S60" value="1.0" />
+      <entry key="M2" value="1.0000000401553302" />
+      <entry key="M5" value="1.012518151847317" />
+      <entry key="M10" value="1.9949791578521847" />
+      <entry key="M15" value="6.448159699669695" />
+      <entry key="M30" value="44.36039875137235" />
+      <entry key="H1" value="150.89508207890563" />
+      <entry key="H2" value="305.76722757874904" />
+      <entry key="H4" value="453.3277748608692" />
+      <entry key="D1" value="704.7410833921749" />
+      <entry key="W1" value="1558.3179284728053" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -103,23 +105,23 @@
       <entry key="W1" value="0.0" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.6202230995029396" />
-      <entry key="MS500" value="2.9972719243187966" />
-      <entry key="S2" value="7.586309061327944" />
-      <entry key="S5" value="16.63426371953571" />
-      <entry key="S10" value="26.637648979841366" />
-      <entry key="S30" value="40.16604828997196" />
-      <entry key="S60" value="46.39596429530601" />
-      <entry key="M2" value="56.18406368871522" />
-      <entry key="M5" value="84.20673866850927" />
-      <entry key="M10" value="140.26647447536808" />
-      <entry key="M15" value="189.74921247404222" />
-      <entry key="M30" value="284.7888269954809" />
-      <entry key="H1" value="378.7908968091873" />
-      <entry key="H2" value="466.97417284079137" />
-      <entry key="H4" value="537.32513774511" />
-      <entry key="D1" value="679.8053675450633" />
-      <entry key="W1" value="1510.7340741176204" />
+      <entry key="MS100" value="6.46879352306209E-7" />
+      <entry key="MS500" value="0.057831526752365775" />
+      <entry key="S2" value="0.49038950199427567" />
+      <entry key="S5" value="0.7519976194620759" />
+      <entry key="S10" value="0.8671779629707363" />
+      <entry key="S30" value="0.9536069573924512" />
+      <entry key="S60" value="0.9765280115759359" />
+      <entry key="M2" value="0.9881943588864041" />
+      <entry key="M5" value="1.0077788223473534" />
+      <entry key="M10" value="1.9925973292774184" />
+      <entry key="M15" value="6.446540925690904" />
+      <entry key="M30" value="44.35945488503295" />
+      <entry key="H1" value="150.8944221661097" />
+      <entry key="H2" value="305.7667623812771" />
+      <entry key="H4" value="453.3274781906577" />
+      <entry key="D1" value="704.7410165818633" />
+      <entry key="W1" value="1558.317911475211" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -133,36 +135,36 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Node.js.side_view.js.executor": "Run",
-    "Python.main.executor": "Run",
-    "Python.manual_run_medium.executor": "Run",
-    "Python.test_pickstation.executor": "Run",
-    "Python.test_traffic_system.executor": "Run",
-    "Python.test_view.executor": "Run",
-    "Python.web_visualizer.executor": "Run",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "ai.playground.ignore.import.keys.banner.in.settings": "true",
-    "codeWithMe.voiceChat.enabledByDefault": "false",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "#8 on working__sim",
-    "junie.onboarding.icon.badge.shown": "true",
-    "last_opened_file_path": "/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "preferences.keymap",
-    "to.speed.mode.migration.done": "true",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Node.js.side_view.js.executor&quot;: &quot;Run&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.manual_run_medium.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_pickstation.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_traffic_system.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_view.executor&quot;: &quot;Run&quot;,
+    &quot;Python.web_visualizer.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;#8 on working__sim&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/fynnwyroslawski/PycharmProjects/compact-storage-simulation&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.keymap&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$" />
@@ -530,7 +532,23 @@
       <option name="project" value="LOCAL" />
       <updated>1787044722141</updated>
     </task>
-    <option name="localTasksCounter" value="35" />
+    <task id="LOCAL-00035" summary="Simulationslauf mit 10000 ZE läuft durch, keine Fehler, ABER: wenig successfull tasks, extrem hohe tardiness, 0 average digging depth. Hier muss weiter geprüft werden">
+      <option name="closed" value="true" />
+      <created>1787057216553</created>
+      <option name="number" value="00035" />
+      <option name="presentableId" value="LOCAL-00035" />
+      <option name="project" value="LOCAL" />
+      <updated>1787057216553</updated>
+    </task>
+    <task id="LOCAL-00036" summary="Simulationslauf mit 10000 ZE läuft durch, keine Fehler, ABER: wenig successfull tasks, extrem hohe tardiness, 0 average digging depth. Hier muss weiter geprüft werden">
+      <option name="closed" value="true" />
+      <created>1787057229020</created>
+      <option name="number" value="00036" />
+      <option name="presentableId" value="LOCAL-00036" />
+      <option name="project" value="LOCAL" />
+      <updated>1787057229020</updated>
+    </task>
+    <option name="localTasksCounter" value="37" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -560,7 +578,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="Work Package 4 finished: Formally ensure the return process" />
     <MESSAGE value="Work Package 5 finished: Implemented complex request consistency, batching and robust return handling" />
     <MESSAGE value="Work Package 6 finished: Simple Relocation logic for blocking bins" />
     <MESSAGE value="Work Package 7 finished: New bin request probability distribution (ABC) implemented" />
@@ -585,7 +602,8 @@
     <MESSAGE value="Kisten in transit erhalten status &quot;unavailable&quot;, damit bei Planung kein Fehler geschmissen wird" />
     <MESSAGE value="Simulation summary wenn Zeit durchgelaufen ist" />
     <MESSAGE value="Junie hat gekocht und sagt, in_transit werden keine Fehler mehr geworfen. Zweite Verifikation folgt, Tests laufen aber an sich" />
-    <option name="LAST_COMMIT_MESSAGE" value="Junie hat gekocht und sagt, in_transit werden keine Fehler mehr geworfen. Zweite Verifikation folgt, Tests laufen aber an sich" />
+    <MESSAGE value="Simulationslauf mit 10000 ZE läuft durch, keine Fehler, ABER: wenig successfull tasks, extrem hohe tardiness, 0 average digging depth. Hier muss weiter geprüft werden" />
+    <option name="LAST_COMMIT_MESSAGE" value="Simulationslauf mit 10000 ZE läuft durch, keine Fehler, ABER: wenig successfull tasks, extrem hohe tardiness, 0 average digging depth. Hier muss weiter geprüft werden" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />

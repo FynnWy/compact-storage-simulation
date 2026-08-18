@@ -305,57 +305,58 @@ class SimulationEngine:
                 }:
                     self.event_handler.schedule_available_robots(self.state.t)
 
-                # ------------------------------------------------------
-                # NEU: Debug-Logging nach jedem verarbeiteten Event
-                # ------------------------------------------------------
-                gw, gd = self.state.grid.width, self.state.grid.depth
+                if getattr(self.config, "enable_step_debug", False):
+                    # ------------------------------------------------------
+                    # NEU: Debug-Logging nach jedem verarbeiteten Event
+                    # ------------------------------------------------------
+                    gw, gd = self.state.grid.width, self.state.grid.depth
 
-                # Positionen und mögliche Kollisionen ermitteln
-                pos_to_robot = {}
-                collisions = []
-                illegal_positions = []
+                    # Positionen und mögliche Kollisionen ermitteln
+                    pos_to_robot = {}
+                    collisions = []
+                    illegal_positions = []
 
-                for r in self.state.robots:
-                    pos = r.get_position()
-                    if pos is None:
-                        continue
+                    for r in self.state.robots:
+                        pos = r.get_position()
+                        if pos is None:
+                            continue
 
-                    x, y = pos
-                    if not (0 <= x < gw and 0 <= y < gd):
-                        illegal_positions.append((r.robot_id, pos))
+                        x, y = pos
+                        if not (0 <= x < gw and 0 <= y < gd):
+                            illegal_positions.append((r.robot_id, pos))
 
-                    if pos in pos_to_robot:
-                        collisions.append((pos, pos_to_robot[pos], r.robot_id))
-                    else:
-                        pos_to_robot[pos] = r.robot_id
+                        if pos in pos_to_robot:
+                            collisions.append((pos, pos_to_robot[pos], r.robot_id))
+                        else:
+                            pos_to_robot[pos] = r.robot_id
 
-                # Basiszustand loggen
-                print(
-                    f"[STATE][STEP] t={self.state.t} "
-                    f"event_type={getattr(event.event_type, 'name', event.event_type)} "
-                    f"robots={{"
-                    + ", ".join(
-                        f"{r.robot_id}: {r.get_position()}"
-                        for r in self.state.robots
-                    )
-                    + "}"
-                )
-
-                # Kollisionen explizit markieren
-                for pos, r0, r1 in collisions:
+                    # Basiszustand loggen
                     print(
-                        f"[COLLISION][STEP] t={self.state.t} pos={pos} "
-                        f"robots={r0},{r1} "
-                        f"after_event={getattr(event.event_type, 'name', event.event_type)}"
+                        f"[STATE][STEP] t={self.state.t} "
+                        f"event_type={getattr(event.event_type, 'name', event.event_type)} "
+                        f"robots={{"
+                        + ", ".join(
+                            f"{r.robot_id}: {r.get_position()}"
+                            for r in self.state.robots
+                        )
+                        + "}"
                     )
 
-                # Out-of-bounds Positionen explizit markieren
-                for rid, pos in illegal_positions:
-                    print(
-                        f"[ILLEGAL_POS][STEP] t={self.state.t} robot={rid} "
-                        f"pos={pos} (grid={gw}x{gd}) "
-                        f"after_event={getattr(event.event_type, 'name', event.event_type)}"
-                    )
+                    # Kollisionen explizit markieren
+                    for pos, r0, r1 in collisions:
+                        print(
+                            f"[COLLISION][STEP] t={self.state.t} pos={pos} "
+                            f"robots={r0},{r1} "
+                            f"after_event={getattr(event.event_type, 'name', event.event_type)}"
+                        )
+
+                    # Out-of-bounds Positionen explizit markieren
+                    for rid, pos in illegal_positions:
+                        print(
+                            f"[ILLEGAL_POS][STEP] t={self.state.t} robot={rid} "
+                            f"pos={pos} (grid={gw}x{gd}) "
+                            f"after_event={getattr(event.event_type, 'name', event.event_type)}"
+                        )
 
             return event
 

@@ -241,6 +241,15 @@ class Metrics:
         return self.total_tardiness / total
 
     def throughput(self):
+        """
+        Anzahl vollständig abgeschlossener Requests.
+
+        Hinweis:
+        On-time-Requests werden separat als successful_requests geführt.
+        """
+        return len(self._arrival_to_full_completion)
+
+    def throughput_on_time(self):
         return self.successful_requests
 
     def time_series(self):
@@ -310,6 +319,7 @@ class Metrics:
             "deadline_miss_rate": self.deadline_miss_rate(),
             "average_tardiness": self.average_tardiness(),
             "throughput": self.throughput(),
+            "throughput_on_time": self.throughput_on_time(),
             "average_arrival_to_pickstation": self.average_arrival_to_pickstation(),
             "average_arrival_to_full_completion": self.average_arrival_to_full_completion(),
             "target_bin_removals": self.target_bin_removals,

@@ -18,6 +18,7 @@ class SimulationConfig:
         """
         self.enable_visualization = False
         self.visualization_type = "web"  # "matplotlib" oder "web"
+        self.enable_step_debug = False
 
         """
         Initialisierung:
