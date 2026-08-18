@@ -3,7 +3,7 @@ from events.event_types import EventType
 
 
 class EventBuilder:
-    def __init__(self, cost_model=None, delay_time=1, max_retries=100, config=None):
+    def __init__(self, cost_model=None, delay_time=1, max_retries=20, config=None):
         self.cost_model = cost_model
         self.delay_time = delay_time
         self.max_retries = max_retries

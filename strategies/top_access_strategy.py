@@ -112,8 +112,6 @@ class TopAccessStrategy(BaseStrategy):
             )
 
         if top_bin.bin_id == target_bin_id:
-            task.target_removed = True
-
             return {
                 "type": "remove_target",
                 "from_stack": target_stack.stack_id,

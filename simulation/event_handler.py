@@ -533,6 +533,28 @@ class EventHandler:
 
             task = robot.current_task if robot is not None else None
 
+            # Defensiv: veraltete remove_target-Pickups nicht endlos retrien.
+            # Diese können auftreten, wenn der Task zwischenzeitlich in eine
+            # spätere Phase gewechselt ist oder bereits auf eine andere Ziel-Bin zeigt.
+            if action_type == "remove_target" and task is not None:
+                stale_phase = task.phase != task.PHASE_RETRIEVE_TARGET
+                stale_target = bin_id is not None and task.target_bin_id != bin_id
+
+                if stale_phase or stale_target:
+                    print(
+                        f"[REPLAN][PICKUP_REMOVE_TARGET] t={self.state.t} "
+                        f"robot={robot.robot_id} bin={bin_id} "
+                        f"task={task.request_id} phase={task.phase} "
+                        f"target={task.target_bin_id} -> drop stale pickup event"
+                    )
+                    self._schedule_next_action_for_task_new(
+                        robot=robot,
+                        task=task,
+                        next_action=None,
+                        base_time=self.state.t,
+                    )
+                    return
+
             # Defensiv: veraltete Return-Pickups können auftreten, wenn die
             # Target-Bin bereits zurückgelegt wurde (status='stored').
             # In diesem Fall nicht endlos retrien, sondern Task neu auswerten.
