@@ -498,8 +498,27 @@ class EventHandler:
                 f"action={action_type} bin={bin_id} reason={reason}"
             )
 
+            task = robot.current_task if robot is not None else None
+
+            # Defensiv: veraltete Return-Pickups können auftreten, wenn die
+            # Target-Bin bereits zurückgelegt wurde (status='stored').
+            # In diesem Fall nicht endlos retrien, sondern Task neu auswerten.
+            if action_type == "return" and task is not None and bin_id is not None:
+                bin_obj = self.state.get_bin_by_id(bin_id)
+                if bin_obj is not None and bin_obj.get_status() == "stored":
+                    print(
+                        f"[REPLAN][PICKUP_RETURN] t={self.state.t} robot={robot.robot_id} "
+                        f"bin={bin_id} already stored -> re-evaluating next action"
+                    )
+                    self._schedule_next_action_for_task_new(
+                        robot=robot,
+                        task=task,
+                        next_action=None,
+                        base_time=self.state.t,
+                    )
+                    return
+
             if reason and "not on top" in reason:
-                task = robot.current_task
                 if task is not None:
                     new_action = self.scheduler.strategy.next_action(self.state, task)
                     if new_action is not None:
@@ -519,7 +538,7 @@ class EventHandler:
             self.event_queue.push(delayed_event)
             return
 
-        # Bin aus Stack entfernen
+        # Bin aufnehmen: entweder aus Stack oder von Pickstation
         if from_stack is not None:
             bin_obj = from_stack.pop()
 
@@ -535,6 +554,18 @@ class EventHandler:
 
             # Sync Stack-Metadata
             self._sync_stack_bin_metadata(from_stack)
+        else:
+            bin_obj = self.state.get_bin_by_id(bin_id)
+
+            if bin_obj is None:
+                raise RuntimeError(f"Cannot pickup: bin {bin_id} not found")
+
+            # Return von Pickstation: Bin exklusiv „in transit“ markieren,
+            # damit kein zweiter Roboter dieselbe Bin parallel aufnehmen kann.
+            if action_type == "return" and action.get("from_stack") is None:
+                bin_obj.mark_in_transit()
+                bin_obj.set_stack(None)
+                bin_obj.set_level(None)
 
         print(
             f"[TRACE][PICKUP] t={self.state.t} robot={robot.robot_id} "
@@ -727,6 +758,10 @@ class EventHandler:
                     return False, "bin not found"
                 if bin_obj.get_status() != "at_pickstation":
                     return False, "bin not at pickstation"
+                if getattr(bin_obj, "in_transit", False):
+                    return False, "bin already in transit"
+                if bin_obj.get_stack() is not None:
+                    return False, "bin still assigned to stack"
                 return True, None
 
             # Return von Buffer
@@ -764,6 +799,13 @@ class EventHandler:
             max_height = getattr(state.config, "max_stack_height", None)
             if max_height is not None and to_stack.height() >= max_height:
                 return False, "to_stack is full"
+
+            bin_id = action.get("bin_id")
+            bin_obj = state.get_bin_by_id(bin_id)
+            if bin_obj is None:
+                return False, "bin not found"
+            if not getattr(bin_obj, "in_transit", False):
+                return False, "bin not in transit"
 
             return True, None
 

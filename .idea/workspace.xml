@@ -4,13 +4,12 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Kisten in transit erhalten status &quot;unavailable&quot;, damit bei Planung kein Fehler geschmissen wird">
+    <list default="true" id="e63b9047-d72d-44f5-96a1-29d71a2de481" name="Changes" comment="Simulation summary wenn Zeit durchgelaufen ist">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" beforeDir="false" afterPath="$PROJECT_DIR$/Testfehler_Zusammenfassung.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/static/js/views/top_down_view.js" beforeDir="false" afterPath="$PROJECT_DIR$/static/js/views/top_down_view.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/static/js/visualizer.js" beforeDir="false" afterPath="$PROJECT_DIR$/static/js/visualizer.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/templates/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/templates/index.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/utils/web_visualizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils/web_visualizer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/simulation/event_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/simulation/event_handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_workflow_integration.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_workflow_integration.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -66,23 +65,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.4014230682288766" />
-      <entry key="MS500" value="2.7670293827198247" />
-      <entry key="S2" value="5.21073330347918" />
-      <entry key="S5" value="6.624133163179059" />
-      <entry key="S10" value="7.258331099526443" />
-      <entry key="S30" value="7.815304632028384" />
-      <entry key="S60" value="9.886835720632288" />
-      <entry key="M2" value="20.315870041131948" />
-      <entry key="M5" value="49.39452928744095" />
-      <entry key="M10" value="82.6953674627192" />
-      <entry key="M15" value="119.98813885110529" />
-      <entry key="M30" value="233.03963007801707" />
-      <entry key="H1" value="393.5262066196893" />
-      <entry key="H2" value="561.7150262578854" />
-      <entry key="H4" value="696.2085659332296" />
-      <entry key="D1" value="885.6566480114437" />
-      <entry key="W1" value="1274.1328675146317" />
+      <entry key="MS100" value="1.615245507883246" />
+      <entry key="MS500" value="5.79405914665614" />
+      <entry key="S2" value="14.918913802101095" />
+      <entry key="S5" value="24.54006508270342" />
+      <entry key="S10" value="31.331318188393347" />
+      <entry key="S30" value="40.405962405020155" />
+      <entry key="S60" value="53.04074092943938" />
+      <entry key="M2" value="73.38849121566922" />
+      <entry key="M5" value="98.37807337239238" />
+      <entry key="M10" value="110.41349340900592" />
+      <entry key="M15" value="114.96679224954096" />
+      <entry key="M30" value="119.82206320068184" />
+      <entry key="H1" value="122.36935016037103" />
+      <entry key="H2" value="123.67408121477895" />
+      <entry key="H4" value="124.3344738484493" />
+      <entry key="D1" value="190.11553157520007" />
+      <entry key="W1" value="1009.8620719652434" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -104,23 +103,23 @@
       <entry key="W1" value="0.0" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="0.9565308098551689" />
-      <entry key="MS500" value="2.647200628343255" />
-      <entry key="S2" value="5.174544673054169" />
-      <entry key="S5" value="6.608345062303594" />
-      <entry key="S10" value="7.250145381716536" />
-      <entry key="S30" value="7.812492091961812" />
-      <entry key="S60" value="9.885282365817181" />
-      <entry key="M2" value="20.314707975596203" />
-      <entry key="M5" value="49.39361428004579" />
-      <entry key="M10" value="82.69460963932626" />
-      <entry key="M15" value="119.98739318051614" />
-      <entry key="M30" value="233.03890830824173" />
-      <entry key="H1" value="393.5256179131859" />
-      <entry key="H2" value="561.7146207978068" />
-      <entry key="H4" value="696.2083205821606" />
-      <entry key="D1" value="885.6565968704815" />
-      <entry key="W1" value="1274.1328565951214" />
+      <entry key="MS100" value="1.499391822123921" />
+      <entry key="MS500" value="5.725484122319716" />
+      <entry key="S2" value="14.87915865307401" />
+      <entry key="S5" value="24.514291245668765" />
+      <entry key="S10" value="31.314809789969367" />
+      <entry key="S30" value="40.398759269189654" />
+      <entry key="S60" value="53.035781075988154" />
+      <entry key="M2" value="73.38486150160067" />
+      <entry key="M5" value="98.37604470912977" />
+      <entry key="M10" value="110.41233893775183" />
+      <entry key="M15" value="114.96598715360221" />
+      <entry key="M30" value="119.82164172563648" />
+      <entry key="H1" value="122.3691344525613" />
+      <entry key="H2" value="123.67397208729754" />
+      <entry key="H4" value="124.33441896232515" />
+      <entry key="D1" value="190.11551857587872" />
+      <entry key="W1" value="1009.8620630162478" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -515,7 +514,15 @@
       <option name="project" value="LOCAL" />
       <updated>1786711276237</updated>
     </task>
-    <option name="localTasksCounter" value="33" />
+    <task id="LOCAL-00033" summary="Simulation summary wenn Zeit durchgelaufen ist">
+      <option name="closed" value="true" />
+      <created>1786715750547</created>
+      <option name="number" value="00033" />
+      <option name="presentableId" value="LOCAL-00033" />
+      <option name="project" value="LOCAL" />
+      <updated>1786715750547</updated>
+    </task>
+    <option name="localTasksCounter" value="34" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -545,7 +552,6 @@
     </option>
   </component>
   <component name="VcsManagerConfiguration">
-    <MESSAGE value="Work Package 1 finished: Robot workflow logic optimized. Overall planning -&gt; Next-step planning" />
     <MESSAGE value="Work Package 2 and 3 finished: Adjusted movement costs and implemented pick station service with decoupled roboters" />
     <MESSAGE value="Work Package 4 finished: Formally ensure the return process" />
     <MESSAGE value="Work Package 5 finished: Implemented complex request consistency, batching and robust return handling" />
@@ -570,7 +576,8 @@
     <MESSAGE value="Fix (strategy selector assertions): ABC and Popularity-Selector returns results that are different from what was expected." />
     <MESSAGE value="Simulation läuft, aber teilweise lange Wartezeiten" />
     <MESSAGE value="Kisten in transit erhalten status &quot;unavailable&quot;, damit bei Planung kein Fehler geschmissen wird" />
-    <option name="LAST_COMMIT_MESSAGE" value="Kisten in transit erhalten status &quot;unavailable&quot;, damit bei Planung kein Fehler geschmissen wird" />
+    <MESSAGE value="Simulation summary wenn Zeit durchgelaufen ist" />
+    <option name="LAST_COMMIT_MESSAGE" value="Simulation summary wenn Zeit durchgelaufen ist" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/compact_storage_simulation$test_view.coverage" NAME="test_view Coverage Results" MODIFIED="1779206436258" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
