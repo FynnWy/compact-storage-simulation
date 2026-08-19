@@ -251,12 +251,21 @@ class EventBuilder:
         return EventType.ROBOT_ACTION
 
     """Hier neuer Code"""
-    def build_robot_pickup_event(self, robot, action, request, time):
+    def build_robot_pickup_event(self, robot, action, request, time, retry_count=0):
         """
         Baut ein ROBOT_PICKUP Event - Roboter nimmt Bin auf.
 
         Dies ist Phase 1 einer Zwei-Phasen-Aktion.
         Nach dem Pickup muss der Roboter zum Ziel fahren.
+
+        Args:
+            retry_count:
+                Übernommener Retry-Fortschritt. Nur setzen, wenn es sich
+                fachlich um DENSELBEN fehlgeschlagenen Versuch handelt
+                (gleiche Aktion, gleiche Bin, gleiches Ziel, kein
+                Zustandsfortschritt). Bei einer tatsächlich neuen Aktion
+                muss der Zähler bei 0 beginnen.
+                Siehe `EventHandler._is_same_attempt`.
         """
         return Event(
             time=time,
@@ -266,6 +275,7 @@ class EventBuilder:
                 "action": action,
                 "request": request,
             },
+            retry_count=retry_count,
             priority=self._resolve_priority(EventType.ROBOT_PICKUP),
         )
 

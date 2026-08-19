@@ -342,6 +342,55 @@ PS-Service-Queue: FCFS (oder PRIORITY via Scheduler-Prioritäten 1–4; Default 
 Task-Alter: wird nirgends berücksichtigt; Verdrängung von Returns durch neue Requests: strukturell nicht möglich
 ```
 
+## 10a. Delta nach Hardening (Stand Commit `58c5ef2` + Hardening-Block)
+
+Nur Aussagen, die sich gegenüber den Abschnitten 4 und 5 **tatsächlich geändert
+haben**. Details und Belege in `FIX_IMPLEMENTIERUNG_2026-08-19.md`,
+Abschnitt „Hardening + Seed-1".
+
+### Änderungen an Abschnitt 4.2 (Prüfkaskade `_handle_robot_move`)
+
+- **Schritt 1 (PS-Zellen-Check)** registriert jetzt eine Wartekante und führt
+  eine Zyklusauflösung durch. Vorher fehlte hier jede Deadlock-Erkennung, so
+  dass Konflikte um die Port-Zelle für den Wait-Graph unsichtbar blieben.
+- **Schritt 2 (Port-Reservierung)** hat jetzt eine Eskalation: verwaiste
+  Reservierungen (Halter steht nicht auf dem Port und fährt ihn auch nicht mehr
+  an) werden freigegeben; andernfalls entsteht eine Wartekante.
+  Damit ist der in 5.3 Punkt 4 beschriebene Zustand „unbegrenztes Warten bis
+  `RuntimeError`" behoben.
+- **Schritt 5 (Move ausführen)** löscht nach einem tatsächlich ausgeführten
+  Schritt die Wartekante des Roboters. Ohne diesen Cleanup-Punkt überlebten
+  Kanten die Auflösung ihres Konflikts und bildeten Phantom-Zyklen.
+
+### Neue Invariante in der Zwei-Phasen-Pipeline
+
+`_handle_robot_drop` prüft jetzt – spiegelbildlich zu `_handle_robot_pickup` –,
+ob der Roboter physisch an der Ablageposition steht. Vorher fehlte diese
+Prüfung vollständig: **34 % aller erfolgreichen Ablagen erfolgten aus einer
+anderen Zelle** (gemessen über 42 Läufe, überwiegend `remove_target`).
+Alle Durchsatzzahlen vor diesem Fix sind dadurch nach oben verzerrt und mit
+späteren Läufen nicht direkt vergleichbar.
+
+### Neuer Zustand: `Robot.carried_bin_id`
+
+Bis dahin gab es keine Verknüpfung zwischen Roboter und getragener Bin – nur
+`Bin.in_transit`. Damit ließ sich nicht feststellen, welcher Roboter eine Bin
+trägt. Die Verknüpfung wird beim Pickup gesetzt, beim Drop gelöscht und von
+`clear_task()` bewusst nicht angefasst.
+
+Sie trägt drei Guards:
+tragende Roboter werden nicht requeued, Duplikat-Pickups gehen direkt in die
+Drop-Phase über, Duplikat-Drops werden verworfen.
+
+### Korrektur zu Abschnitt 2 („Zwei Generationen von Ablauflogik")
+
+`_schedule_next_action_for_task_new` beginnt **jede** physische Aktion mit
+einer Pickup-Phase – auch dann, wenn ein Task neu geplant wird, während der
+Roboter die Bin bereits trägt. Das erzeugt Duplikat-Pickups; sie werden jetzt
+abgefangen.
+
+---
+
 ## 10. Offene Fragen / Unsicherheiten
 
 - Ob P2-Hypothese 1 (fehlende Metrik-1-Erfassung im Zwei-Phasen-Pfad) die konkret beobachteten leeren Felder vollständig erklärt, sollte mit einem kurzen deterministischen Lauf (fester Seed, 1 Robot) verifiziert werden, bevor etwas geändert wird.

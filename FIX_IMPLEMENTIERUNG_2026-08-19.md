@@ -728,3 +728,555 @@ Neue Testdateien (4 Dateien, 21 Tests):
 ```
 
 Es wurden **keine** Git-Commits oder Pushes ausgeführt.
+
+---
+---
+
+# Hardening + Seed-1
+
+Zweiter Arbeitsblock. Ziel: die zuvor eingeführten Recovery-Mechanismen gegen
+State-Korruption absichern, offene Unsicherheiten klären und den verbliebenen
+Seed-1-Stillstand an seiner tatsächlichen Ursache beheben.
+
+## Ausgangslage
+
+| | |
+|---|---|
+| Branch | `working_sim` |
+| **Ausgangscommit (neue Baseline)** | **`58c5ef2486f91b18b6521cc16ec967866b0d11e0`** (kurz `58c5ef2`) |
+| Commit-Message | „Fix pickstation flow, task assignment invariants, and robot livelocks" |
+| Teststatus vor Änderungen | `pytest tests/ --ignore=tests/test_simulation_visual.py` → **159 passed** |
+| Teststatus nach Änderungen | **213 passed** (159 bestehende + 54 neue) |
+
+Kein bestehender Test wurde geändert, gelöscht oder abgeschwächt.
+`average_digging_depth` wurde nicht angefasst (`simulation/metrics.py` ist
+unverändert).
+
+---
+
+## Phase 1 – Evade-Sicherheitsanalyse
+
+### 1A Befund: Die Drop-Positionsinvariante existierte NICHT
+
+Direkt reproduziert (`tests/test_evade_hardening.py`):
+
+```text
+Robot steht auf (5,5), trägt Bin 24
+Drop-Aktion: relocate → Stack S_2_2 (Position (2,2))
+→ Drop wird ausgeführt, Bin landet in S_2_2
+```
+
+Der Roboter legt eine Bin über drei Zellen Distanz ab. `_handle_robot_drop`
+prüfte die Roboterposition überhaupt nicht.
+
+Häufigkeit im Realbetrieb (7×7, 500 ZE, vollständige 42er-Matrix):
+
+| | Baseline `58c5ef2` | nach Hardening |
+|---|---|---|
+| erfolgreiche Drops gesamt | 4041 | 3702 |
+| davon **physisch unmöglich** | **1372 (34,0 %)** | **0 (0,0 %)** |
+
+Dominant war `remove_target` – Bins wurden aus der Entfernung an der
+Pickstation „abgegeben". Das ist für die Bewertung aller früheren
+Durchsatzzahlen entscheidend (s. Abschnitt „Vergleichbarkeit").
+
+### Layer-Entscheidung
+
+Die Invariante gehört in den **EventHandler**, nicht in `_can_drop` oder den
+`ConstraintManager` – beide sehen den Roboter gar nicht (Signatur
+`(action, state)`). `_handle_robot_pickup` besitzt die spiegelbildliche
+Prüfung für die Pickup-Hälfte bereits inklusive Eskalationsleiter; der
+Drop-Handler ist damit der konsistente Ort.
+
+Reihenfolge innerhalb des Handlers: **erst** `_can_drop` (Stack-Constraints,
+inkl. Redirect auf Ausweich-Stack), **dann** der Positions-Guard. Nur so
+bleibt der Redirect unabhängig von der Roboterposition auswertbar; der Guard
+schützt ausschließlich die eigentliche Zustandsänderung.
+
+Eskalation bewusst **ohne Requeue**: Der Roboter trägt die Bin bereits, ein
+Requeue würde sie stranden lassen. Korrekte Auflösung ist immer „Bewegung zum
+Ablageziel neu planen" (`_schedule_move_to_drop`).
+
+### 1B Stale-Event-Klassifikation nach `_evade_robot`
+
+| Event | Status | Mechanismus |
+|---|---|---|
+| `ROBOT_MOVE` (alter Plan) | **selbst-invalidierend** | `set_path` ersetzt den Plan; `get_next_waypoint()` liefert `None`; zusätzlich Duplikat-Schutz pro Zeitschritt |
+| `ROBOT_PICKUP` (alter Plan) | **muss neu geplant werden** | Positions-Prüfung in `_handle_robot_pickup` → Delay → Replan → Requeue (Mechanismus existierte) |
+| `ROBOT_DROP` (alter Plan) | **muss neu geplant werden** | Positions-Prüfung **neu ergänzt** → Delay → Replan der Bewegung |
+| `PICKSTATION_COMPLETE`, `REQUEST_COMPLETE` | **weiterhin gültig** | nicht positionsabhängig |
+
+**Kein Event muss verworfen werden.** Ein Mechanismus zum Entfernen von Events
+aus der Queue war nicht nötig – alle Fälle sind entweder selbst-invalidierend
+oder werden über Guards neu geplant.
+
+### 1C Neue State-Invarianten
+
+**Roboter→Bin-Verknüpfung.** Bisher existierte keine Möglichkeit festzustellen,
+*welcher* Roboter eine `in_transit`-Bin trägt. Neu: `Robot.carried_bin_id`,
+gesetzt beim erfolgreichen Pickup, gelöscht beim erfolgreichen Drop – bewusst
+**nicht** von `clear_task()` angefasst, weil die Bin physisch weiter am
+Roboter hängt.
+
+Damit sind drei Invarianten prüfbar geworden:
+
+```text
+INV-C1  Ein Roboter, der eine Bin trägt, darf nicht von seinem Task
+        getrennt werden (Requeue) – die Bin wäre sonst weder in einem
+        Stack noch einem Task zugeordnet.
+
+INV-C2  Ein Pickup-Event für eine bereits getragene Bin ist ein Duplikat
+        → Fortsetzung mit der Drop-Phase, kein erneuter Pickup.
+
+INV-C3  Ein Drop-Event darf den State nur verändern, wenn der Roboter die
+        betreffende Bin trägt UND an der Ablageposition steht.
+```
+
+INV-C1 wurde durch einen konkreten Fehler belegt: Der Deadlock-Requeue trennte
+einen tragenden Roboter von seinem Task, Bin 86 blieb verwaist `in_transit`,
+die Folge-Pickups liefen in `RuntimeError: Event exceeded max retries`.
+Derselbe Guard wurde auch im Engine-Deadlock-Resolver ergänzt.
+
+---
+
+## Phase 2 – Wait-Graph-Lifecycle
+
+Alle semantischen Cleanup-Punkte einzeln getestet
+(`tests/test_wait_graph_lifecycle.py`).
+
+| Übergang | Ergebnis vor Hardening |
+|---|---|
+| Blockade → Kante entsteht | OK |
+| erfolgreicher Replan → Kante entfernt | OK |
+| erfolgreiche Pfadreservierung → Kante entfernt | OK |
+| Ausweichen → Kante entfernt | OK |
+| Task-Requeue / `release_robot_reservations` → Kante entfernt | OK |
+| unmöglicher Replan (Ziel == blockierte Zelle) → Kante **bleibt** | OK (von Fix 3 beabsichtigt) |
+| **Konflikt löst sich, Roboter fährt weiter → Kante entfernt** | **FEHLTE** |
+
+### Belegter Phantom-Zyklus
+
+Der fehlende Cleanup-Punkt war nicht theoretisch. Systemlauf 7×7, 2 Robots,
+Seed 42:
+
+```text
+t=320: erkannter Zyklus enthält Kante 0 → 1
+       Robot 0 hat aber gar keinen Pfad mehr (next_waypoint = None)
+       → veraltete Kante aus einem längst aufgelösten Konflikt
+```
+
+**Fix:** `clear_wait(robot_id)` nach jedem tatsächlich ausgeführten
+Bewegungsschritt in `_handle_robot_move`. Ein Roboter, der sich bewegt hat,
+wartet per Definition nicht mehr.
+
+Bewusst **semantisch statt zeitbasiert** – ein TTL wurde nicht eingeführt, weil
+der fehlende semantische Punkt ausreicht. Der systemweite Test
+`test_no_phantom_cycles_during_full_run` prüft für jede Kante eines erkannten
+Zyklus, dass der Blocker tatsächlich die gewünschte Zelle besetzt oder die
+Port-Reservierung hält.
+
+---
+
+## Phase 3 – Klärung „35 statt 42"
+
+**Die Dokumentation war falsch, es wurden keine Kombinationen bewusst
+ausgeschlossen.**
+
+Das Sweep-Skript des vorherigen Blocks iterierte über eine explizite Liste:
+
+```python
+for robots, util in [(2,0.5), (3,0.5), (2,2.0), (3,2.0), (4,2.0)]:
+    for seed in [1, 2, 3, 4, 7, 42, 99]:
+```
+
+Das sind 5 × 7 = 35 Läufe. Die fehlende Kombination ist **(4 Robots, util 0.5)**.
+Der Bericht beschrieb die Matrix jedoch als „2/3/4 Robots × util 0.5/2.0",
+also 6 × 7 = 42. **Korrektur der vorherigen Dokumentationsaussage.**
+
+Alle 42 Kombinationen sind valide; die vollständige Matrix wurde ausgeführt
+(s. u.). Der zuvor nie gemessene Block (4 Robots, util 0.5) war
+aufschlussreich – dort trat der Großteil der neu entdeckten Probleme auf.
+
+### Die vier verschlechterten Konfigurationen des Vorberichts
+
+| Konfiguration | `82cfcab` | nach Fix 1–3 | Δ | jetzt | Bewertung |
+|---|---|---|---|---|---|
+| 2 Robots, util 0.5, Seed 1 | 38 | 37 | −1 | 36 | Trade-off, s. u. |
+| 2 Robots, util 0.5, Seed 2 | 33 | 26 | −7 | **34** | erholt, jetzt über Ausgangswert |
+| 3 Robots, util 0.5, Seed 4 | 47 | 38 | −9 | 40 | Trade-off, s. u. |
+| 3 Robots, util 2.0, Seed 1 | 28 | 22 | −6 | **40** | erholt, deutlich über Ausgangswert |
+
+Alle vier sind **deterministisch** (fester Seed, deterministische Simulation;
+mehrfach reproduziert).
+
+Bewertung: Es handelt sich **nicht** um eine Regression durch einen der Fixes,
+sondern um einen Mess-Artefakt plus WIP-Umverteilung:
+
+1. Die Vergleichszahlen der Baseline enthalten zu 34 % physisch unmögliche
+   Drops (s. Phase 1). Sie sind schlicht **zu hoch angesetzt**.
+2. Fix 1 verschiebt Kapazität vom Anliefern zum Rücktransport; die
+   `completed_requests`-Metrik (Ankunft an der PS) sinkt dabei zwangsläufig,
+   während `requests_completed` (Vollabschlüsse) steigt.
+
+Zwei der vier haben sich durch das Hardening von selbst erledigt. Die
+verbleibenden zwei liegen 2 bzw. 7 Vollabschlüsse unter dem Ausgangswert – bei
+gleichzeitig **physisch gültigem** Verhalten. Keine Scheduling-Optimierung
+durchgeführt (war ausdrücklich nicht Teil des Auftrags).
+
+---
+
+## Phase 4 – Seed-1-`PICKUP_RETURN`-Endlosschleife
+
+### Reproduktion
+
+7×7, 100 Bins, **2 Robots, Seed 1, util 2.0**, sim_time 500.
+Baseline: 457 identische `[REPLAN][PICKUP_RETURN]`, **1** abgeschlossener
+Request, längste Phase ohne Fortschritt 449 ZE.
+
+Endzustand der Baseline:
+
+```text
+Robot 0 @ (4,6)  task 0, restore_blockers
+        temp_storage = [{bin 90, from S_5_6, buffer S_4_6}]
+Robot 1 @ (5,6)  task 1, restore_blockers
+        temp_storage = [{bin 52, ... buffer S_5_6},
+                        {bin  3, ... buffer S_4_6}]
+Bin 90: Stack (4,6), Level 2, status=stored, in_transit=False
+```
+
+### KORREKTUR DER BISHERIGEN HYPOTHESE
+
+Die vorherige Dokumentation nahm an:
+
+> „`temp_storage` enthält eine Bin, die bereits zurückgelagert wurde;
+> `mark_last_relocation_restored` wurde nie aufgerufen."
+
+**Das ist falsch.** Bin 90 lag noch im Buffer-Stack S_4_6 und war korrekt als
+offener Restore-Schritt geführt. Sie war lediglich **von Bin 3 überdeckt** –
+einem Blocker des *anderen* Tasks. `temp_storage` war zu keinem Zeitpunkt
+inkonsistent; die Invariante war bereits korrekt.
+
+### Tatsächliche Root Cause
+
+In `_handle_robot_pickup` galt die Abkürzung
+
+```python
+if action_type == "return" and bin_obj.get_status() == "stored":
+    → "already stored" → next_action neu auswerten
+```
+
+für **alle** Return-Aktionen. Für einen **Blocker**-Return ist `stored`
+jedoch der Normalzustand – die Bin liegt planmäßig im Buffer-Stack. Der echte
+Grund war `expected bin 90 not on top`.
+
+Folge: Fehldeutung → `next_action` liefert exakt dieselbe Aktion → neues
+Pickup-Event mit `retry_count = 0` → Endlosschleife, keine Eskalation.
+
+### Vollständiger Trace des erfolgreichen Blocker-Returns
+
+```text
+next_action(return blocker)          strategies/top_access_strategy.py:161-185
+  → MOVE …                           _schedule_next_action_for_task_new
+  → ROBOT_PICKUP                     _handle_robot_pickup  (from_stack = Buffer)
+  → MOVE …                           _schedule_move_to_drop
+  → ROBOT_DROP                       _handle_robot_drop
+  → _update_task_after_successful_action_new
+  → _update_task_after_successful_return(return_kind="blocker")
+  → task.mark_last_relocation_restored(...)   ← Transition IST vorhanden
+  → active_queue.release_blocker_ownership(...)
+  → _schedule_next_action_for_same_task_new
+```
+
+Die State-Transition fehlt nirgends. Der Fehler saß ausschließlich im
+Fehlerpfad davor.
+
+### Implementierte Korrektur
+
+1. **Semantik (`_handle_robot_pickup`):** Die „already stored"-Abkürzung gilt
+   nur noch für `return_kind == "target"`.
+2. **Eskalation (`not on top`-Zweig):** Liefert die Strategie dieselbe Aktion
+   erneut, wächst der Retry-Zähler (dieser Zweig verzögert nicht, also muss er
+   explizit hochzählen). Ab `max_repeated_action_retries_before_requeue = 15`
+   wird der Task requeued.
+3. **Ressourcenfreigabe:** Der Requeue allein genügte nicht – der Roboter blieb
+   auf der umstrittenen Zelle stehen und bekam denselben Task sofort wieder
+   zugeteilt. Er weicht jetzt zusätzlich aus (`_evade_robot`).
+
+### Zusätzlich aufgedeckt: verwaiste Port-Reservierung
+
+Beim Nachmessen von Seed 1 mit 3 Robots zeigte sich ein davon unabhängiger
+Blocker: Ein Roboter reserviert den Port beim Anfahren
+(`_handle_robot_move`) und plant danach um. Die Reservierung blieb dann
+**für immer** bestehen; alle anderen warteten unbegrenzt (bekannte Lücke
+„Port-Warten hat keine Eskalation", Architektur-Karte 5.3 Punkt 4).
+
+Gemessen (7×7, 4 Robots, Seed 7): Port 223 ZE am Stück reserviert, ohne dass
+der Halter je ankam.
+
+Zwei Ergänzungen, beide semantisch (kein Timeout):
+
+- `_release_stale_port_reservation`: Eine Reservierung ist verwaist, wenn ihr
+  Halter weder auf dem Port steht noch ihn im Restpfad anfährt.
+- Wartekante + Zyklusauflösung auch im Port-Reservierungs-Zweig und im
+  PS-Bereich-Zweig von `_handle_robot_move` (beide hatten bisher gar keine
+  Deadlock-Erkennung).
+
+### Vorher/Nachher Seed 1
+
+| Messgröße | Baseline `58c5ef2` | nach Hardening |
+|---|---|---|
+| `[REPLAN][PICKUP_RETURN]`, 2 Robots | 457 | **0** |
+| `requests_completed`, 2 Robots | 1 | **17** |
+| längste Phase ohne Fortschritt, 2 Robots | 449 ZE | **61 ZE** |
+| `requests_completed`, 3 Robots | 22 | **40** |
+| `requests_completed`, 4 Robots (util 2.0) | 39 | **55** |
+| `[REPLAN][PICKUP_RETURN]` über alle 42 Läufe | 2917 | **0** |
+
+---
+
+## Phase 5 – Retry-Semantik
+
+### Regel
+
+```text
+Retry-Fortschritt bleibt erhalten, wenn identisch sind:
+    type, return_kind, bin_id, from_stack, to_stack
+und kein Zustandsfortschritt stattgefunden hat.
+
+Retry-Budget beginnt neu bei:
+    - gewechseltem Ziel-Stack (Drop-Redirect)
+    - anderer Bin
+    - anderer Aktionsart
+    - Phasenwechsel
+    - echtem Bewegungsfortschritt
+```
+
+Implementiert als `EventHandler._is_same_attempt(old_action, new_action)` –
+ein Vergleich über fünf Identitätsfelder, keine Retry-Architektur.
+
+Zusätzlich `_note_position_progress(kind, robot, position)`: Bewegt sich ein
+Roboter beim Warten auf eine Pickup-/Drop-Position, ist das echter Fortschritt
+und **kein** fehlgeschlagener Versuch → Budget zurücksetzen. Ohne diese
+Unterscheidung hätte ein normal (aber verzögert) anfahrender Roboter seinen
+Bewegungsfortschritt alle 5 ZE durch einen kompletten Replan verloren –
+gemessene Folge: 61 → 14 Completions, nach Einbau der Fortschrittserkennung
+wieder 58.
+
+### Erreichbarkeit der Schwellen
+
+| Pfad | vorher | nachher |
+|---|---|---|
+| `[REPLAN][PICKUP_POS]` | `retry_count = 0` | Budget wandert mit |
+| `[REPLAN][PICKUP]` („not on top") | `retry_count = 0` | Zähler wächst, Requeue bei 15 |
+| `[REPLAN][PICKUP_RETURN]` | `retry_count = 0`, Endlosschleife | Zweig gilt nur noch für Target-Returns |
+| Drop-Redirect auf anderen Stack | – | Budget wird **zurückgesetzt** (neues Ziel) |
+| generischer Pickup-Fallback | keine Eskalation | Requeue bei 15 (nur wenn nichts getragen wird) |
+
+Belegt durch `tests/test_retry_semantics.py` (12 Tests), u.a.
+`test_repeated_identical_action_reaches_requeue_threshold` (Schwelle wird
+erreicht) und `test_drop_redirect_to_other_stack_starts_a_fresh_attempt`
+(Reset bei echtem Zielwechsel).
+
+---
+
+## Weitere während der Arbeit gefundene Duplikat-Fehler
+
+Der Positions-Guard machte zwei bis dahin verdeckte Duplikat-Probleme sichtbar
+(beide führten zu `RuntimeError`):
+
+| Problem | Symptom | Guard |
+|---|---|---|
+| **Duplikat-Pickup** für bereits getragene Bin. `_schedule_next_action_for_task_new` beginnt jede physische Aktion mit einer Pickup-Phase – auch nach einem Replan während des Transports. | `not on top` bis `max_retries` → `RuntimeError` | `[STALE][PICKUP]` → Fortsetzung mit der Drop-Phase |
+| **Duplikat-Drop**: mehrere Recovery-Pfade planen ein neues Drop-Event ein, ohne das alte entfernen zu können. Beobachtet: zwei `DROP_TARGET` desselben Roboters im selben Zeitschritt für verschiedene Bins. | `RuntimeError: Cannot start pickstation service: robot has no task` | `[STALE][DROP]` → überspringen, wenn Bin nicht im Transit ist ODER der Roboter eine andere Bin trägt |
+
+---
+
+## Phase 6 – Kontrollierte Restrisiken
+
+| Punkt | Ergebnis | Änderung |
+|---|---|---|
+| **A. Periodischer Deadlock-Check** | Läuft weiterhin **nie** (Engine-Zweig „EventQueue leer"): 0 Aufrufe in allen gemessenen Läufen, alle Checks kommen aus `_register_wait_and_try_resolve`. Die lokale Detection reicht für alle 42 Konfigurationen aus (0 Exceptions, max. 61 ZE ohne Fortschritt). | **keine** – Engine-Architektur unangetastet |
+| **B. `_evade_robot` und Ports/Sackgassen** | Ausweichen meidet Port-Zellen (getestet). Ist keine freie Nachbarzelle vorhanden, greift der Requeue-Pfad und hinterlässt konsistenten State (Task genau einmal wartend, nicht mehr in `assigned`, Roboter ohne Task, nichts getragen). | Requeue-Pfad um Carrying-Guard ergänzt; Zyklusauflösung probiert jetzt alle Roboter des Zyklus |
+| **C. Komplett volles Lager** | 6×6-Sweep (16 Kombinationen) weiterhin **0 Abbrüche**. Die neuen Guards machen das Verhalten nicht häufiger oder inkonsistenter. | **keine** – bleibt bekannte technische Schuld |
+| **D. `tests/reservation_table.py`** | Enthält **17 echte, bestehende Tests** (Datei-Docstring nennt sich selbst `test_reservation_table.py` – der Dateiname ist schlicht falsch). Im Standardlauf `pytest tests/` wird sie **nicht** eingesammelt (0 Treffer beim Collect). Explizit ausgeführt: 17 passed. | **keine** – Empfehlung s. u. |
+| **E. `test_simulation_visual.py`** | Collect schlägt weiterhin fehl (Flask fehlt). Wird ausgeklammert und **nicht** als bestanden gezählt. | **keine** |
+
+Empfehlung zu D: Datei in `tests/test_reservation_table.py` umbenennen. Die
+17 Tests laufen unverändert durch, würden dann aber dauerhaft mitlaufen.
+Bewusst nicht ungefragt durchgeführt.
+
+---
+
+## Neue Tests
+
+| Datei | Tests | Inhalt |
+|---|---|---|
+| `tests/test_evade_hardening.py` | 20 | Drop-Positionsinvariante, Carrying-Robot + Evade, Stale-Events, Duplikat-Pickup/Drop, Evade nahe Port/Sackgasse, systemweite Invarianten |
+| `tests/test_wait_graph_lifecycle.py` | 12 | Entstehung + alle Cleanup-Punkte einer Wartekante, Phantom-Zyklus-Prüfung im Systemlauf |
+| `tests/test_blocker_return_invariant.py` | 10 | „stored"-Semantik für Blocker vs. Target, `temp_storage`-Invariante, Seed-1-Regression |
+| `tests/test_retry_semantics.py` | 12 | Identität eines Versuchs, Erreichbarkeit der Schwellen, Reset bei echtem Zielwechsel/Fortschritt |
+
+**54 neue Tests.** Gegen die unveränderte Baseline `58c5ef2` ausgeführt
+schlagen davon **31 fehl** (23 passed) – sie prüfen also tatsächliche
+Verhaltensänderungen und nicht nur Implementierungsdetails.
+
+---
+
+## Vollständige Sweep-Matrix
+
+Ausgeführt: **Robots {2, 3, 4} × util {0.5, 2.0} × Seeds {1, 2, 3, 4, 7, 42, 99}
+= 42 Läufe.** Alle Kombinationen valide, keine ausgeschlossen.
+Grid 7×7, max_height 6, 100 Bins, sim_time 500.
+
+| Kennzahl | Baseline `58c5ef2` | nach Hardening |
+|---|---|---|
+| Summe `requests_completed` | 2185 | 2076 |
+| Konfigurationen mit 0 Completions | 0 | **0** |
+| **Exceptions** | 0 | **0** |
+| **Task-Invarianten-Verletzungen** | 0 | **0** |
+| **Duplicate-Bin-Fehler** | 0 | **0** |
+| **längste Phase ohne Nutzfortschritt (max)** | **449 ZE** | **61 ZE** |
+| `[REPLAN][PICKUP_RETURN]` gesamt | **2917** | **0** |
+| Manhattan-Fallbacks gesamt | 35 | 17 |
+| Deadlock-Erkennungen gesamt | 126 | 569 |
+| Requeues gesamt | 0 | 114 |
+| **physisch unmögliche Drops** | **1372 (34 %)** | **0** |
+
+### Vergleichbarkeit der Completion-Summe
+
+Die Summe sinkt um 5 % (2185 → 2076). Das ist **kein** Durchsatzverlust im
+üblichen Sinn: In der Baseline waren 34 % aller erfolgreichen Ablagen physisch
+unmöglich – überwiegend `remove_target`, also Bin-Abgaben an der Pickstation
+aus mehreren Zellen Entfernung. Diese Abkürzung existiert nicht mehr, die
+Roboter müssen den Port jetzt tatsächlich erreichen.
+
+Messbarer Beleg für die veränderte Physik (7×7, 4 Robots, util 2.0, Seed 7):
+Der Port ist jetzt **287 von 499 ZE** physisch besetzt gegenüber **184 von
+499 ZE** in der Baseline. Der Engpass ist damit der Port selbst, nicht mehr
+die Recovery.
+
+### Verteilung
+
+| | Baseline | nachher |
+|---|---|---|
+| Konfigurationen ≥ 40 Completions | 27 | **31** |
+| Konfigurationen < 20 Completions | 1 | 1 |
+| schlechteste Konfiguration | **1** (Seed 1, 2 Rob, util 2.0) | **17** (dieselbe) |
+| Konfigurationen mit > 100 ZE Stillstand | 1 | **0** |
+
+---
+
+## Regressionsvalidierung der früheren Fixes
+
+| Prüfpunkt | Ergebnis |
+|---|---|
+| **Pickstation** idle bei gefüllter Service-Queue | **0/500 ZE** (Seed 42) und **0/499 ZE** (Seed 7) – unverändert behoben. Kein Service-Stau: max. Queue 5 bzw. 3 |
+| **Task-Assignment**: kein Task gleichzeitig wartend und zugewiesen | 0 Verletzungen in 42 Läufen |
+| **Task-Assignment**: keine Doppelzuweisung | 0 Verletzungen in 42 Läufen |
+| **Duplicate-Bin-Crashes** | 0 in 42 Läufen |
+| **Ursprüngliches Livelock** (7×7, 2 Robots, Seed 42, util 0.5) | 32 Completions, längste Stillstandsphase 23 ZE – weiterhin behoben, kein Rückfall |
+| **Drop-Recovery** (`to_stack is full`, 6×6-Sweep, 16 Kombinationen) | 0 Abbrüche. Der neue Retry-Reset bei echtem Zielwechsel funktioniert (`test_drop_redirect_to_other_stack_starts_a_fresh_attempt`) |
+| **Seed-1-Regression** (2 Robots, util 2.0) | 0 `[REPLAN][PICKUP_RETURN]`, 17 Completions, max. 61 ZE ohne Fortschritt |
+| **Metrics funktionsfähig** | `summary()` liefert 14 Felder, kein leeres/0-Feld |
+| **`average_digging_depth`** | `simulation/metrics.py` unverändert |
+
+---
+
+## Erfolgskriterien
+
+| # | Kriterium | Status |
+|---|---|---|
+| 1 | alle bisherigen 159 Tests bestehen | **erfüllt** (213 gesamt) |
+| 2 | neue Hardening-/Seed-1-Tests bestehen | **erfüllt** (54 neu) |
+| 3 | Carrying-Robot + Evade erzeugt keine ungültigen Bin-/Drop-Zustände | **erfüllt** |
+| 4 | stale Events nach Evade führen keinen unmöglichen Übergang aus | **erfüllt** |
+| 5 | keine nachgewiesenen Phantom-Zyklen | **erfüllt** (Cleanup-Punkt ergänzt, Systemtest) |
+| 6 | Task- und Container-Invarianten bestehen | **erfüllt** (0 Verletzungen / 42 Läufe) |
+| 7 | Seed 1 nicht mehr in der `PICKUP_RETURN`-Schleife | **erfüllt** (457 → 0) |
+| 8 | Retry-Eskalation bei identischem Versuch erreichbar | **erfüllt** |
+| 9 | Retry-Reset bei tatsächlich neuer Aktion | **erfüllt** |
+| 10 | Seed-42-Livelock weiterhin behoben | **erfüllt** |
+| 11 | Pickstation- und Drop-Recovery funktionieren weiter | **erfüllt** |
+| 12 | keine neue schwerwiegende Regression im Sweep | **erfüllt** (0 Exceptions, max_gap 449 → 61) |
+
+Ein größerer Architekturumbau war an keiner Stelle nötig; alle Änderungen sind
+lokale Guards bzw. Wiederverwendung vorhandener Mechanismen.
+
+---
+
+## Geänderte Dateien
+
+Produktionscode (4 Dateien, +586/−47 gegenüber `58c5ef2`):
+
+```text
+ simulation/event_handler.py     | 585 ++++++++++++++++++++++-----
+ state/robot.py                  |  28 ++
+ simulation/event_builder.py     |  12 +-
+ simulation/simulation_engine.py |   8 +
+```
+
+| Datei | Funktionen |
+|---|---|
+| `state/robot.py` | `__init__` (`carried_bin_id`), `set_carried_bin`, `get_carried_bin`, `clear_carried_bin`, `is_carrying_bin` (alle neu) |
+| `simulation/event_builder.py` | `build_robot_pickup_event` (Parameter `retry_count`) |
+| `simulation/simulation_engine.py` | `step` (Carrying-Guard im Deadlock-Resolver) |
+| `simulation/event_handler.py` | `__init__` (3 neue Schwellen/Tracker), `_handle_robot_move` (Wait-Kante im PS-Zweig, Port-Eskalation, `clear_wait` nach Move), `_handle_robot_pickup` (Stale-Pickup-Guard, Blocker-Semantik, Retry-Wachstum, 2 Requeue-Eskalationen), `_handle_robot_drop` (Stale-Drop-Guard, Positions-Guard), `_schedule_next_action_for_task_new` (`inherited_retry_count`), `_register_wait_and_try_resolve` (alle Zyklus-Roboter), `_resolve_move_deadlock` (Carrying-Guard) |
+| **neu** | `_is_robot_at_drop_position`, `_handle_drop_position_mismatch`, `_release_stale_port_reservation`, `_note_position_progress`, `_is_same_attempt` |
+
+Neue Testdateien (4, 54 Tests):
+
+```text
+ tests/test_evade_hardening.py           (20)
+ tests/test_wait_graph_lifecycle.py      (12)
+ tests/test_blocker_return_invariant.py  (10)
+ tests/test_retry_semantics.py           (12)
+```
+
+Keine Git-Commits oder Pushes ausgeführt.
+
+---
+
+## Bekannte Restrisiken
+
+- **Duplikat-Events werden erkannt, nicht verhindert.** Die Recovery-Pfade
+  können alte Events nicht aus der Queue entfernen; die Guards fangen sie beim
+  Feuern ab. Robust, aber es bleibt unnötige Event-Last.
+- **Port bleibt struktureller Engpass.** Bei 4 Robots und einer Pickstation
+  drängen sich zeitweise alle Roboter um eine Zelle. Die Recovery löst das
+  zuverlässig, kann die physische Kapazität aber nicht erhöhen.
+- **`carried_bin_id` wird nur im Zwei-Phasen-Pfad gepflegt.** Der alte
+  `pickup_from_pickstation`-Executor-Pfad setzt die Verknüpfung nicht; alle
+  daran hängenden Guards fallen dort auf die `in_transit`-Prüfung zurück.
+- **Seed 1, 2 Robots, util 2.0** bleibt mit 17 Completions die schwächste
+  Konfiguration (max. 61 ZE ohne Fortschritt). Kein Stillstand mehr, aber
+  auffällig unter dem Feld.
+- **Wartekanten verfallen nicht zeitbasiert.** Die semantischen Cleanup-Punkte
+  reichen für alle gemessenen Läufe; ein TTL wurde bewusst nicht eingeführt.
+- **`completed_requests` und `average_tardiness` sind über Versionen hinweg
+  nicht vergleichbar** (Selektions- und WIP-Effekte, s. Fix 1).
+
+## Bewusst nicht behobene technische Schulden
+
+1. **Periodischer Engine-Deadlock-Check** läuft weiterhin nur bei leerer
+   EventQueue (Architektur-Karte 5.3 Punkt 2). Lokale Detection reicht aktuell
+   aus; eine Engine-Änderung wäre nicht gerechtfertigt.
+2. **Kein Ausweg bei komplett vollem Lager** – findet die Drop-Recovery keinen
+   Ausweich-Stack, endet der Lauf weiterhin in `RuntimeError`. Erfordert eine
+   Storage-Policy-Entscheidung, keine reine Bugfix-Frage.
+3. **`tests/reservation_table.py`** wird ohne `test_`-Präfix nicht
+   eingesammelt (17 echte Tests laufen unbemerkt nicht mit).
+4. **`test_simulation_visual.py`** bleibt wegen Flask ausgeklammert.
+5. **Zwei Konfigurationen** (2 Rob/util 0.5/Seed 1 und 3 Rob/util 0.5/Seed 4)
+   liegen weiterhin leicht unter dem Ausgangswert – Scheduling-Thema, war
+   ausdrücklich nicht Teil des Auftrags.
+
+## Empfohlene nächste Schritte
+
+1. `tests/reservation_table.py` umbenennen – ein Handgriff, dauerhaft
+   17 zusätzliche Tests in der Suite.
+2. Port-Kapazität als Experiment variieren (2 Pickstations). Die Messung zeigt
+   den Port jetzt eindeutig als Engpass; das ist die erste Stellschraube mit
+   erwartbar großer Wirkung.
+3. Erst danach Scheduling-Prioritäten betrachten (Returns vs. neue Requests).
+4. Optional: `carried_bin_id` auch im `pickup_from_pickstation`-Executor-Pfad
+   pflegen, damit alle Guards überall auf derselben Information arbeiten.

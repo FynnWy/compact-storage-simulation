@@ -254,6 +254,14 @@ class SimulationEngine:
                         for robot in self.state.robots:
                             if robot.robot_id == victim_id:
                                 self.state.traffic_manager.release_robot_reservations(robot)
+                                # HARDENING (2026-08-19): Trägt der Roboter
+                                # eine Bin, darf er NICHT von seinem Task
+                                # getrennt werden – die Bin wäre sonst weder
+                                # in einem Stack noch einem Task zugeordnet.
+                                # (Gleiche Invariante wie in
+                                # `EventHandler._resolve_move_deadlock`.)
+                                if robot.is_carrying_bin():
+                                    break
                                 # Task in Warteschlange
                                 if robot.current_task is not None:
                                     self.active_queue.add_waiting_task(robot.current_task)

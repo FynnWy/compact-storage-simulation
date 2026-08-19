@@ -1,4 +1,4 @@
-# traffic/reservation_table.py
+# traffic/test_reservation_table.py
 
 class ReservationTable:
     """

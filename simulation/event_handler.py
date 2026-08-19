@@ -33,10 +33,26 @@ class EventHandler:
         self.max_pickup_position_retries_before_replan = 5
         self.max_pickup_position_retries_before_requeue = 15
 
+        # Schwelle für identisch wiederholte Aktionen (gleicher Task, gleiche
+        # Bin, gleiches Ziel). Wird sie erreicht, blockiert der Roboter
+        # typischerweise eine Ressource, die ein anderer Task erst freigeben
+        # muss → Task requeuen. Nur wirksam in Kombination mit der
+        # Retry-Persistenz (`_is_same_attempt`).
+        self.max_repeated_action_retries_before_requeue = 15
+
         # Drop-Blockaden: Ab dieser Retry-Zahl wird ein voller/gesperrter
         # Ziel-Stack durch einen Ausweich-Stack ersetzt, statt endlos zu
         # delayen (bis `max_retries` → RuntimeError).
         self.max_drop_retries_before_redirect = 5
+
+        # Drop-Positionsfehler: Ab dieser Retry-Zahl OHNE Bewegungsfortschritt
+        # wird die Bewegung zur Ablageposition neu geplant (analog zu
+        # Pickup-Positionsfehlern).
+        self.max_drop_position_retries_before_replan = 5
+        # Letzte beobachtete Position je (Art, Roboter) beim Warten auf eine
+        # Pickup-/Drop-Position – dient der Fortschrittserkennung.
+        # Bewegung = echter Fortschritt = kein fehlgeschlagener Versuch.
+        self._position_wait_by_robot = {}
 
         # Move-Blockaden: frühes Replaning und Duplikat-Schutz
         self.max_move_retries_before_replan = 1
@@ -199,6 +215,20 @@ class EventHandler:
                             f"[REPLAN] Robot {robot.robot_id} replanning path to avoid "
                             f"robot {other.robot_id} at {next_waypoint}"
                         )
+
+                        # HARDENING (2026-08-19): Auch im PS-Bereich muss die
+                        # Wartebeziehung registriert und ein Zyklus aufgelöst
+                        # werden. Vorher fehlte das hier komplett – Konflikte
+                        # um die Port-Zelle blieben für den Wait-Graph
+                        # unsichtbar, weil nur eine der beiden Kanten entstand.
+                        if self._register_wait_and_try_resolve(
+                                robot=robot,
+                                other=other,
+                                contested_cell=next_waypoint,
+                                event=event,
+                        ):
+                            return
+
                         self._replan_path_around_obstacle(robot, next_waypoint, event)
                         return
 
@@ -221,12 +251,49 @@ class EventHandler:
             # Wenn Port noch nicht für diesen Roboter reserviert ist, versuchen zu reservieren
             if not pickstation_at_next.is_reserved_by(robot.robot_id):
                 if not pickstation_at_next.reserve(robot.robot_id):
+                    # HARDENING (2026-08-19): Verwaiste Port-Reservierung.
+                    # Ein Roboter reserviert den Port beim Anfahren. Plant er
+                    # danach um (z.B. weil sein Task in eine andere Phase
+                    # wechselt), blieb die Reservierung für immer bestehen –
+                    # alle anderen warteten unbegrenzt (kein Eskalationspfad).
+                    # Die Reservierung ist verwaist, wenn ihr Halter weder auf
+                    # dem Port steht noch ihn noch anfährt.
+                    if self._release_stale_port_reservation(pickstation_at_next):
+                        if not pickstation_at_next.reserve(robot.robot_id):
+                            pass  # weiterhin blockiert → normale Behandlung
+
+                if not pickstation_at_next.is_reserved_by(robot.robot_id):
                     # Port ist für anderen Roboter reserviert → Move verzögern
                     print(
                         f"[INFO] Robot {robot.robot_id} cannot reserve port "
                         f"{pickstation_at_next.station_id} at {next_waypoint} "
                         f"at time {self.state.t}, retrying..."
                     )
+
+                    # HARDENING (2026-08-19): Port-Warten hatte bisher KEINE
+                    # Eskalation (Architektur-Karte 5.3, Punkt 4). Hält ein
+                    # Roboter die Port-Reservierung, kommt aber selbst nicht an
+                    # (weil er blockiert ist), warteten alle anderen unbegrenzt.
+                    # Gemessen: Reservierung 223 ZE ohne Anwesenheit.
+                    # Die Wartebeziehung wird jetzt registriert, damit der
+                    # vorhandene Wait-Graph den Zyklus sehen kann.
+                    holder_id = pickstation_at_next.reserved_for_robot
+                    holder = next(
+                        (r for r in self.state.robots if r.robot_id == holder_id),
+                        None,
+                    )
+                    if (
+                            holder is not None
+                            and event.retry_count >= self.max_move_retries_before_replan
+                    ):
+                        if self._register_wait_and_try_resolve(
+                                robot=robot,
+                                other=holder,
+                                contested_cell=holder.get_position(),
+                                event=event,
+                        ):
+                            return
+
                     delayed_event = self.event_builder.delay_event(
                         event=event,
                         current_time=self.state.t,
@@ -277,48 +344,14 @@ class EventHandler:
                         f"robot {other.robot_id} at {next_waypoint}"
                     )
 
-                    # NEU: Deadlock-Check VOR dem Replanning
-                    if hasattr(self.state, 'traffic_manager'):
-                        tm = self.state.traffic_manager
-                        # Wartebeziehung registrieren
-                        tm.deadlock_detector.register_wait(
-                            waiting_robot_id=robot.robot_id,
-                            blocking_robot_id=other.robot_id,
-                            reason="path_blocked",
-                            current_time=self.state.t,
-                        )
-
-                        # Prüfen ob Deadlock entstanden ist
-                        victim_id = tm.check_and_resolve_deadlock(
-                            robots=self.state.robots,
-                            scheduler=self.scheduler,
-                            current_time=self.state.t,
-                        )
-
-                        if victim_id is not None:
-                            # Deadlock erkannt – Victim muss tatsächlich Platz
-                            # machen. FIX 3 (2026-08-19): Vorher wurde hier nur
-                            # verzögert (Opfer == eigener Robot) bzw. gar nichts
-                            # getan (`pass`, Opfer == anderer Robot). Der
-                            # Konflikt blieb damit unverändert bestehen.
-                            victim = next(
-                                (r for r in self.state.robots if r.robot_id == victim_id),
-                                None
-                            )
-                            if victim is not None:
-                                self._resolve_move_deadlock(
-                                    victim=victim,
-                                    contested_cell=next_waypoint,
-                                    waiting_robot=robot,
-                                )
-                                # Der wartende Robot versucht es im nächsten
-                                # Zeitschritt erneut – die Zelle sollte dann
-                                # frei sein.
-                                delayed_event = self.event_builder.delay_event(
-                                    event, self.state.t
-                                )
-                                self.event_queue.push(delayed_event)
-                                return
+                    # Deadlock-Check VOR dem Replanning
+                    if self._register_wait_and_try_resolve(
+                            robot=robot,
+                            other=other,
+                            contested_cell=next_waypoint,
+                            event=event,
+                    ):
+                        return
 
                     self._replan_path_around_obstacle(robot, next_waypoint, event)
                     return
@@ -349,6 +382,16 @@ class EventHandler:
         except RuntimeError as e:
             print(f"[WARNING] Robot {robot.robot_id} move failed: {e}")
             return
+
+        # HARDENING (2026-08-19): Fehlender semantischer Cleanup-Punkt.
+        # Ein Roboter, der sich tatsächlich bewegt hat, wartet per Definition
+        # nicht mehr. Ohne dieses Löschen überlebte die Wartekante die
+        # Auflösung des Konflikts und bildete später Phantom-Zyklen
+        # (reproduziert: 7x7, 2 Robots, Seed 42, t=320 – wartender Roboter
+        # hatte gar keinen Pfad mehr).
+        # Bewusst semantisch statt zeitbasiert (kein TTL).
+        if hasattr(self.state, "traffic_manager"):
+            self.state.traffic_manager.deadlock_detector.clear_wait(robot.robot_id)
 
         # NEU: Bounds-Check nach dem Move
         gx, gy = new_position
@@ -484,6 +527,174 @@ class EventHandler:
         delayed_event = self.event_builder.delay_event(event, self.state.t)
         self.event_queue.push(delayed_event)
 
+    # Felder, die einen fachlichen Versuch identifizieren.
+    # Ändert sich eines davon, ist es ein NEUER Versuch und das Retry-Budget
+    # beginnt wieder bei 0.
+    _ATTEMPT_IDENTITY_KEYS = ("type", "return_kind", "bin_id", "from_stack", "to_stack")
+
+    def _release_stale_port_reservation(self, pickstation):
+        """
+        Gibt eine verwaiste Port-Reservierung frei.
+
+        Eine Reservierung gilt als verwaist, wenn ihr Halter
+        - nicht physisch auf dem Port steht UND
+        - den Port auch nicht mehr in seinem Restpfad anfährt.
+
+        Semantische Prüfung, bewusst kein Timeout: Ein Roboter, der weder da
+        ist noch hinfährt, kann die Reservierung nicht mehr einlösen.
+
+        Returns:
+            bool: True, wenn eine Reservierung freigegeben wurde.
+        """
+        holder_id = pickstation.reserved_for_robot
+
+        if holder_id is None or pickstation.is_occupied():
+            return False
+
+        holder = next(
+            (r for r in self.state.robots if r.robot_id == holder_id),
+            None,
+        )
+
+        if holder is None:
+            pickstation.release_reservation()
+            return True
+
+        if holder.get_position() == pickstation.position:
+            return False
+
+        remaining_path = holder.planned_path[holder.path_index:]
+        if pickstation.position in remaining_path:
+            return False
+
+        print(
+            f"[RECOVERY][PORT] t={self.state.t} releasing stale reservation of "
+            f"{pickstation.station_id} held by robot {holder_id} "
+            f"(at {holder.get_position()}, not heading to {pickstation.position})"
+        )
+        pickstation.release_reservation()
+        return True
+
+    def _note_position_progress(self, kind, robot, position):
+        """
+        Merkt die Position eines wartenden Roboters und meldet Bewegung.
+
+        Returns:
+            bool: True, wenn sich der Roboter seit der letzten Prüfung bewegt
+                  hat (= echter Fortschritt, kein fehlgeschlagener Versuch).
+        """
+        key = (kind, robot.robot_id)
+        previous = self._position_wait_by_robot.get(key)
+        self._position_wait_by_robot[key] = position
+        return previous is not None and previous != position
+
+    @classmethod
+    def _is_same_attempt(cls, old_action, new_action):
+        """
+        Prüft, ob zwei Aktionen denselben fachlichen Versuch beschreiben.
+
+        Retry-Semantik (Hardening 2026-08-19):
+        Retry-Fortschritt darf nur erhalten bleiben, wenn wirklich derselbe
+        Versuch wiederholt wird – gleiche Aktionsart, gleiche Bin, gleiche
+        Quelle, gleiches Ziel. Sobald die Recovery ein anderes Ziel wählt
+        (z.B. Drop-Redirect auf einen Ausweich-Stack), die Task-Phase wechselt
+        oder eine andere Bin bearbeitet wird, ist es ein neuer, sinnvoller
+        Versuch und darf nicht mit fast erschöpftem Budget starten.
+        """
+        if old_action is None or new_action is None:
+            return False
+
+        return all(
+            old_action.get(key) == new_action.get(key)
+            for key in cls._ATTEMPT_IDENTITY_KEYS
+        )
+
+    def _register_wait_and_try_resolve(self, robot, other, contested_cell, event):
+        """
+        Registriert die Wartebeziehung `robot → other` und löst einen dadurch
+        entstandenen Zyklus auf.
+
+        Extrahiert aus `_handle_robot_move` (Verhalten unverändert), damit
+        sowohl der allgemeine Blockade-Zweig als auch der PS-Bereich-Zweig
+        dieselbe Erkennung nutzen.
+
+        Returns:
+            bool: True, wenn ein Deadlock aufgelöst und das Event verzögert
+                  wurde (Aufrufer soll sofort zurückkehren).
+        """
+        if not hasattr(self.state, "traffic_manager"):
+            return False
+
+        tm = self.state.traffic_manager
+
+        tm.deadlock_detector.register_wait(
+            waiting_robot_id=robot.robot_id,
+            blocking_robot_id=other.robot_id,
+            reason="path_blocked",
+            current_time=self.state.t,
+        )
+
+        victim_id = tm.check_and_resolve_deadlock(
+            robots=self.state.robots,
+            scheduler=self.scheduler,
+            current_time=self.state.t,
+        )
+
+        if victim_id is None:
+            return False
+
+        # Deadlock erkannt – Victim muss tatsächlich Platz machen.
+        # FIX 3 (2026-08-19): Vorher wurde hier nur verzögert (Opfer == eigener
+        # Robot) bzw. gar nichts getan (`pass`, Opfer == anderer Robot).
+        victim = next(
+            (r for r in self.state.robots if r.robot_id == victim_id),
+            None
+        )
+
+        if victim is None:
+            return False
+
+        # HARDENING (2026-08-19): Kann das vom Resolver gewählte Opfer nicht
+        # auflösen (keine freie Nachbarzelle, oder es trägt eine Bin und darf
+        # deshalb nicht requeued werden), werden ALLE weiteren Roboter des
+        # Zyklus als Opfer probiert – zuletzt der wartende Roboter selbst.
+        # Grund: Bei mehreren Robotern rund um einen einzigen Port ist der
+        # „beste" Kandidat oft komplett eingekeilt, während ein anderer
+        # Beteiligter problemlos Platz machen könnte. Ohne diese Erweiterung
+        # würde hier nur verzögert – der Konflikt bliebe bestehen
+        # (verbotenes Anti-Pattern).
+        cycle = tm.deadlock_detector.detect_cycle() or []
+        by_id = {r.robot_id: r for r in self.state.robots}
+
+        candidates = [victim]
+        for robot_id in sorted(cycle):
+            candidate = by_id.get(robot_id)
+            if candidate is not None and candidate not in candidates:
+                candidates.append(candidate)
+        if robot not in candidates:
+            candidates.append(robot)
+
+        resolved = False
+        for candidate in candidates:
+            partner = robot if candidate is not robot else victim
+            if self._resolve_move_deadlock(
+                    victim=candidate,
+                    contested_cell=contested_cell,
+                    waiting_robot=partner,
+            ):
+                resolved = True
+                break
+
+        if not resolved:
+            # Nicht auflösbar → Aufrufer soll normal weiter umplanen/warten.
+            return False
+
+        # Der wartende Robot versucht es im nächsten Zeitschritt erneut –
+        # die Zelle sollte dann frei sein.
+        delayed_event = self.event_builder.delay_event(event, self.state.t)
+        self.event_queue.push(delayed_event)
+        return True
+
     def _resolve_move_deadlock(self, victim, contested_cell, waiting_robot):
         """
         Löst einen erkannten Bewegungs-Deadlock auf, sodass echter Fortschritt
@@ -512,6 +723,20 @@ class EventHandler:
                 f"with robot {waiting_robot.robot_id} at t={self.state.t}"
             )
             return True
+
+        # HARDENING (2026-08-19): Ein Roboter, der eine Bin trägt, darf NICHT
+        # requeued werden. `clear_task()` würde ihn von seinem Task trennen,
+        # während die Bin weiterhin `in_transit` an ihm hängt – die Bin wäre
+        # damit weder in einem Stack noch einem Task zugeordnet.
+        # Beobachtet vor diesem Guard: gestrandete Bin 86 → Return-Pickups
+        # mit "bin already in transit" bis `max_retries` → RuntimeError.
+        if victim.is_carrying_bin():
+            print(
+                f"[DEADLOCK] t={self.state.t} robot={victim.robot_id} cannot "
+                f"evade but carries bin {victim.get_carried_bin()} -> no "
+                f"requeue (would strand the bin)"
+            )
+            return False
 
         # Keine freie Nachbarzelle → Task zurück in die Warteschlange
         task = victim.current_task
@@ -624,6 +849,29 @@ class EventHandler:
         action_type = action.get("type")
         bin_id = action.get("bin_id")
 
+        # HARDENING (2026-08-19): Stale/Duplikat-Pickup.
+        # Trägt der Roboter die Ziel-Bin bereits, hat der Pickup längst
+        # stattgefunden – dieses Event ist ein Duplikat. Es entsteht, wenn ein
+        # Task nach dem Pickup neu geplant wird: `_schedule_next_action_for_task_new`
+        # beginnt jede physische Aktion grundsätzlich mit einer Pickup-Phase.
+        # Ohne diesen Guard scheitert der Pickup dauerhaft ("not on top", die
+        # Bin liegt ja in der Hand des Roboters) und läuft in
+        # `RuntimeError: Event exceeded max retries`.
+        # Korrekte Fortsetzung ist die Drop-Phase.
+        if bin_id is not None and robot.get_carried_bin() == bin_id:
+            print(
+                f"[STALE][PICKUP] t={self.state.t} robot={robot.robot_id} "
+                f"action={action_type} bin={bin_id} already carried "
+                f"-> continue with drop phase"
+            )
+            self._schedule_move_to_drop(
+                robot=robot,
+                action=action,
+                request=request,
+                start_time=self.state.t + 1,
+            )
+            return
+
         # ✅ Prüfe ob Roboter physisch auf dem Stack steht
         from_stack = self._get_stack_by_id(self.state, action.get("from_stack"))
 
@@ -633,6 +881,13 @@ class EventHandler:
 
             if robot_position != stack_position:
                 task = robot.current_task
+
+                # Retry-Semantik (Hardening 2026-08-19): Bewegt sich der
+                # Roboter noch Richtung Stack, ist das kein fehlgeschlagener
+                # Versuch – Budget zurücksetzen. Nur echtes Feststecken soll
+                # die Eskalationsschwellen erreichen.
+                if self._note_position_progress("pickup", robot, robot_position):
+                    event.retry_count = 0
 
                 # 2. Schutzschwelle: Task hart zurück in waiting, um Livelock zu brechen
                 if (
@@ -659,11 +914,14 @@ class EventHandler:
                         f"(robot at {robot_position}, stack at {stack_position}) "
                         f"retry={event.retry_count} -> reschedule movement to pickup"
                     )
+                    # Identische Aktion → derselbe Versuch → Budget mitnehmen,
+                    # damit die Requeue-Schwelle (15) erreichbar bleibt.
                     self._schedule_next_action_for_task_new(
                         robot=robot,
                         task=task,
                         next_action=action,
                         base_time=self.state.t,
+                        inherited_retry_count=event.retry_count,
                     )
                     return
 
@@ -714,7 +972,20 @@ class EventHandler:
             # Defensiv: veraltete Return-Pickups können auftreten, wenn die
             # Target-Bin bereits zurückgelegt wurde (status='stored').
             # In diesem Fall nicht endlos retrien, sondern Task neu auswerten.
-            if action_type == "return" and task is not None and bin_id is not None:
+            #
+            # FIX SEED-1 (2026-08-19): Diese Abkürzung gilt AUSSCHLIESSLICH für
+            # Target-Returns. Für Blocker-Returns ist `stored` der NORMALE
+            # Zustand – die Blocker-Bin liegt planmäßig im Buffer-Stack und
+            # wartet auf ihre Rücklagerung. Vorher griff der Zweig auch dort
+            # und deutete „Bin liegt im Buffer, aber nicht obenauf" fälschlich
+            # als „bereits erledigt" um. `next_action` lieferte daraufhin
+            # exakt dieselbe Aktion → Endlosschleife (Seed 1: 457 Wiederholungen).
+            if (
+                    action_type == "return"
+                    and action.get("return_kind") == "target"
+                    and task is not None
+                    and bin_id is not None
+            ):
                 bin_obj = self.state.get_bin_by_id(bin_id)
                 if bin_obj is not None and bin_obj.get_status() == "stored":
                     print(
@@ -733,17 +1004,81 @@ class EventHandler:
                 if task is not None:
                     new_action = self.scheduler.strategy.next_action(self.state, task)
                     if new_action is not None:
+                        # Retry-Semantik (Hardening 2026-08-19):
+                        # Liefert die Strategie exakt dieselbe Aktion, ist das
+                        # ein weiterer fehlgeschlagener Versuch DESSELBEN
+                        # Vorhabens. Dieser Zweig verzögert nicht, also muss der
+                        # Zähler hier explizit wachsen – sonst bleibt er ewig 0
+                        # und keine Eskalationsschwelle wird je erreicht
+                        # (Seed-1-Endlosschleife: 457 identische Wiederholungen).
+                        same_attempt = self._is_same_attempt(action, new_action)
+                        next_retry = event.retry_count + 1 if same_attempt else 0
+
+                        # Eskalation: Wiederholt sich derselbe Versuch dauerhaft,
+                        # blockiert der Roboter meist eine Ressource, die ein
+                        # anderer Task erst freigeben muss. Dann Task requeuen
+                        # und Roboter freigeben.
+                        if (
+                                same_attempt
+                                and next_retry >= self.max_repeated_action_retries_before_requeue
+                                and not robot.is_carrying_bin()
+                        ):
+                            print(
+                                f"[REQUEUE][PICKUP_REPEAT] t={self.state.t} "
+                                f"robot={robot.robot_id} action={action_type} "
+                                f"bin={bin_id} retry={next_retry} -> requeue "
+                                f"task {task.request_id}"
+                            )
+                            self.state.traffic_manager.release_robot_reservations(robot)
+                            robot.clear_task()
+                            self.active_queue.add_waiting_task(task)
+
+                            # Der Task allein freizugeben reicht NICHT: Der
+                            # Roboter steht weiterhin auf der Zelle, die der
+                            # andere Task braucht – und bekommt denselben Task
+                            # sofort wieder zugeteilt. Die umstrittene Ressource
+                            # ist die Zelle, also muss sie geräumt werden.
+                            if not self._evade_robot(robot, forbidden_cells=set()):
+                                self._handle_robot_becomes_idle(robot)
+                            return
+
                         print(
                             f"[REPLAN][PICKUP] t={self.state.t} robot={robot.robot_id} "
-                            f"task replanning due to stale stack state"
+                            f"task replanning due to stale stack state "
+                            f"(same_attempt={same_attempt}, retry={next_retry})"
                         )
                         self._schedule_next_action_for_task_new(
                             robot=robot,
                             task=task,
                             next_action=new_action,
                             base_time=self.state.t,
+                            inherited_retry_count=next_retry,
                         )
                         return
+
+            # HARDENING (2026-08-19): Generische Eskalation für den Fallback.
+            # Hierher fallen alle Blockade-Gründe, für die es oben keinen
+            # Spezialpfad gibt – z.B. „not on top", wenn die Strategie gar
+            # keine Anschlussaktion liefert. Ohne Eskalation läuft dieses
+            # Event bis `max_retries` und bricht die Simulation ab.
+            # Der Roboter trägt an dieser Stelle nichts (der Pickup ist ja
+            # gerade fehlgeschlagen), der Requeue ist also zustandssicher.
+            if (
+                    task is not None
+                    and event.retry_count >= self.max_repeated_action_retries_before_requeue
+                    and not robot.is_carrying_bin()
+            ):
+                print(
+                    f"[REQUEUE][PICKUP_STUCK] t={self.state.t} robot={robot.robot_id} "
+                    f"action={action_type} bin={bin_id} reason={reason} "
+                    f"retry={event.retry_count} -> requeue task {task.request_id}"
+                )
+                self.state.traffic_manager.release_robot_reservations(robot)
+                robot.clear_task()
+                self.active_queue.add_waiting_task(task)
+                if not self._evade_robot(robot, forbidden_cells=set()):
+                    self._handle_robot_becomes_idle(robot)
+                return
 
             delayed_event = self.event_builder.delay_event(event, self.state.t)
             self.event_queue.push(delayed_event)
@@ -777,6 +1112,9 @@ class EventHandler:
                 bin_obj.mark_in_transit()
                 bin_obj.set_stack(None)
                 bin_obj.set_level(None)
+
+        # HARDENING (2026-08-19): Roboter trägt die Bin ab jetzt physisch.
+        robot.set_carried_bin(bin_id)
 
         print(
             f"[TRACE][PICKUP] t={self.state.t} robot={robot.robot_id} "
@@ -885,6 +1223,42 @@ class EventHandler:
         action_type = action.get("type")
         bin_id = action.get("bin_id")
 
+        # HARDENING (2026-08-19): Stale/Duplikat-Drop.
+        # Eine Bin, die nicht (mehr) im Transit ist, wurde bereits abgelegt –
+        # dieses Event ist ein Duplikat. Duplikate entstehen, weil mehrere
+        # Recovery-Pfade (`_handle_drop_position_mismatch`,
+        # `_redirect_blocked_drop`, Stale-Pickup) ein neues Drop-Event
+        # einplanen, ohne das alte aus der Queue entfernen zu können.
+        # Ohne diesen Guard lief der Drop ein zweites Mal durch und
+        # `_start_pickstation_service_and_release_robot` fand keinen Task mehr
+        # (`RuntimeError: Cannot start pickstation service: robot has no task`).
+        if bin_id is not None:
+            existing_bin = self.state.get_bin_by_id(bin_id)
+            carried = robot.get_carried_bin()
+
+            not_in_transit = (
+                existing_bin is not None
+                and not getattr(existing_bin, "in_transit", False)
+            )
+            # Ein Roboter kann immer nur EINE Bin tragen. Zeigt die
+            # Trage-Verknüpfung auf eine andere Bin, gehört dieses Drop-Event
+            # zu einem längst abgeschlossenen oder abgebrochenen Vorgang.
+            # (Beobachtet: zwei DROP_TARGET-Events desselben Roboters im
+            # selben Zeitschritt für verschiedene Bins.)
+            wrong_bin = carried is not None and carried != bin_id
+
+            if not_in_transit or wrong_bin:
+                print(
+                    f"[STALE][DROP] t={self.state.t} robot={robot.robot_id} "
+                    f"action={action_type} bin={bin_id} "
+                    f"(in_transit={not not_in_transit}, carried={carried}) "
+                    f"-> skip duplicate drop"
+                )
+                if action_type == "return" and robot.current_task is not None:
+                    # Bestehendes Verhalten: Task weiter auswerten.
+                    self._schedule_next_action_for_same_task_new(event)
+                return
+
         # Constraint-Prüfung für Drop
         can_drop, reason = self._can_drop(action, self.state)
 
@@ -919,6 +1293,22 @@ class EventHandler:
             )
             delayed_event = self.event_builder.delay_event(event, self.state.t)
             self.event_queue.push(delayed_event)
+            return
+
+        # HARDENING (2026-08-19): Physische Positions-Invariante für Drops.
+        # Symmetrisch zur bereits vorhandenen Prüfung in `_handle_robot_pickup`.
+        # Ohne sie kann ein Drop-Event den Bin-State verändern, während der
+        # Roboter ganz woanders steht – z.B. nach `_evade_robot` oder wenn
+        # Move-Events verzögert wurden und das zeitgesteuerte Drop-Event
+        # trotzdem fällig wird.
+        #
+        # Bewusst NACH `_can_drop`: Stack-Constraints (voll/gesperrt/stale)
+        # sollen weiterhin unabhängig von der Roboterposition ausgewertet
+        # werden – der Redirect auf einen Ausweich-Stack plant die Bewegung
+        # ohnehin neu. Der Positions-Guard schützt nur die eigentliche
+        # Zustandsänderung.
+        if not self._is_robot_at_drop_position(robot, action):
+            self._handle_drop_position_mismatch(event, robot, action)
             return
 
         bin_obj = self.state.get_bin_by_id(bin_id)
@@ -978,6 +1368,10 @@ class EventHandler:
                 f"bin={bin_id} to={action.get('to_stack')}"
             )
 
+        # HARDENING (2026-08-19): Bin ist abgelegt – Roboter trägt nichts mehr.
+        if robot.get_carried_bin() == bin_id:
+            robot.clear_carried_bin()
+
         # Task-Update
         self._update_task_after_successful_action_new(event)
 
@@ -994,6 +1388,88 @@ class EventHandler:
         # Nächste Aktion planen
         self._schedule_next_action_for_same_task_new(event)
 
+
+    def _is_robot_at_drop_position(self, robot, action):
+        """
+        Prüft, ob der Roboter physisch an der Ablageposition der Aktion steht.
+
+        Layer-Entscheidung (Hardening 2026-08-19):
+        Die Invariante gehört in den EventHandler und nicht in `_can_drop`
+        oder den ConstraintManager – beide sehen den Roboter gar nicht.
+        `_handle_robot_pickup` besitzt die spiegelbildliche Prüfung für die
+        Pickup-Hälfte der Zwei-Phasen-Aktion bereits; der Drop-Handler ist
+        damit der konsistente Ort.
+
+        Sonderfall `remove_target`: Maßgeblich ist, dass der Roboter auf einer
+        Port-Zelle steht (bei mehreren Pickstations ist nicht zwingend die
+        erste gemeint).
+        """
+        if robot is None:
+            return True
+
+        robot_position = robot.get_position()
+        if robot_position is None:
+            return True
+
+        if action.get("type") == "remove_target":
+            return self.state.find_pickstation_at(robot_position) is not None
+
+        target_position = self._get_drop_position_for_action(action)
+        if target_position is None:
+            return True
+
+        return robot_position == target_position
+
+    def _handle_drop_position_mismatch(self, event, robot, action):
+        """
+        Recovery, wenn der Roboter beim Drop nicht an der Ablageposition steht.
+
+        Eskalation (bewusst ohne Requeue): Der Roboter trägt die Bin bereits.
+        Ein Requeue würde sie im Nirgendwo zurücklassen. Die fachlich korrekte
+        Auflösung ist immer „Bewegung zum Ablageziel neu planen".
+
+        - unterhalb der Schwelle: verzögern (Roboter ist ggf. noch unterwegs)
+        - ab der Schwelle: Bewegung zum Ablageziel neu planen
+        """
+        action_type = action.get("type")
+        bin_id = action.get("bin_id")
+        robot_position = robot.get_position() if robot is not None else None
+        target_position = self._get_drop_position_for_action(action)
+
+        # Retry-Semantik: Ein Roboter, der sich seit der letzten Prüfung bewegt
+        # hat, macht echten Fortschritt Richtung Ablageziel. Das ist KEIN
+        # fehlgeschlagener Versuch – das Retry-Budget wird zurückgesetzt.
+        # Ohne diese Unterscheidung würde ein normal (aber verzögert)
+        # anfahrender Roboter nach 5 Zeitschritten unnötig seinen kompletten
+        # Pfad neu planen und dabei seinen Bewegungsfortschritt verlieren.
+        if self._note_position_progress("drop", robot, robot_position):
+            event.retry_count = 0
+
+        if event.retry_count >= self.max_drop_position_retries_before_replan:
+            self._position_wait_by_robot.pop(("drop", robot.robot_id), None)
+            print(
+                f"[REPLAN][DROP_POS] t={self.state.t} robot={robot.robot_id} "
+                f"action={action_type} bin={bin_id} "
+                f"(robot at {robot_position}, target {target_position}) "
+                f"retry={event.retry_count} -> reschedule movement to drop"
+            )
+            self._schedule_move_to_drop(
+                robot=robot,
+                action=action,
+                request=event.payload.get("request"),
+                start_time=self.state.t,
+            )
+            return
+
+        print(
+            f"[BLOCKED][DROP_POS] t={self.state.t} robot={robot.robot_id} "
+            f"action={action_type} bin={bin_id} "
+            f"(robot at {robot_position}, target {target_position}) "
+            f"- retrying ({event.retry_count + 1}/"
+            f"{self.max_drop_position_retries_before_replan})"
+        )
+        delayed_event = self.event_builder.delay_event(event, self.state.t)
+        self.event_queue.push(delayed_event)
 
     def _redirect_blocked_drop(self, event, robot, action, request, reason):
         """
@@ -1313,8 +1789,23 @@ class EventHandler:
             base_time=self.state.t,
         )
 
-    def _schedule_next_action_for_task_new(self, robot, task, next_action=None, base_time=None):
-        """Plant nächste Aktion als Zwei-Phasen-Aktion (task-basierter Helper)."""
+    def _schedule_next_action_for_task_new(
+            self,
+            robot,
+            task,
+            next_action=None,
+            base_time=None,
+            inherited_retry_count=0,
+    ):
+        """
+        Plant nächste Aktion als Zwei-Phasen-Aktion (task-basierter Helper).
+
+        Args:
+            inherited_retry_count:
+                Retry-Fortschritt, der auf das neue Pickup-Event übertragen
+                wird. Darf nur > 0 sein, wenn es sich fachlich um denselben
+                fehlgeschlagenen Versuch handelt (s. `_is_same_attempt`).
+        """
         if robot is None or task is None:
             return
 
@@ -1356,6 +1847,7 @@ class EventHandler:
                     action=next_action,
                     request=task.request,
                     time=base_time + 1,
+                    retry_count=inherited_retry_count,
                 )
                 self.event_queue.push(pickup_event)
                 return
@@ -1378,6 +1870,7 @@ class EventHandler:
                 action=next_action,
                 request=task.request,
                 time=current_time + 1,
+                retry_count=inherited_retry_count,
             )
             self.event_queue.push(pickup_event)
             return
