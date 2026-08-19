@@ -222,12 +222,12 @@ class ActionCostModel:
 
             # Fallback auf einfachen Pfad falls TrafficManager fehlschlägt
             print(f"[WARNING] TrafficManager failed for robot {robot.robot_id}, using simple path")
-        
+
         # Fallback: Einfacher Manhattan-Pfad
         path = [from_position]
         current_x, current_y = from_position
         target_x, target_y = to_position
-        
+
         # Erst horizontal bewegen
         while current_x != target_x:
             if current_x < target_x:
@@ -235,7 +235,7 @@ class ActionCostModel:
             else:
                 current_x -= 1
             path.append((current_x, current_y))
-        
+
         # Dann vertikal bewegen
         while current_y != target_y:
             if current_y < target_y:
@@ -243,9 +243,25 @@ class ActionCostModel:
             else:
                 current_y -= 1
             path.append((current_x, current_y))
-        
+
         # Startposition nicht im Pfad
-        return path[1:]
+        fallback_path = path[1:]
+
+        # FIX 3 (2026-08-19): Der Fallback muss `blocked_cells` respektieren.
+        # Vorher lieferte er auch dann einen Pfad, wenn dieser durch eine
+        # bekannt blockierte Zelle führte. Ein solcher Pfad scheitert beim
+        # physischen Move garantiert und erzeugt damit genau die Replan-
+        # Endlosschleife, die im 2-Robot-Szenario den Livelock hält.
+        if blocked_cells:
+            if any(waypoint in blocked_cells for waypoint in fallback_path):
+                print(
+                    f"[BLOCKED] Simple path for robot "
+                    f"{getattr(robot, 'robot_id', '?')} from {from_position} "
+                    f"to {to_position} would cross blocked cells - no path"
+                )
+                return []
+
+        return fallback_path
 
         return (
                 self._travel_from_robot_to(robot, from_position)

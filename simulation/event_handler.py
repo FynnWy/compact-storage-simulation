@@ -33,6 +33,11 @@ class EventHandler:
         self.max_pickup_position_retries_before_replan = 5
         self.max_pickup_position_retries_before_requeue = 15
 
+        # Drop-Blockaden: Ab dieser Retry-Zahl wird ein voller/gesperrter
+        # Ziel-Stack durch einen Ausweich-Stack ersetzt, statt endlos zu
+        # delayen (bis `max_retries` → RuntimeError).
+        self.max_drop_retries_before_redirect = 5
+
         # Move-Blockaden: frühes Replaning und Duplikat-Schutz
         self.max_move_retries_before_replan = 1
         self.max_move_retries_before_force_replan = 2
@@ -291,22 +296,29 @@ class EventHandler:
                         )
 
                         if victim_id is not None:
-                            # Deadlock erkannt – Victim muss ausweichen
+                            # Deadlock erkannt – Victim muss tatsächlich Platz
+                            # machen. FIX 3 (2026-08-19): Vorher wurde hier nur
+                            # verzögert (Opfer == eigener Robot) bzw. gar nichts
+                            # getan (`pass`, Opfer == anderer Robot). Der
+                            # Konflikt blieb damit unverändert bestehen.
                             victim = next(
                                 (r for r in self.state.robots if r.robot_id == victim_id),
                                 None
                             )
-                            if victim is not None and victim.robot_id == robot.robot_id:
-                                # Dieser Robot soll ausweichen – warte kurz und versuche erneut
-                                print(
-                                    f"[DEADLOCK] Robot {robot.robot_id} yielding to resolve deadlock"
+                            if victim is not None:
+                                self._resolve_move_deadlock(
+                                    victim=victim,
+                                    contested_cell=next_waypoint,
+                                    waiting_robot=robot,
                                 )
-                                delayed_event = self.event_builder.delay_event(event, self.state.t)
+                                # Der wartende Robot versucht es im nächsten
+                                # Zeitschritt erneut – die Zelle sollte dann
+                                # frei sein.
+                                delayed_event = self.event_builder.delay_event(
+                                    event, self.state.t
+                                )
                                 self.event_queue.push(delayed_event)
                                 return
-                            elif victim is not None:
-                                # Anderer Robot soll ausweichen – normal fortfahren
-                                pass
 
                     self._replan_path_around_obstacle(robot, next_waypoint, event)
                     return
@@ -401,6 +413,19 @@ class EventHandler:
     def _replan_path_around_obstacle(self, robot, blocked_position, event):
         """
         Berechnet einen neuen Pfad für den Roboter, der die blockierte Position umgeht.
+
+        FIX 3 (2026-08-19), zwei Korrekturen:
+
+        1. Ist die blockierte Zelle gleich dem Ziel des Roboters, ist ein
+           Umplanen konstruktiv unmöglich (A* darf das Ziel nicht betreten).
+           Statt sinnlos zu planen wird nur verzögert – die Wartekante bleibt
+           bestehen, damit die Deadlock-Erkennung greifen kann.
+        2. Es werden nur noch die Reservierungen freigegeben, NICHT die
+           Wartekante. Vorher löschte `release_robot_reservations` über
+           `clear_wait` genau die Kante, die unmittelbar davor für diesen
+           Konflikt registriert worden war → der Wait-Graph enthielt nie beide
+           Kanten eines Swap-Konflikts und `detect_cycle` schlug strukturell
+           nie an.
         """
         # Aktuelles Ziel aus dem geplanten Pfad holen
         if not robot.planned_path:
@@ -408,6 +433,14 @@ class EventHandler:
 
         final_destination = robot.planned_path[-1]
         current_position = robot.get_position()
+
+        if blocked_position == final_destination:
+            # Umplanen um das eigene Ziel herum kann per Definition nicht
+            # gelingen. Nur warten; die Auflösung übernimmt die
+            # Deadlock-Erkennung/Recovery.
+            delayed_event = self.event_builder.delay_event(event, self.state.t)
+            self.event_queue.push(delayed_event)
+            return
 
         # Blockierte Zellen für Pathfinding markieren
         blocked_cells = {blocked_position}
@@ -423,8 +456,8 @@ class EventHandler:
         )
 
         if new_path and len(new_path) > 0:
-            # Alte Reservierungen freigeben
-            self.state.traffic_manager.release_robot_reservations(robot)
+            # Alte Reservierungen freigeben – Wartekante bleibt bewusst stehen.
+            self.state.reservation_table.release_all(robot.robot_id)
 
             # Neuen Pfad reservieren und setzen
             success, _ = self.state.reservation_table.reserve_path(
@@ -435,6 +468,10 @@ class EventHandler:
 
             if success:
                 robot.set_path(new_path, robot.path_target_action)
+                # Pfad steht → Konflikt für diesen Robot aufgelöst
+                self.state.traffic_manager.deadlock_detector.clear_wait(
+                    robot.robot_id
+                )
                 # Neues Move-Event erzeugen
                 move_event = self.event_builder.build_robot_move_event(
                     robot=robot,
@@ -446,6 +483,125 @@ class EventHandler:
         # Fallback: Wenn kein Alternativpfad gefunden, weiter warten
         delayed_event = self.event_builder.delay_event(event, self.state.t)
         self.event_queue.push(delayed_event)
+
+    def _resolve_move_deadlock(self, victim, contested_cell, waiting_robot):
+        """
+        Löst einen erkannten Bewegungs-Deadlock auf, sodass echter Fortschritt
+        entsteht.
+
+        Hintergrund (FIX 3, 2026-08-19):
+        Beim Swap-Konflikt (A will auf B's Zelle, B will auf A's Zelle) kann
+        **kein** Umplanen helfen – die Zielzelle ist genau die blockierte Zelle.
+        Einer der beiden muss die Zelle physisch räumen.
+
+        Eskalationsreihenfolge:
+        1. Opfer weicht einen Schritt auf eine freie Nachbarzelle aus.
+        2. Ist keine freie Nachbarzelle vorhanden: Task des Opfers requeuen
+           (bereits vorhandenes Muster aus dem Engine-Deadlock-Resolver).
+        """
+        # Die Zelle des wartenden Roboters und die umstrittene Zelle sind für
+        # das Ausweichen tabu.
+        forbidden = {contested_cell}
+        waiting_position = waiting_robot.get_position()
+        if waiting_position is not None:
+            forbidden.add(waiting_position)
+
+        if self._evade_robot(victim, forbidden_cells=forbidden):
+            print(
+                f"[DEADLOCK] Robot {victim.robot_id} evades to break deadlock "
+                f"with robot {waiting_robot.robot_id} at t={self.state.t}"
+            )
+            return True
+
+        # Keine freie Nachbarzelle → Task zurück in die Warteschlange
+        task = victim.current_task
+        if task is not None:
+            print(
+                f"[DEADLOCK][REQUEUE] t={self.state.t} robot={victim.robot_id} "
+                f"cannot evade -> requeue task {task.request_id}"
+            )
+            self.state.traffic_manager.release_robot_reservations(victim)
+            victim.clear_task()
+            self.active_queue.add_waiting_task(task)
+            self._handle_robot_becomes_idle(victim)
+            return True
+
+        print(
+            f"[DEADLOCK] t={self.state.t} robot={victim.robot_id} cannot evade "
+            f"and has no task to requeue"
+        )
+        return False
+
+    def _evade_robot(self, robot, forbidden_cells):
+        """
+        Bewegt einen Roboter einen Schritt auf eine freie Nachbarzelle.
+
+        Der Task bleibt erhalten; nur Position und Pfad ändern sich. Das
+        anstehende Pickup-/Drop-Event des Roboters läuft danach über die
+        bestehende Positions-Prüfung in `_handle_robot_pickup` in ein Replan.
+
+        Auswahl deterministisch (sortiert), damit Szenarien reproduzierbar
+        bleiben.
+
+        Returns:
+            bool: True, wenn ein Ausweichschritt eingeplant wurde.
+        """
+        position = robot.get_position()
+        if position is None:
+            return False
+
+        x, y = position
+        candidates = sorted([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)])
+
+        occupied = {
+            other.get_position()
+            for other in self.state.robots
+            if other.robot_id != robot.robot_id
+        }
+
+        for candidate in candidates:
+            cx, cy = candidate
+
+            if not (0 <= cx < self.state.grid.width
+                    and 0 <= cy < self.state.grid.depth):
+                continue
+
+            if candidate in forbidden_cells or candidate in occupied:
+                continue
+
+            # Ports werden beim Ausweichen gemieden: Sie haben eine eigene
+            # Reservierungs-/Anwesenheitsbuchhaltung, die hier nicht
+            # mitgeführt werden soll.
+            if self.state.find_pickstation_at(candidate) is not None:
+                continue
+
+            if not self.state.reservation_table.is_free(
+                    cx, cy, self.state.t + 1, exclude_robot=robot.robot_id
+            ):
+                continue
+
+            # Alte Reservierungen des Opfers freigeben und Ausweichzelle belegen
+            self.state.reservation_table.release_all(robot.robot_id)
+            success, _ = self.state.reservation_table.reserve_path(
+                robot_id=robot.robot_id,
+                path=[candidate],
+                start_time=self.state.t + 1,
+            )
+
+            if not success:
+                continue
+
+            robot.set_path([candidate], target_action=None)
+            self.state.traffic_manager.deadlock_detector.clear_wait(robot.robot_id)
+
+            move_event = self.event_builder.build_robot_move_event(
+                robot=robot,
+                time=self.state.t + 1,
+            )
+            self.event_queue.push(move_event)
+            return True
+
+        return False
 
     def _handle_robot_pickup(self, event):
         """
@@ -627,6 +783,33 @@ class EventHandler:
             f"bin={bin_id} from={action.get('from_stack')}"
         )
 
+        # Pickup-Dauer (Arm runter, greifen, Arm hoch)
+        pickup_duration = self._calculate_pickup_duration(action, self.state)
+
+        self._schedule_move_to_drop(
+            robot=robot,
+            action=action,
+            request=request,
+            start_time=self.state.t + pickup_duration,
+        )
+
+    def _schedule_move_to_drop(self, robot, action, request, start_time):
+        """
+        Plant die Bewegung zur Ablageposition und das anschließende Drop-Event.
+
+        Extrahiert aus `_handle_robot_pickup` (Verhalten unverändert), damit die
+        Drop-Recovery (`_redirect_blocked_drop`) dieselbe Planung wiederverwenden
+        kann, wenn der Ziel-Stack gewechselt werden muss.
+
+        Args:
+            robot: Robot, der die Bin trägt
+            action: Aktions-Dict (nutzt `to_stack` für die Zielbestimmung)
+            request: Request des Tasks
+            start_time: Zeitpunkt, ab dem sich der Robot bewegen darf
+                        (bei Pickup: t + pickup_duration)
+        """
+        action_type = action.get("type")
+
         # Zielposition bestimmen
         target_position = self._get_drop_position_for_action(action)
 
@@ -646,17 +829,13 @@ class EventHandler:
             current_time=self.state.t,
         )
 
-        # Pickup-Dauer (Arm runter, greifen, Arm hoch)
-        pickup_duration = self._calculate_pickup_duration(action, self.state)
-        drop_time = self.state.t + pickup_duration
-
         if not path:
             # Roboter ist bereits am Ziel - direkt Drop
             drop_event = self.event_builder.build_robot_drop_event(
                 robot=robot,
                 action=action,
                 request=request,
-                time=drop_time,
+                time=start_time,
             )
             self.event_queue.push(drop_event)
             return
@@ -664,7 +843,7 @@ class EventHandler:
         # Pfad-Events erzeugen
         robot.set_path(path, target_action=None)
 
-        current_time = drop_time
+        current_time = start_time
         move_cost = self.event_builder.cost_model.config.move_cost_per_grid_step
 
         for _ in range(len(path)):
@@ -720,6 +899,19 @@ class EventHandler:
                 )
                 self._schedule_next_action_for_same_task_new(event)
                 return
+
+            # Recovery für dauerhaft blockierte Ablagen:
+            # Ein voller/gesperrter Ziel-Stack wird nicht von allein frei. Ohne
+            # Ausweichen läuft das Event bis `max_retries` und bricht die
+            # Simulation mit RuntimeError ab (auch in der Baseline reproduzierbar).
+            if (
+                    action_type in ("relocate", "return")
+                    and reason in ("to_stack is full", "to_stack is locked")
+                    and getattr(event, "retry_count", 0)
+                    >= self.max_drop_retries_before_redirect
+            ):
+                if self._redirect_blocked_drop(event, robot, action, request, reason):
+                    return
 
             print(
                 f"[BLOCKED][DROP] t={self.state.t} robot={robot.robot_id} "
@@ -802,6 +994,86 @@ class EventHandler:
         # Nächste Aktion planen
         self._schedule_next_action_for_same_task_new(event)
 
+
+    def _redirect_blocked_drop(self, event, robot, action, request, reason):
+        """
+        Leitet einen dauerhaft blockierten Drop auf einen Ausweich-Stack um.
+
+        Hintergrund:
+        `to_stack` wird zum Planungszeitpunkt gewählt. Bis der Robot dort
+        ankommt, kann ein anderer Robot den Stack gefüllt oder gesperrt haben.
+        Diese Zustände lösen sich nicht von allein auf; ohne Umleitung endet
+        das Drop-Event in `max_retries` → RuntimeError.
+
+        Die Auswahl des Ausweich-Stacks delegiert an die bestehende
+        Relocation-Selection (gleiche Kriterien wie bei R-D2).
+
+        Returns:
+            True, wenn ein Ausweich-Stack gefunden und die Bewegung dorthin
+            neu geplant wurde. False, wenn der Aufrufer normal weiter delayen
+            soll.
+        """
+        blocked_stack_id = action.get("to_stack")
+        blocked_stack = self._get_stack_by_id(self.state, blocked_stack_id)
+
+        if blocked_stack is None:
+            return False
+
+        try:
+            alternative = self.scheduler.strategy._select_relocation_stack(
+                state=self.state,
+                exclude_stack=blocked_stack,
+            )
+        except RuntimeError as exc:
+            print(
+                f"[BLOCKED][DROP_REDIRECT] t={self.state.t} robot={robot.robot_id} "
+                f"bin={action.get('bin_id')} no alternative stack: {exc}"
+            )
+            return False
+
+        if alternative is None or alternative.stack_id == blocked_stack_id:
+            return False
+
+        # Task-Buchhaltung konsistent halten:
+        # Blocker-Returns validieren beim Erfolg gegen temp_storage.
+        task = robot.current_task
+        if (
+                task is not None
+                and action.get("type") == "return"
+                and action.get("return_kind") == "blocker"
+        ):
+            bin_id = action.get("bin_id")
+            known = any(
+                reloc["bin_id"] == bin_id for reloc in task.temp_storage
+            )
+            if known:
+                task.update_return_stack_for_blocker(
+                    bin_id=bin_id,
+                    new_to_stack=alternative.stack_id,
+                )
+            else:
+                # Ohne temp_storage-Eintrag würde der Erfolgspfad die Umleitung
+                # nicht nachvollziehen können → lieber normal weiter delayen.
+                return False
+
+        action["to_stack"] = alternative.stack_id
+
+        print(
+            f"[REPLAN][DROP_REDIRECT] t={self.state.t} robot={robot.robot_id} "
+            f"action={action.get('type')} bin={action.get('bin_id')} "
+            f"reason={reason} {blocked_stack_id} -> {alternative.stack_id}"
+        )
+
+        # Relocate-Ziele sind auch der Buffer-Stack des Tasks; er wird erst beim
+        # erfolgreichen Drop aus der Action übernommen, daher genügt hier das
+        # Umplanen der Bewegung.
+        self._schedule_move_to_drop(
+            robot=robot,
+            action=action,
+            request=request,
+            start_time=self.state.t,
+        )
+        return True
 
     def _can_pickup(self, action, state):
         """Prüft ob Pickup möglich ist."""
@@ -1927,6 +2199,14 @@ class EventHandler:
         # Task in "wartet auf Abholung" markieren
         self.active_queue.mark_pickstation_task_completed(task)
 
+        # FIX 1 (2026-08-19): Der Pickstation-Service braucht KEINEN Roboter.
+        # Der Start des nächsten Service muss daher unmittelbar nach dem
+        # Freiwerden der Kapazität erfolgen und darf nicht hinter den unten
+        # folgenden Early Returns (v.a. "No robot available") hängen.
+        # Vorher stand dieser Aufruf am Ende der Methode und wurde unter Last
+        # praktisch nie erreicht → Pickstation blieb idle trotz voller Queue.
+        self._try_start_pickstation_service(pickstation)
+
         # ✅ Finde verfügbaren Robot zum Abholen – jetzt mit PortPrioritizer
         available_robot = self._select_robot_for_pickstation_pickup(
             pickstation=pickstation,
@@ -2029,8 +2309,8 @@ class EventHandler:
         for path_event in path_events:
             self.event_queue.push(path_event)
 
-        # Nächsten wartenden Task aus Pickstation-Queue starten
-        self._try_start_pickstation_service(pickstation)
+        # Hinweis: Der nächste Pickstation-Service wurde bereits oben gestartet,
+        # direkt nachdem `complete_service` die Kapazität freigegeben hat.
 
     def _select_robot_for_pickstation_pickup(self, pickstation, task):
         """
