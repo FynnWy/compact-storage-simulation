@@ -288,10 +288,12 @@ class ReservationTable:
         """
         Prüft ob Position innerhalb des Grids liegt.
 
-        Erlaubt auch Positionen außerhalb (z.B. Pickstations bei x=-1).
+        AUDIT-002 (Phase 2B): Reservierbar sind ausschließlich Grid-Positionen.
+        Die frühere ±5-Toleranz stammte aus der Modellgeneration mit
+        Pickstations außerhalb des Grids; laut `Pickstation_Logik.md` liegen
+        Ports vollständig im Grid.
         """
-        # Großzügige Prüfung - erlaubt Pickstations außerhalb
-        return -5 <= x < self.grid_width + 5 and -5 <= y < self.grid_depth + 5
+        return 0 <= x < self.grid_width and 0 <= y < self.grid_depth
 
     def get_reservations_for_robot(self, robot_id):
         """

@@ -30,6 +30,7 @@ from state.pickstation import Pickstation
 from traffic.reservation_table import ReservationTable
 from traffic.traffic_manager import TrafficManager
 from traffic.highway_rules import HighwayRules
+from collections import Counter
 
 
 class SimulationEngine:
@@ -384,10 +385,28 @@ class SimulationEngine:
         self._validate_stack_capacities()
 
     def _validate_bin_uniqueness(self):
+        """
+        Prüft die Massenerhaltung und Eindeutigkeit aller Bins.
+
+        AUDIT-007 (Phase 2B): Die Implementierung wurde von O(n²) auf O(n)
+        umgestellt – die Semantik ist unverändert.
+
+        Vorher dominierten zwei quadratische Operationen den Laufzeit-Pfad:
+          - `bin_obj not in bins_in_stacks` (Listen-Suche je Bin)
+          - `visible_bin_ids.count(bin_id)` (Listen-Zählung je ID)
+        Bei 4320 Bins entfielen dadurch ~97 % der gesamten Simulationszeit auf
+        diese Prüfung (346k `list.count`-Aufrufe bei 300 Events).
+
+        Ersetzt durch Mengen- bzw. Counter-Operationen. Die Prüfung läuft
+        unverändert nach jedem Event.
+        """
         bins_in_stacks = []
+        bins_in_stacks_identity = set()
 
         for stack in self.state.grid.all_stacks():
-            bins_in_stacks.extend(stack.bins)
+            for bin_obj in stack.bins:
+                bins_in_stacks.append(bin_obj)
+                bins_in_stacks_identity.add(id(bin_obj))
 
         bins_at_pickstation = [
             bin_obj
@@ -395,22 +414,21 @@ class SimulationEngine:
             if bin_obj.get_status() == "at_pickstation"
         ]
 
-        # NEU: Bins die gerade vom Roboter getragen werden (in_transit)
+        # Bins die gerade vom Roboter getragen werden (in_transit)
         bins_in_transit = [
             bin_obj
             for bin_obj in self.state.bins
             if getattr(bin_obj, "in_transit", False)
                and bin_obj.get_status() != "at_pickstation"  # Nicht doppelt zählen
-               and bin_obj not in bins_in_stacks  # Nicht doppelt zählen
+               and id(bin_obj) not in bins_in_stacks_identity  # Nicht doppelt zählen
         ]
 
         visible_bins = bins_in_stacks + bins_at_pickstation + bins_in_transit
         visible_bin_ids = [bin_obj.bin_id for bin_obj in visible_bins]
 
+        id_counts = Counter(visible_bin_ids)
         duplicate_bin_ids = [
-            bin_id
-            for bin_id in set(visible_bin_ids)
-            if visible_bin_ids.count(bin_id) > 1
+            bin_id for bin_id, count in id_counts.items() if count > 1
         ]
 
         if duplicate_bin_ids:
@@ -422,8 +440,7 @@ class SimulationEngine:
         if len(visible_bin_ids) != len(self.state.bins):
             # Debug-Info für fehlende Bins
             all_bin_ids = {b.bin_id for b in self.state.bins}
-            visible_ids = set(visible_bin_ids)
-            missing_ids = all_bin_ids - visible_ids
+            missing_ids = all_bin_ids - set(id_counts)
 
             raise RuntimeError(
                 f"Invalid state: expected {len(self.state.bins)} bins, "

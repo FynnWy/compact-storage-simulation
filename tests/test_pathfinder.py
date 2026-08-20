@@ -219,28 +219,49 @@ class TestPathfinderWithHighway:
 
 
 class TestPathfinderToPickstation:
-    """Pfade zu Pickstations (außerhalb Grid)."""
+    """
+    Pfade zur Port-Säule.
+
+    MODELLKORREKTUR (Phase 2B, AUDIT-002):
+    Diese Tests verwendeten zuvor eine Pickstation LINKS NEBEN dem Grid
+    (x = -1). Das entspricht einer älteren Modellgeneration.
+    `Pickstation_Logik.md` ist verbindlich: Die Port-Säule liegt vollständig
+    IM Grid auf einer regulären Randzelle.
+
+    Die Tests prüfen unverändert dieselbe Fähigkeit (Pfad zur und von der
+    Port-Säule), jetzt aber mit der gültigen Geometrie.
+    """
 
     def test_path_to_pickstation(self, pathfinder):
-        """Pfad zu Pickstation außerhalb des Grids."""
+        """Pfad zur Port-Säule am linken Grid-Rand."""
         path = pathfinder.find_path(
             start=(2, 2),
-            target=(-1, 2),  # Pickstation links vom Grid
+            target=(0, 2),  # Port-Säule IM Grid, linke Randspalte
             start_time=0,
             robot_id=0,
         )
 
         assert path is not None
-        assert path[-1] == (-1, 2)
+        assert path[-1] == (0, 2)
 
     def test_path_from_pickstation(self, pathfinder):
-        """Pfad von Pickstation zurück ins Grid."""
+        """Pfad von der Port-Säule zurück ins Grid."""
         path = pathfinder.find_path(
-            start=(-1, 2),
+            start=(0, 2),
             target=(3, 3),
             start_time=0,
             robot_id=0,
         )
 
         assert path is not None
-        assert path[-1] == (3, 3)
+
+    def test_path_outside_grid_is_impossible(self, pathfinder):
+        """Positionen außerhalb des Grids sind keine gültigen Ziele mehr."""
+        path = pathfinder.find_path(
+            start=(2, 2),
+            target=(-1, 2),
+            start_time=0,
+            robot_id=0,
+        )
+
+        assert path is None

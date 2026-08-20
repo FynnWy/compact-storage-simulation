@@ -184,9 +184,10 @@ class EventHandler:
                 is_pickstation_cell = True
                 break
 
-        # 2) Generischer PS-Bereich: alle Zellen links vom Grid
-        if next_waypoint[0] < 0:
-            is_pickstation_cell = True
+        # AUDIT-002 (Phase 2B): Der frühere Zweig „alle Zellen links vom Grid
+        # (x < 0) gelten als PS-Bereich" ist entfallen. Ports liegen laut
+        # `Pickstation_Logik.md` vollständig IM Grid; Positionen außerhalb sind
+        # keine gültigen Modellpositionen mehr.
 
         if is_pickstation_cell:
             # Prüfen ob dort bereits ein anderer Roboter steht
@@ -393,6 +394,13 @@ class EventHandler:
         if hasattr(self.state, "traffic_manager"):
             self.state.traffic_manager.deadlock_detector.clear_wait(robot.robot_id)
 
+        # AUDIT-005 (Phase 2B): Port-Reservierung proaktiv freigeben.
+        # Ein Roboter, der eine Station reserviert hat und danach umplant
+        # (z.B. weil ihm eine ANDERE Station zugeordnet wurde), hielt die
+        # Reservierung bis zur nächsten Kollision. Beobachtet: PS_0 51 Schritte
+        # gehalten, während der Roboter PS_1 anfuhr.
+        self._release_own_stale_port_reservations(robot)
+
         # NEU: Bounds-Check nach dem Move
         gx, gy = new_position
         gw, gd = self.state.grid.width, self.state.grid.depth
@@ -531,6 +539,35 @@ class EventHandler:
     # Ändert sich eines davon, ist es ein NEUER Versuch und das Retry-Budget
     # beginnt wieder bei 0.
     _ATTEMPT_IDENTITY_KEYS = ("type", "return_kind", "bin_id", "from_stack", "to_stack")
+
+    def _release_own_stale_port_reservations(self, robot):
+        """
+        Gibt Port-Reservierungen frei, die dieser Roboter hält, obwohl er die
+        betreffende Station weder besetzt noch noch anfährt.
+
+        Semantische Prüfung ohne Timeout: Steht der Roboter nicht auf der
+        Station und enthält sein Restpfad sie nicht, kann er die Reservierung
+        nicht mehr einlösen.
+        """
+        position = robot.get_position()
+        remaining = robot.planned_path[robot.path_index:]
+
+        for pickstation in self.state.pickstations:
+            if pickstation.reserved_for_robot != robot.robot_id:
+                continue
+            if pickstation.robot_on_port == robot.robot_id:
+                continue
+            if position == pickstation.position:
+                continue
+            if pickstation.position in remaining:
+                continue
+
+            print(
+                f"[RECOVERY][PORT] t={self.state.t} robot {robot.robot_id} "
+                f"releases {pickstation.station_id} (at {position}, "
+                f"not heading there)"
+            )
+            pickstation.release_reservation()
 
     def _release_stale_port_reservation(self, pickstation):
         """
@@ -873,68 +910,80 @@ class EventHandler:
             return
 
         # ✅ Prüfe ob Roboter physisch auf dem Stack steht
-        from_stack = self._get_stack_by_id(self.state, action.get("from_stack"))
+        # AUDIT-004 (Phase 2B): Ein Roboter kann immer nur EINE Bin tragen.
+        # Trägt er bereits eine andere Bin, darf dieser Pickup NICHT ausgeführt
+        # werden – sonst wird die Trage-Verknüpfung überschrieben und die
+        # erste Bin verwaist dauerhaft `in_transit` (Bin-Verlust).
+        # Der Fall "dieselbe Bin" ist oben bereits idempotent behandelt.
+        carried_bin_id = robot.get_carried_bin()
+        if carried_bin_id is not None and carried_bin_id != bin_id:
+            current_task = robot.current_task
+            event_request = event.payload.get("request")
+            belongs_to_current_task = (
+                current_task is not None
+                and event_request is not None
+                and current_task.request_id == getattr(event_request, "request_id", None)
+            )
 
-        if from_stack is not None:
-            stack_position = self._parse_stack_position(from_stack)
-            robot_position = robot.get_position()
-
-            if robot_position != stack_position:
-                task = robot.current_task
-
-                # Retry-Semantik (Hardening 2026-08-19): Bewegt sich der
-                # Roboter noch Richtung Stack, ist das kein fehlgeschlagener
-                # Versuch – Budget zurücksetzen. Nur echtes Feststecken soll
-                # die Eskalationsschwellen erreichen.
-                if self._note_position_progress("pickup", robot, robot_position):
-                    event.retry_count = 0
-
-                # 2. Schutzschwelle: Task hart zurück in waiting, um Livelock zu brechen
-                if (
-                    task is not None
-                    and event.retry_count >= self.max_pickup_position_retries_before_requeue
-                ):
+            # Eskalation: Der Roboter ist nachweislich mit einer anderen Bin
+            # beschäftigt. Endloses Verzögern würde in `max_retries` laufen.
+            if event.retry_count >= self.max_repeated_action_retries_before_requeue:
+                if belongs_to_current_task:
+                    # Widerspruch innerhalb desselben Tasks → neu auswerten.
                     print(
-                        f"[REQUEUE][PICKUP_POS] t={self.state.t} robot={robot.robot_id} "
-                        f"action={action_type} bin={bin_id} "
-                        f"retry={event.retry_count} -> requeue task {task.request_id}"
+                        f"[REPLAN][PICKUP_BUSY] t={self.state.t} "
+                        f"robot={robot.robot_id} bin={bin_id} carries "
+                        f"{carried_bin_id} -> re-evaluating own task"
                     )
-                    robot.clear_task()
-                    self.active_queue.add_waiting_task(task)
-                    return
-
-                # 1. Schutzschwelle: früher Bewegungspfad zum Pickup neu planen
-                if (
-                    task is not None
-                    and event.retry_count >= self.max_pickup_position_retries_before_replan
-                ):
-                    print(
-                        f"[REPLAN][PICKUP_POS] t={self.state.t} robot={robot.robot_id} "
-                        f"action={action_type} bin={bin_id} "
-                        f"(robot at {robot_position}, stack at {stack_position}) "
-                        f"retry={event.retry_count} -> reschedule movement to pickup"
-                    )
-                    # Identische Aktion → derselbe Versuch → Budget mitnehmen,
-                    # damit die Requeue-Schwelle (15) erreichbar bleibt.
                     self._schedule_next_action_for_task_new(
                         robot=robot,
-                        task=task,
-                        next_action=action,
+                        task=current_task,
+                        next_action=None,
                         base_time=self.state.t,
-                        inherited_retry_count=event.retry_count,
                     )
-                    return
-
-                # Vor Replan-Schwelle: normal verzögern
-                print(
-                    f"[BLOCKED][PICKUP] t={self.state.t} robot={robot.robot_id} "
-                    f"not at stack {action.get('from_stack')} "
-                    f"(robot at {robot_position}, stack at {stack_position}) "
-                    f"- retrying ({event.retry_count + 1}/{self.max_pickup_position_retries_before_replan})"
-                )
-                delayed_event = self.event_builder.delay_event(event, self.state.t)
-                self.event_queue.push(delayed_event)
+                else:
+                    # Das Event gehört zu einem fremden/alten Task; der Roboter
+                    # kann es nicht bedienen. Verwerfen statt endlos retrien.
+                    print(
+                        f"[STALE][PICKUP_BUSY] t={self.state.t} "
+                        f"robot={robot.robot_id} bin={bin_id} carries "
+                        f"{carried_bin_id} -> drop foreign pickup event"
+                    )
                 return
+
+            print(
+                f"[BLOCKED][PICKUP] t={self.state.t} robot={robot.robot_id} "
+                f"action={action_type} bin={bin_id} reason=robot already "
+                f"carries bin {carried_bin_id}"
+            )
+            delayed_event = self.event_builder.delay_event(event, self.state.t)
+            self.event_queue.push(delayed_event)
+            return
+
+        # AUDIT-001/004 (Phase 2B): Ein Pickup-Event darf nur ausgeführt werden,
+        # wenn es zum aktuell gehaltenen Task des Roboters gehört.
+        # Ohne diese Prüfung konnte ein altes Event eines FREMDEN Tasks den
+        # Roboter eine fremde Bin aufnehmen lassen; der spätere Drop lief dann
+        # gegen den falschen Task
+        # (`Cannot mark target returned ...: action bin X is not target bin Y`).
+        event_request = event.payload.get("request")
+        current_task = robot.current_task
+        if (
+                current_task is not None
+                and event_request is not None
+                and current_task.request_id
+                != getattr(event_request, "request_id", None)
+        ):
+            print(
+                f"[STALE][PICKUP_TASK] t={self.state.t} robot={robot.robot_id} "
+                f"action={action_type} bin={bin_id} belongs to request "
+                f"{getattr(event_request, 'request_id', None)}, robot holds task "
+                f"{current_task.request_id} -> drop foreign pickup event"
+            )
+            return
+
+        from_stack = self._get_stack_by_id(self.state, action.get("from_stack"))
+
 
         # Constraint-Prüfung für Pickup
         can_pickup, reason = self._can_pickup(action, self.state)
@@ -1084,6 +1133,77 @@ class EventHandler:
             self.event_queue.push(delayed_event)
             return
 
+
+        # AUDIT-001 (Phase 2B): Positionsprüfung für ALLE Pickups.
+        # Vorher galt sie nur für Stack-Pickups (`from_stack is not None`);
+        # Pickups an der Pickstation liefen völlig ungeprüft. Die erwartete
+        # Position kommt jetzt aus derselben Quelle, die auch die Anfahrt
+        # plant – inklusive der verbindlich zugeordneten Station (MP-8).
+        expected_pickup_position = self._get_target_position_for_action(
+            action, robot=robot
+        )
+
+        if expected_pickup_position is not None:
+            stack_position = expected_pickup_position
+            robot_position = robot.get_position()
+
+            if robot_position != stack_position:
+                task = robot.current_task
+
+                # Retry-Semantik (Hardening 2026-08-19): Bewegt sich der
+                # Roboter noch Richtung Stack, ist das kein fehlgeschlagener
+                # Versuch – Budget zurücksetzen. Nur echtes Feststecken soll
+                # die Eskalationsschwellen erreichen.
+                if self._note_position_progress("pickup", robot, robot_position):
+                    event.retry_count = 0
+
+                # 2. Schutzschwelle: Task hart zurück in waiting, um Livelock zu brechen
+                if (
+                    task is not None
+                    and event.retry_count >= self.max_pickup_position_retries_before_requeue
+                ):
+                    print(
+                        f"[REQUEUE][PICKUP_POS] t={self.state.t} robot={robot.robot_id} "
+                        f"action={action_type} bin={bin_id} "
+                        f"retry={event.retry_count} -> requeue task {task.request_id}"
+                    )
+                    robot.clear_task()
+                    self.active_queue.add_waiting_task(task)
+                    return
+
+                # 1. Schutzschwelle: früher Bewegungspfad zum Pickup neu planen
+                if (
+                    task is not None
+                    and event.retry_count >= self.max_pickup_position_retries_before_replan
+                ):
+                    print(
+                        f"[REPLAN][PICKUP_POS] t={self.state.t} robot={robot.robot_id} "
+                        f"action={action_type} bin={bin_id} "
+                        f"(robot at {robot_position}, stack at {stack_position}) "
+                        f"retry={event.retry_count} -> reschedule movement to pickup"
+                    )
+                    # Identische Aktion → derselbe Versuch → Budget mitnehmen,
+                    # damit die Requeue-Schwelle (15) erreichbar bleibt.
+                    self._schedule_next_action_for_task_new(
+                        robot=robot,
+                        task=task,
+                        next_action=action,
+                        base_time=self.state.t,
+                        inherited_retry_count=event.retry_count,
+                    )
+                    return
+
+                # Vor Replan-Schwelle: normal verzögern
+                print(
+                    f"[BLOCKED][PICKUP] t={self.state.t} robot={robot.robot_id} "
+                    f"not at stack {action.get('from_stack')} "
+                    f"(robot at {robot_position}, stack at {stack_position}) "
+                    f"- retrying ({event.retry_count + 1}/{self.max_pickup_position_retries_before_replan})"
+                )
+                delayed_event = self.event_builder.delay_event(event, self.state.t)
+                self.event_queue.push(delayed_event)
+                return
+
         # Bin aufnehmen: entweder aus Stack oder von Pickstation
         if from_stack is not None:
             bin_obj = from_stack.pop()
@@ -1115,6 +1235,33 @@ class EventHandler:
 
         # HARDENING (2026-08-19): Roboter trägt die Bin ab jetzt physisch.
         robot.set_carried_bin(bin_id)
+
+        # AUDIT-003 (Phase 2B): Blocker-Restore-Verpflichtung auflösen.
+        # Eine Restore-Verpflichtung besteht nur so lange, wie die Bin wegen
+        # DIESES Tasks im Buffer liegt. Nimmt ein anderer Task die Bin regulär
+        # heraus (weil sie sein Target ist), ist die Verpflichtung
+        # gegenstandslos – sonst bliebe sie für immer offen und der
+        # Blocker-Task könnte nie abschließen.
+        self._release_foreign_blocker_obligation(robot, bin_id)
+
+        # AUDIT-005 (Phase 2B): Genau hier – unmittelbar nach dem erfolgreichen
+        # Target-Pickup aus dem Storage – wird die Pickstation für diesen
+        # Zyklus EINMAL ausgewählt und verbindlich am Task gespeichert.
+        # Danach wird sie nicht mehr neu berechnet (MP-5).
+        if action_type == "remove_target":
+            task = robot.current_task
+            if task is not None:
+                station = self._select_pickstation_for_target(robot)
+                if station is not None:
+                    task.assigned_pickstation = station.station_id
+                    print(
+                        f"[TRACE][PS_ASSIGN] t={self.state.t} "
+                        f"robot={robot.robot_id} bin={bin_id} "
+                        f"task={task.request_id} -> {station.station_id} "
+                        f"(dist="
+                        f"{abs(robot.get_position()[0] - station.position[0]) + abs(robot.get_position()[1] - station.position[1])}"
+                        f", load={self._effective_pickstation_load(station)})"
+                    )
 
         print(
             f"[TRACE][PICKUP] t={self.state.t} robot={robot.robot_id} "
@@ -1148,8 +1295,8 @@ class EventHandler:
         """
         action_type = action.get("type")
 
-        # Zielposition bestimmen
-        target_position = self._get_drop_position_for_action(action)
+        # Zielposition bestimmen (Pickstation-Zuordnung über den Task)
+        target_position = self._get_drop_position_for_action(action, robot=robot)
 
         if target_position is None:
             raise RuntimeError(
@@ -1247,7 +1394,17 @@ class EventHandler:
             # selben Zeitschritt für verschiedene Bins.)
             wrong_bin = carried is not None and carried != bin_id
 
-            if not_in_transit or wrong_bin:
+            # AUDIT-001/004 (Phase 2B): Ein Target-Return darf nur die Ziel-Bin
+            # des aktuell gehaltenen Tasks ablegen. Passt sie nicht, gehört das
+            # Event zu einem fremden/alten Task und ist stale.
+            foreign_target = (
+                action_type == "return"
+                and action.get("return_kind") == "target"
+                and robot.current_task is not None
+                and robot.current_task.target_bin_id != bin_id
+            )
+
+            if not_in_transit or wrong_bin or foreign_target:
                 print(
                     f"[STALE][DROP] t={self.state.t} robot={robot.robot_id} "
                     f"action={action_type} bin={bin_id} "
@@ -1414,7 +1571,7 @@ class EventHandler:
         if action.get("type") == "remove_target":
             return self.state.find_pickstation_at(robot_position) is not None
 
-        target_position = self._get_drop_position_for_action(action)
+        target_position = self._get_drop_position_for_action(action, robot=robot)
         if target_position is None:
             return True
 
@@ -1434,7 +1591,7 @@ class EventHandler:
         action_type = action.get("type")
         bin_id = action.get("bin_id")
         robot_position = robot.get_position() if robot is not None else None
-        target_position = self._get_drop_position_for_action(action)
+        target_position = self._get_drop_position_for_action(action, robot=robot)
 
         # Retry-Semantik: Ein Roboter, der sich seit der letzten Prüfung bewegt
         # hat, macht echten Fortschritt Richtung Ablageziel. Das ist KEIN
@@ -1636,7 +1793,141 @@ class EventHandler:
         return False, f"unknown action type: {action_type}"
 
 
-    def _get_drop_position_for_action(self, action):
+    def _release_foreign_blocker_obligation(self, robot, bin_id):
+        """
+        Löst die Blocker-Restore-Verpflichtung eines FREMDEN Tasks auf.
+
+        Contract (Phase 2B, AUDIT-003):
+        `temp_storage` darf nur Blocker enthalten, deren Restore fachlich noch
+        offen ist. Sobald ein anderer Task die Bin regulär aus dem Buffer nimmt
+        (sie ist sein Target), ist der Restore-Schritt des Blocker-Tasks
+        gegenstandslos: Die Bin wird vom übernehmenden Task ohnehin wieder in
+        einem gültigen Stack abgelegt.
+
+        Bewusst NICHT gewählt: ein Verbot, eine fremde Target-Bin als Blocker
+        zu bewegen. Blocker ergeben sich physisch aus dem Stapelinhalt; ein
+        solches Verbot wäre nicht erfüllbar, ohne Retrievals zu blockieren.
+        """
+        if bin_id is None:
+            return
+
+        owner_task = self.active_queue.get_blocker_owner(bin_id)
+        if owner_task is None:
+            return
+
+        current_task = robot.current_task
+        if current_task is not None and owner_task is current_task:
+            # Eigener Blocker-Restore – Verpflichtung bleibt bis zum Drop.
+            return
+
+        still_open = any(
+            reloc["bin_id"] == bin_id for reloc in owner_task.temp_storage
+        )
+        if still_open:
+            owner_task.release_blocker_ownership(bin_id)
+
+        self.active_queue.release_blocker_ownership(bin_id)
+
+        print(
+            f"[OWNERSHIP][RELEASE] t={self.state.t} robot={robot.robot_id} "
+            f"bin={bin_id} taken by task "
+            f"{current_task.request_id if current_task else None}; "
+            f"blocker obligation of task {owner_task.request_id} resolved"
+        )
+
+    # ==================================================================
+    # Multi-Pickstation-Semantik (Phase 2B, AUDIT-005)
+    # ==================================================================
+
+    def _effective_pickstation_load(self, pickstation):
+        """
+        Effektive Last einer Pickstation.
+
+            effective_load = inbound + waiting_for_service + in_service
+
+        - `in_service`         : Tasks, die aktuell Servicekapazität belegen
+                                 (`pickstation.current_tasks`)
+        - `waiting_for_service`: Tasks in der Service-Queue der Station
+                                 (`pickstation.queue`)
+        - `inbound`            : Target-Bins, die dieser Station bereits
+                                 verbindlich zugeordnet wurden, sie aber noch
+                                 nicht erreicht haben.
+
+        `inbound` wird ohne Schattenbuchhaltung aus vorhandenem Zustand
+        abgeleitet: Eine Bin ist genau dann unterwegs, wenn ein Roboter einen
+        Task dieser Station trägt, dessen Target die Station noch nicht
+        erreicht hat (`target_at_pickstation is False`).
+
+        Doppelzählung ist damit ausgeschlossen: Sobald der Target-Drop erfolgt,
+        setzt `mark_waiting_at_pickstation()` das Flag und der Task wandert in
+        die Queue der Station. Tasks, deren Service bereits beendet ist
+        (`pickstation_completed`), belegen weder Queue noch Kapazität und
+        zählen daher nicht mehr als Last.
+        """
+        inbound = 0
+        for robot in self.state.robots:
+            task = robot.current_task
+            if task is None:
+                continue
+            if getattr(task, "assigned_pickstation", None) != pickstation.station_id:
+                continue
+            if getattr(task, "target_at_pickstation", False):
+                continue
+            inbound += 1
+
+        return inbound + pickstation.queue_length() + len(pickstation.current_tasks)
+
+    def _select_pickstation_for_target(self, robot):
+        """
+        Wählt die Pickstation für einen gerade aufgenommenen Target-Transport.
+
+        Hierarchische Regel:
+          1. minimale Manhattan-Distanz zur aktuellen Roboterposition
+          2. bei Distanzgleichstand: minimale `effective_load`
+          3. bei vollständigem Gleichstand: stabiler Stationsindex
+
+        Die Auslastung darf eine eindeutig nähere Station NICHT verdrängen.
+        """
+        stations = self.state.pickstations
+        if not stations:
+            return None
+
+        position = robot.get_position()
+        if position is None:
+            return stations[0]
+
+        def sort_key(indexed):
+            index, station = indexed
+            distance = (
+                abs(position[0] - station.position[0])
+                + abs(position[1] - station.position[1])
+            )
+            return (distance, self._effective_pickstation_load(station), index)
+
+        return min(enumerate(stations), key=sort_key)[1]
+
+    def _resolve_assigned_pickstation(self, robot=None, task=None):
+        """
+        Liefert die für diesen Pickstation-Zyklus verbindlich zugeordnete
+        Station.
+
+        Source of Truth ist ausschließlich `RobotTask.assigned_pickstation`.
+        Fällt keine Zuordnung auf (z.B. Alt-Pfade ohne Task), wird auf die
+        erste Station zurückgefallen – das entspricht dem Verhalten vor
+        Phase 2B und ist bei genau einer Station identisch.
+        """
+        if task is None and robot is not None:
+            task = robot.current_task
+
+        station_id = getattr(task, "assigned_pickstation", None)
+        if station_id:
+            station = self.state.get_pickstation(station_id)
+            if station is not None:
+                return station
+
+        return self.state.pickstations[0] if self.state.pickstations else None
+
+    def _get_drop_position_for_action(self, action, robot=None, task=None):
         """Bestimmt die Zielposition für den Drop."""
         action_type = action.get("type")
 
@@ -1644,9 +1935,11 @@ class EventHandler:
             return self._resolve_position(action.get("to_stack"))
 
         if action_type == "remove_target":
-            # Zur Pickstation
-            if self.state.pickstations:
-                return self.state.pickstations[0].position
+            # AUDIT-005: Ziel ist die für diesen Zyklus zugeordnete Station,
+            # nicht mehr hart `pickstations[0]`.
+            station = self._resolve_assigned_pickstation(robot=robot, task=task)
+            if station is not None:
+                return station.position
             return self.event_builder.cost_model.config.pickstation_position
 
         if action_type == "return":
@@ -1824,7 +2117,7 @@ class EventHandler:
 
         # Physische Aktionen: Zwei-Phasen-System
         if action_type in ("relocate", "remove_target", "return"):
-            pickup_position = self._get_target_position_for_action(next_action)
+            pickup_position = self._get_target_position_for_action(next_action, robot=robot, task=task)
 
             if pickup_position is None:
                 raise RuntimeError(
@@ -2069,6 +2362,25 @@ class EventHandler:
             self.state,
         )
 
+        # AUDIT-001 (Phase 2B): Positionsprüfung auch für den Executor-Pfad.
+        # Sie wird bewusst als normaler „nicht ausführbar"-Grund behandelt,
+        # damit die bereits vorhandene Eskalationsleiter (Delay → Requeue bei
+        # `max_action_retries_before_replan`) greift und kein eigener,
+        # eskalationsloser Delay-Pfad entsteht.
+        if can_execute and action.get("type") == "pickup_from_pickstation":
+            exec_robot = event.payload.get("robot")
+            exec_station = self.state.get_pickstation(action.get("pickstation_id"))
+            if (
+                    exec_robot is not None
+                    and exec_station is not None
+                    and exec_robot.get_position() != exec_station.position
+            ):
+                can_execute = False
+                reason = (
+                    f"robot at {exec_robot.get_position()}, "
+                    f"{exec_station.station_id} at {exec_station.position}"
+                )
+
         if not can_execute:
             request = event.payload.get("request")
             robot = event.payload.get("robot")
@@ -2193,6 +2505,37 @@ class EventHandler:
                 self.state.reservation_table.reserve(
                     robot.robot_id, *current_pos, self.state.t
                 )
+
+        # AUDIT-001/004 (Phase 2B): Absicherung des zweiten, noch aktiven
+        # Ablaufpfads (`pickup_from_pickstation` über den Executor).
+        # Beobachtet: Dieser Pfad feuerte als DUPLIKAT auf Bins, die bereits
+        # von der Zwei-Phasen-Pipeline abgeholt wurden (`in_transit=True`),
+        # und setzte deren Transit-Flag zurück.
+        # Hinweis: Dieser Pfad pflegt bewusst KEIN `carried_bin_id` – siehe
+        # dokumentierter Designentscheid in
+        # SIMULATION_CONSISTENCY_AUDIT_2026-08-20.md (Phase 2B, AUDIT-001).
+        if action.get("type") == "pickup_from_pickstation":
+            guard_robot = event.payload.get("robot")
+            guard_bin_id = action.get("bin_id")
+            guard_bin = self.state.get_bin_by_id(guard_bin_id)
+            station = self.state.get_pickstation(action.get("pickstation_id"))
+
+            if guard_bin is not None and getattr(guard_bin, "in_transit", False):
+                print(
+                    f"[STALE][PICKUP_PS] t={self.state.t} "
+                    f"robot={getattr(guard_robot, 'robot_id', None)} "
+                    f"bin={guard_bin_id} already in transit -> skip duplicate"
+                )
+                return
+
+            if guard_robot is not None and guard_robot.is_carrying_bin():
+                print(
+                    f"[STALE][PICKUP_PS] t={self.state.t} "
+                    f"robot={guard_robot.robot_id} bin={guard_bin_id} "
+                    f"robot already carries {guard_robot.get_carried_bin()} "
+                    f"-> skip"
+                )
+                return
 
         # in_transit setzen VOR Ausführung
         self._mark_bin_in_transit(action, state=self.state, in_transit=True)
@@ -2493,11 +2836,23 @@ class EventHandler:
                 f"Cannot start pickstation service: robot {robot.robot_id} has no position"
             )
 
-        pickstation = self.state.get_nearest_pickstation(robot_position)
+        # AUDIT-005 (Phase 2B): Die Station wurde beim Target-Pickup verbindlich
+        # gewählt. Hier wird sie NICHT neu bestimmt – sonst könnte die Bin an
+        # einer anderen Station als der geplanten eingereiht werden
+        # (Cross-Station-Verwechslung).
+        pickstation = self._resolve_assigned_pickstation(task=task)
         if pickstation is None:
             raise RuntimeError(
                 f"Cannot start pickstation service: no pickstation available "
                 f"for robot {robot.robot_id}"
+            )
+
+        # Der Roboter muss physisch an genau dieser Station stehen.
+        if robot_position != pickstation.position:
+            raise RuntimeError(
+                f"Cannot start pickstation service: robot {robot.robot_id} is at "
+                f"{robot_position}, but task {task.request_id} is assigned to "
+                f"{pickstation.station_id} at {pickstation.position}"
             )
 
         # Task zur Pickstation-Queue hinzufügen
@@ -2977,7 +3332,9 @@ class EventHandler:
             return
 
         # Pfad berechnen und Bewegungs-Events erzeugen
-        target_position = self._get_target_position_for_action(next_action)
+        target_position = self._get_target_position_for_action(
+            next_action, robot=robot, task=task
+        )
 
         if target_position is None:
             # Keine Bewegung erforderlich
@@ -3055,29 +3412,32 @@ class EventHandler:
         for path_event in path_events:
             self.event_queue.push(path_event)
     
-    def _get_target_position_for_action(self, action):
+    def _get_target_position_for_action(self, action, robot=None, task=None):
         """
         Bestimmt Zielposition für eine Aktion.
-        
+
         Args:
             action: Action-Dict
-        
+            robot/task: Kontext zur Auflösung der zugeordneten Pickstation
+
         Returns:
             (x, y) | None
         """
         action_type = action.get("type")
-        
+
         if action_type in ("relocate", "remove_target"):
             stack_id = action.get("from_stack")
             return self._resolve_position(stack_id)
-        
+
         if action_type == "return":
             # Bei Return: entweder from_stack oder Pickstation
             from_stack_id = action.get("from_stack")
             if from_stack_id is None:
-                # Von Pickstation - Roboter muss zur Pickstation
-                if self.state.pickstations:
-                    return self.state.pickstations[0].position
+                # AUDIT-005: Der Abhol-Roboter fährt zu GENAU der Station, an
+                # der die Bin tatsächlich liegt – nicht zur nächstgelegenen.
+                station = self._resolve_assigned_pickstation(robot=robot, task=task)
+                if station is not None:
+                    return station.position
                 return self.event_builder.cost_model.config.pickstation_position
             
             return self._resolve_position(from_stack_id)
@@ -3130,7 +3490,7 @@ class EventHandler:
             # NEU: Zwei-Phasen-Aktionen für physische Bewegungen
             if action_type in ("relocate", "remove_target", "return"):
                 # Pickup-Position bestimmen (= from_stack Position)
-                pickup_position = self._get_target_position_for_action(action)
+                pickup_position = self._get_target_position_for_action(action, robot=robot)
                 current_position = robot.get_position()
 
                 if current_position is None:
@@ -3237,7 +3597,7 @@ class EventHandler:
                 continue
 
             # Bewegung erforderlich - Pfad berechnen
-            target_position = self._get_target_position_for_action(action)
+            target_position = self._get_target_position_for_action(action, robot=robot)
             current_position = robot.get_position()
 
             if current_position is None:

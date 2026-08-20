@@ -391,6 +391,66 @@ abgefangen.
 
 ---
 
+## 10b. Multi-Pickstation-Semantik (Phase 2B)
+
+Neue verbindliche Architekturaussage. Details und Belege in
+`SIMULATION_CONSISTENCY_AUDIT_2026-08-20.md`, Abschnitt „Phase 2B".
+
+**Vorher:** Drei aktive Pfade verwendeten hart `state.pickstations[0]`.
+Bei `num_pickstations = 2` erhielt die zweite Station faktisch nie Arbeit.
+
+**Jetzt:** Die Pickstation wird **genau einmal je Pickstation-Zyklus**
+gewählt – unmittelbar nach dem erfolgreichen Target-Pickup aus dem Storage.
+
+```text
+remove_target-Pickup erfolgreich
+   → _select_pickstation_for_target(robot)
+        1. minimale Manhattan-Distanz zur Roboterposition
+        2. bei Gleichstand: minimale effective_load
+        3. bei vollem Gleichstand: stabiler Stationsindex
+   → task.assigned_pickstation = station.station_id      ← Source of Truth
+   → Anfahrt / Drop / Service / Abholung lesen NUR diesen Wert
+```
+
+`effective_load(PS) = inbound + waiting_for_service + in_service`, abgeleitet
+aus vorhandenem Zustand (`pickstation.queue`, `pickstation.current_tasks`,
+robotergetragene Tasks mit `target_at_pickstation is False`). Keine
+Schattenbuchhaltung; keine Doppelzählung.
+
+Die Zuordnung wird **nicht** neu berechnet – insbesondere fährt der spätere
+Abhol-Roboter zu der Station, an der die Bin liegt, auch wenn die andere
+näher wäre.
+
+### Neue physische Invarianten
+
+- Pickup nur an der tatsächlichen Quelle – Stack-Position **oder** die dem
+  Task zugeordnete Pickstation. Vorher galt die Prüfung nur für Stack-Pickups.
+- Kein Pickup, während der Roboter bereits eine andere Bin trägt.
+- Ein Pickup-Event gehört zum aktuell gehaltenen Task des Roboters.
+
+### Änderung an Abschnitt 4.1 / 4.2 (Geometrie)
+
+Die Legacy-Semantik „Ports außerhalb des Grids" ist entfallen.
+`Pathfinder._is_valid_position` und `ReservationTable._is_valid_position`
+akzeptieren nur noch Grid-Positionen; der Zweig `x < 0` in
+`_handle_robot_move` wurde entfernt. Damit gilt durchgängig
+`Pickstation_Logik.md`: Die Port-Säule liegt vollständig im Grid.
+
+### Änderung an Blocker-Ownership (Abschnitt 3)
+
+Eine Blocker-Restore-Verpflichtung besteht nur so lange, wie die Bin wegen
+dieses Tasks im Buffer liegt. Nimmt ein anderer Task die Bin regulär heraus
+(sie ist sein Target), wird die Verpflichtung aufgelöst
+(`_release_foreign_blocker_obligation`). Vorher blieb der `temp_storage`-
+Eintrag dauerhaft offen und blockierte den Task für immer.
+
+### `_validate_bin_uniqueness`
+
+Semantisch unverändert, Implementierung von O(n²) auf O(n) umgestellt
+(57× schneller bei 20×30). Die Prüfung läuft weiterhin nach jedem Event.
+
+---
+
 ## 10. Offene Fragen / Unsicherheiten
 
 - Ob P2-Hypothese 1 (fehlende Metrik-1-Erfassung im Zwei-Phasen-Pfad) die konkret beobachteten leeren Felder vollständig erklärt, sollte mit einem kurzen deterministischen Lauf (fester Seed, 1 Robot) verifiziert werden, bevor etwas geändert wird.

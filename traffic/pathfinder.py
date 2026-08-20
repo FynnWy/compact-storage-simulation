@@ -189,17 +189,16 @@ class Pathfinder:
         """
         Prüft ob Position gültig ist.
 
-        Erlaubt großzügig Positionen außerhalb des Grids für Pickstations.
+        AUDIT-002 (Phase 2B): Gültig sind ausschließlich Grid-Positionen.
+
+        Bis dahin erlaubte diese Prüfung zusätzlich `-5 <= x < 0` – ein Rest
+        einer älteren Modellgeneration mit Pickstations LINKS NEBEN dem Grid.
+        `Pickstation_Logik.md` ist eindeutig: Die Port-Säule liegt vollständig
+        IM Grid, eine externe Übergabezone existiert nicht. Der Pathfinder
+        führte Roboter sonst real durch nicht existierenden Raum
+        (beobachtet: (-1,3) → (-1,2) → (-1,1)) und verkürzte damit Wegzeiten.
         """
-        # Grid-Positionen
-        if 0 <= x < self.grid_width and 0 <= y < self.grid_depth:
-            return True
-
-        # Pickstations außerhalb (links vom Grid)
-        if -5 <= x < 0 and -5 <= y < self.grid_depth + 5:
-            return True
-
-        return False
+        return 0 <= x < self.grid_width and 0 <= y < self.grid_depth
 
     def _would_cause_head_on_collision(self, robot_id, from_pos, to_pos, t):
         """

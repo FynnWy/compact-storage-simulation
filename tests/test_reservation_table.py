@@ -251,13 +251,34 @@ class TestCleanup:
 
 
 class TestPickstationPositions:
-    """Positionen außerhalb des Grids (für Pickstations)."""
+    """
+    Grid-Grenzen.
 
-    def test_negative_x_allowed(self, reservation_table):
-        """Negative x-Werte (Pickstation links vom Grid) sind erlaubt."""
+    MODELLKORREKTUR (Phase 2B, AUDIT-002):
+    Dieser Test prüfte zuvor das Gegenteil (`test_negative_x_allowed`) und
+    kodierte damit eine ältere Modellgeneration mit Pickstations LINKS NEBEN
+    dem Grid. `Pickstation_Logik.md` ist verbindlich und sagt das Gegenteil:
+    Die Port-Säule liegt vollständig IM Grid, eine externe Übergabezone
+    existiert nicht.
+
+    Die alte Toleranz führte dazu, dass Roboter real durch nicht existierenden
+    Raum fuhren ((-1,3) → (-1,2) → (-1,1)) und Wegzeiten verkürzt wurden.
+    Der Test wurde daher NICHT abgeschwächt, sondern auf die heute gültige
+    Fachregel umgestellt.
+    """
+
+    def test_negative_x_rejected(self, reservation_table):
+        """Positionen links vom Grid sind keine gültigen Modellpositionen."""
         rt = reservation_table
 
         success = rt.reserve(robot_id=0, x=-1, y=2, t=10)
 
-        assert success is True
-        assert rt.is_free(-1, 2, 10, exclude_robot=None) is False
+        assert success is False
+        assert rt.is_free(-1, 2, 10, exclude_robot=None) is True
+
+    def test_port_cell_inside_grid_is_reservable(self, reservation_table):
+        """Die Port-Zelle liegt im Grid und ist regulär reservierbar."""
+        rt = reservation_table
+
+        assert rt.reserve(robot_id=0, x=0, y=2, t=10) is True
+        assert rt.is_free(0, 2, 10, exclude_robot=None) is False
