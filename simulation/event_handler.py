@@ -57,6 +57,44 @@ class EventHandler:
         # Move-Blockaden: frühes Replaning und Duplikat-Schutz
         self.max_move_retries_before_replan = 1
         self.max_move_retries_before_force_replan = 2
+
+        # PHASE 2D: Semantische MOVE-Stall-Erkennung.
+        # Der ereignisbezogene `retry_count` ist als Eskalationsmaß für
+        # Bewegungen strukturell unbrauchbar, weil er zurückgesetzt wird,
+        # sobald ein übergeordneter Replan (z.B. `[REPLAN][PICKUP_POS]`) neue
+        # MOVE-Events erzeugt. Gemessen: ein Roboter stand 157 ZE still und
+        # erreichte dabei nie `retry_count > 2`.
+        #
+        # Maßgeblich ist stattdessen die fachliche Identität des
+        # Bewegungsversuchs:
+        #     gleicher Robot + gleicher Task + gleiche Taskphase
+        #     + keine tatsächliche Positionsänderung
+        # Sobald sich einer dieser Punkte ändert, beginnt ein neuer Versuch.
+        #
+        # Die Schwelle ist NICHT geraten, sondern aus zwei unabhängigen
+        # Quellen abgeleitet:
+        #
+        # (a) Physikalisch: Der längste legitime Grund, an einer Zelle zu
+        #     warten, ist eine volle Gridquerung des Blockierers
+        #     (20x30 -> ~48 Manhattan-Schritte a 1 ZE) plus eine
+        #     Pickstation-Bedienung (4-6 ZE je Bin). Alles jenseits des
+        #     Doppelten davon ist kein Stau mehr.
+        #
+        # (b) Gemessen (Baseline 29c075b, 1200 ZE, LOFI/RANDOM, 8 Roboter):
+        #     Dauer der Stall-Episoden je Bewegungsidentität
+        #       Seed 99 (gesund):        p99=17   max=31
+        #       Seed 42 (gesund):        p99=22   max=48
+        #       Seed 3  (Dauerstall):    p99=29   max=404, Ausreißer ab 172
+        #       Seed 4  (Dauerstall):    p99=24   max=448, Ausreißer ab 198
+        #     Zwischen dem größten normalen Stau (107) und dem kleinsten
+        #     pathologischen Fall (172) liegt eine deutliche Lücke.
+        #
+        # 120 liegt in dieser Lücke. Eine frühere Fassung mit 25 lag mitten
+        # im Normalbereich und hat gesunde Seeds messbar verschlechtert
+        # (Seed 42: Fortschrittsereignisse 281 -> 176, Replans 705 -> 2357),
+        # weil sie normalen Stau als Stall behandelt hat.
+        self.max_move_stall_before_recovery = 120
+        self._move_stall_state = {}
         self._last_move_handled_time_by_robot = {}
 
         # Intelligente Port-Priorisierung (WP4)
@@ -171,6 +209,45 @@ class EventHandler:
             f"[DEBUG][MOVE] t={self.state.t} robot={robot.robot_id} "
             f"current_pos={robot.get_position()} next_waypoint={next_waypoint}"
         )
+
+        # PHASE 2D: Hängt der Roboter zu lange am selben Bewegungsversuch,
+        # greift eine zustandsverändernde Recovery – unabhängig davon, welcher
+        # der Blockade-Zweige unten zuschlägt.
+        #
+        # Zwei Auslöser, weil derselbe Portstau in zwei Ausprägungen auftritt:
+        #
+        #   (1) Semantischer Stall: Ein übergeordneter Replan erzeugt laufend
+        #       neue MOVE-Events und setzt `retry_count` zurück. Der Roboter
+        #       steht beliebig lange, ohne die Retry-Leiter je zu erreichen.
+        #       Beobachtet bei LOFI/RANDOM Seed 3/4 (dauerhafter Stillstand).
+        #
+        #   (2) Erschöpfte Retry-Leiter: Findet kein Replan statt, läuft
+        #       `retry_count` bis `max_retries` und `delay_event` wirft
+        #       `RuntimeError: Event exceeded max retries`. Beobachtet bei
+        #       ABC/ABC Seed 3 (harter Abbruch bei t=868).
+        #
+        # Beide Ausprägungen sind derselbe Konflikt. Das Ende der bestehenden
+        # Retry-Leiter ist deshalb kein Abbruchgrund, sondern der letzte
+        # Sprosse: erst Recovery versuchen, dann erst scheitern.
+        # `max_retries` wird über `getattr` gelesen, weil der EventBuilder in
+        # mehreren Tests durch ein schlankes Dummy ersetzt ist, das die
+        # Retry-Leiter gar nicht kennt. Fehlt das Attribut, gibt es auch keine
+        # erschöpfte Leiter – dann bleibt allein der semantische Stall übrig.
+        max_retries = getattr(self.event_builder, "max_retries", None)
+        retry_ladder_exhausted = (
+            max_retries is not None and event.retry_count >= max_retries
+        )
+        stalled_for = self._note_move_stall(robot)
+
+        if (stalled_for >= self.max_move_stall_before_recovery
+                or retry_ladder_exhausted):
+            if self._recover_stalled_move(
+                    robot, next_waypoint, event,
+                    reason="retry_ladder" if retry_ladder_exhausted
+                    else "stall",
+                    stalled_for=stalled_for,
+            ):
+                return
 
         # Kollisionen an Pickstations und im „PS-Bereich“ (x < 0) verhindern
         # Wir behandeln:
@@ -393,6 +470,10 @@ class EventHandler:
         # Bewusst semantisch statt zeitbasiert (kein TTL).
         if hasattr(self.state, "traffic_manager"):
             self.state.traffic_manager.deadlock_detector.clear_wait(robot.robot_id)
+
+        # PHASE 2D: Tatsächlicher Positionsfortschritt beendet den laufenden
+        # Bewegungsversuch – das Stall-Budget beginnt neu.
+        self._clear_move_stall(robot)
 
         # AUDIT-005 (Phase 2B): Port-Reservierung proaktiv freigeben.
         # Ein Roboter, der eine Station reserviert hat und danach umplant
@@ -645,6 +726,163 @@ class EventHandler:
             old_action.get(key) == new_action.get(key)
             for key in cls._ATTEMPT_IDENTITY_KEYS
         )
+
+    # ==================================================================
+    # MOVE-Stall-Erkennung und -Recovery (Phase 2D)
+    # ==================================================================
+
+    def _move_attempt_identity(self, robot):
+        """
+        Fachliche Identität des aktuellen Bewegungsversuchs.
+
+        Ändert sich eines dieser Merkmale, ist es ein NEUER Versuch und das
+        Stall-Budget beginnt von vorn. Bewusst OHNE den geplanten Pfad: Ein
+        Replan um dasselbe Hindernis ist kein neuer Versuch – genau dieses
+        Zurücksetzen hat die Eskalation bisher verhindert.
+        """
+        task = robot.current_task
+        return (
+            robot.robot_id,
+            getattr(task, "request_id", None),
+            getattr(task, "phase", None),
+            robot.get_position(),
+        )
+
+    def _note_move_stall(self, robot):
+        """
+        Zählt, wie lange der Roboter schon ohne Positionsfortschritt am selben
+        Bewegungsversuch hängt.
+
+        Returns:
+            int: Dauer in Zeitschritten seit Beginn dieses Versuchs.
+        """
+        identity = self._move_attempt_identity(robot)
+        state = self._move_stall_state.get(robot.robot_id)
+
+        if state is None or state[0] != identity:
+            self._move_stall_state[robot.robot_id] = (identity, self.state.t)
+            return 0
+
+        return self.state.t - state[1]
+
+    def _clear_move_stall(self, robot):
+        """Wird nach jedem tatsächlich ausgeführten Bewegungsschritt gerufen."""
+        self._move_stall_state.pop(robot.robot_id, None)
+
+    def _requeue_move_after_recovery(self, robot):
+        """
+        Stellt nach einer erfolgreichen Recovery einen frischen Bewegungsversuch
+        zu.
+
+        Bewusst ein NEUES Event statt `delay_event`:
+        Die Recovery hat den Konflikt verändert, damit beginnt fachlich ein
+        neuer Versuch. Ein fortgeschriebener `retry_count` würde denselben
+        Versuch weiterzählen und im Fall der erschöpften Retry-Leiter sofort
+        `RuntimeError: Event exceeded max retries` auslösen – also genau den
+        Abbruch, den die Recovery verhindern soll.
+        """
+        fresh = self.event_builder.build_robot_move_event(
+            robot, self.state.t + self.event_builder.delay_time
+        )
+        self.event_queue.push(fresh)
+
+    def _recover_stalled_move(self, robot, next_waypoint, event,
+                              reason="stall", stalled_for=None):
+        """
+        Zustandsverändernde Recovery für einen dauerhaft blockierten Roboter.
+
+        Nutzt ausschließlich vorhandene Mechanik (`_evade_robot`,
+        `_resolve_move_deadlock`). Es wird KEINE zweite Recovery-Architektur
+        aufgebaut.
+
+        Args:
+            reason: "stall" (semantischer Dauerstillstand) oder
+                    "retry_ladder" (bestehende Retry-Leiter erschöpft).
+            stalled_for: gemessene Standzeit in ZE, nur für die Diagnose.
+
+        Eskalationsreihenfolge:
+          1. Der Steckengebliebene weicht selbst aus.
+          2. Der Roboter, der ihn direkt blockiert, weicht aus
+             (er ist typischerweise selbst Teil des Staus).
+          3. Alle Roboter in unmittelbarer Nachbarschaft werden als Opfer
+             probiert – der Blockierte ist im Stau eingekeilt, also muss
+             jemand aus dem Ring Platz machen.
+
+        Carrying Safety: `_resolve_move_deadlock` requeued einen tragenden
+        Roboter nicht (Phase-2B-Invariante). Ausweichen selbst ist für
+        tragende Roboter sicher – der Drop-Positions-Guard verhindert
+        anschließend jede physisch unmögliche Ablage.
+
+        Returns:
+            bool: True, wenn ein zustandsverändernder Schritt erfolgt ist.
+        """
+        blocker = next(
+            (r for r in self.state.robots
+             if r.robot_id != robot.robot_id
+             and r.get_position() == next_waypoint),
+            None,
+        )
+
+        position = robot.get_position()
+        occupies_foreign_port = False
+        station_here = self.state.find_pickstation_at(position)
+        if station_here is not None:
+            assigned = getattr(robot.current_task, "assigned_pickstation", None)
+            occupies_foreign_port = (
+                assigned is not None and assigned != station_here.station_id
+            )
+
+        print(
+            f"[RECOVERY][MOVE_STALL] t={self.state.t} robot={robot.robot_id} "
+            f"@{position} grund={reason} standzeit={stalled_for} "
+            f"retry={event.retry_count} next={next_waypoint} "
+            f"blocker={blocker.robot_id if blocker else None} "
+            f"belegt_fremden_port={occupies_foreign_port}"
+        )
+
+        # 1) Der Steckengebliebene selbst
+        if self._resolve_move_deadlock(
+                victim=robot,
+                contested_cell=next_waypoint,
+                waiting_robot=blocker if blocker is not None else robot,
+        ):
+            self._clear_move_stall(robot)
+            self._requeue_move_after_recovery(robot)
+            return True
+
+        # 2) Der direkte Blockierer
+        candidates = []
+        if blocker is not None:
+            candidates.append(blocker)
+
+        # 3) Der Ring um den Blockierten
+        x, y = position
+        ring = {(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)}
+        for other in self.state.robots:
+            if other.robot_id == robot.robot_id:
+                continue
+            if other in candidates:
+                continue
+            if other.get_position() in ring:
+                candidates.append(other)
+
+        for candidate in candidates:
+            if self._resolve_move_deadlock(
+                    victim=candidate,
+                    contested_cell=candidate.get_position(),
+                    waiting_robot=robot,
+            ):
+                # Der Blockierte selbst bleibt im Stall-Zustand, bis er sich
+                # wirklich bewegt – das Budget wird nicht künstlich verlängert.
+                self._requeue_move_after_recovery(robot)
+                return True
+
+        print(
+            f"[RECOVERY][MOVE_STALL] t={self.state.t} robot={robot.robot_id} "
+            f"keine Auflösung möglich (Kandidaten: "
+            f"{[c.robot_id for c in candidates]})"
+        )
+        return False
 
     def _register_wait_and_try_resolve(self, robot, other, contested_cell, event):
         """

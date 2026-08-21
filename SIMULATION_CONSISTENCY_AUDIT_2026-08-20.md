@@ -1389,3 +1389,839 @@ die Baseline-Strategie in der finalen Konfiguration systematisch benachteiligt
 wird. Danach kann der Strategievergleich beginnen.
 
 Es wurden **keine Git-Commits oder Pushes** ausgeführt.
+
+---
+---
+
+# Phase 2C – Final-Baseline Neutrality Check
+
+Klärung zweier offener Unsicherheiten vor dem Strategy Correctness Audit.
+**Reine Analyse – es wurde kein Produktionscode geändert.**
+
+## Ausgangslage
+
+| | |
+|---|---|
+| Branch | `working_sim` |
+| Commit | `29c075b` |
+| Python | 3.10.12 |
+| Teststatus | 278 collected / 278 passed / 1 Modul nicht einsammelbar (`test_simulation_visual.py`, Flask) |
+| Referenzstrategie | `reordering_strategy = "LOFI"` |
+
+Testkonfiguration (Orientierung an `experiments/experiment_setup.md`,
+weiterhin **nicht final entschieden**):
+
+```text
+grid 20x30, max_stack_height 8, bin_num 4320 (~90 % Fuellgrad)
+num_pickstations 2, num_robots 8
+request_utilization 0.6, bin_request_prob_strategy "zipf", zipf_parameter 1.5
+scheduler FIFO, reordering LOFI, placement RANDOM
+Seeds 1, 2, 3, 4, 7, 42, 99
+```
+
+---
+
+## Ziel 1 – RANDOM-Placement in finalnaher Größe
+
+### Ergebnisse je Seed
+
+| Seed | ZE | compl | max_no_progress | replans | requeues | Deadlock det./rec. | Manhattan-FB | Relocations | PS_0 / PS_1 | Tiebreaks (M/L/ID) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 1500 | 189 | 45 | 1677 | 1 | 15 / 15 | 23 | 54 | 41 / 32 | 79 / 0 / 0 |
+| 2 | 1500 | 214 | 58 | 970 | 38 | 11 / 11 | 8 | 69 | 34 / 44 | 80 / 0 / 0 |
+| 3 | 1200 | 122 | **345** | 2043 | 4 | 34 / 34 | **564** | 37 | 24 / 22 | 47 / 0 / 0 |
+| 4 | 1200 | 116 | **203** | 2622 | 39 | 22 / 22 | **167** | 49 | 20 / 15 | 38 / 0 / 0 |
+| 7 | 1200 | 146 | 86 | 745 | 7 | 15 / 15 | 9 | 48 | 29 / 30 | 62 / 0 / 0 |
+| 42 | 1200 | 174 | 45 | 384 | 1 | 13 / 13 | 30 | 51 | 37 / 29 | 69 / 0 / 0 |
+| 99 | 1200 | 146 | 98 | 905 | 60 | 1 / 1 | 1 | 47 | 29 / 28 | 59 / 0 / 0 |
+
+### Audit-Invarianten – alle sieben Seeds
+
+```text
+invalid pickups          = 0
+invalid drops            = 0
+invalid moves            = 0
+robot collisions         = 0
+bin loss                 = 0
+bin duplicates           = 0
+ownership violations     = 0
+cross-station errors     = 0
+permanent blocked tasks  = 0   (im Sinne stale temp_storage)
+Exceptions               = 0
+sonstige Verletzungen    = keine
+```
+
+Beide Stationen arbeiten in jedem Seed. Deadlock-Erkennung und -Auflösung
+stimmen exakt überein (det. = rec.).
+
+**Nebenbefund zur Auswahlregel:** In der finalen Geometrie sind
+`load_tiebreak` und `id_tiebreak` **strukturell unerreichbar**. Die Ports
+liegen bei (0,15) und (19,15); Distanzgleichstand erfordert x = 9,5 und ist
+für ganzzahlige Koordinaten unmöglich. Die Tiebreak-Regeln sind korrekt
+implementiert (in 7×7 nachweislich aktiv, 23 Load- und 28 ID-Tiebreaks), im
+Experimentlayout aber wirkungslos. Das ist kein Fehler, sollte aber bekannt
+sein.
+
+### Zerlegung von `max_no_progress_window`
+
+Das gemeldete Maximum ist **kein** Innenfenster. Zerlegung in Startfenster
+(t=0 bis zum ersten Fortschritt), Innenfenster und Endfenster:
+
+| Seed | Startfenster | Innenfenster max | Innen median | Innen p90 | Endfenster |
+|---|---|---|---|---|---|
+| 3 (1200 ZE) | 65 | 57 | 3 | 11 | **346** |
+| 4 (1400 ZE) | 42 | 94 | 5 | 23 | **404** |
+| 1 (1000 ZE) | 44 | 33 | – | 18 | 6 |
+| 2 (1000 ZE) | 52 | 59 | – | 13 | 2 |
+| 7 (1000 ZE) | 87 | 35 | – | 15 | 2 |
+| 42 (1000 ZE) | 46 | 41 | – | 13 | 4 |
+| 99 (1000 ZE) | 99 | 35 | – | 14 | 13 |
+
+**Die laufende Simulation ist gesund:** Innenfenster median 3–5, p90 11–23,
+Maximum 94 ZE. Das entspricht der Größenordnung aus 12×18 und ist für ein zu
+90 % gefülltes Lager plausibel.
+
+Der Ausreißerwert entsteht ausschließlich im **Endfenster**.
+
+### Ursache der Ausreißer: reproduzierbarer permanenter Stillstand
+
+Seeds 3 und 4 frieren ein und laufen nicht wieder an. Beleg über verlängerte
+Gegenproben (identischer Seed, nur `simulation_time` erhöht):
+
+| Seed | 1000 ZE | 1200 ZE | 1400 ZE | 1600 ZE |
+|---|---|---|---|---|
+| 3 – Fortschrittsereignisse | 146 | 146 | – | **146** |
+| 3 – Endfenster | 146 | 346 | – | **746** |
+| 4 – Fortschrittsereignisse | 102 | 102 | **102** | – |
+| 4 – Endfenster | 4 | 203 | **404** | – |
+
+Die Anzahl der Fortschrittsereignisse bleibt konstant, das Endfenster wächst
+1:1 mit der Simulationsdauer. Der Zustand ist ab t≈854 (Seed 3) bzw. t≈997
+(Seed 4) **eingefroren**.
+
+### Mechanismus (vollständig belegt)
+
+Endzustand Seed 3 bei t=1000:
+
+```text
+PS_1@(19,15): reserved=2  on_port=2  queue=0  serving=0
+
+robot 2 @(19,15)  task 328  phase=return_target  assigned=PS_0
+     -> Ziel-Bin 23 liegt an PS_0 (0,15) – am ANDEREN Ende des Grids
+     -> Restpfad [(19,16),(18,16),(18,15),(17,15)]  (Ausfahrt blockiert)
+
+robot 0 @(19,16)  return_target  assigned=PS_1  wartet auf (19,15)
+robot 1 @(18,15)  return_target  assigned=PS_1
+robot 3 @(18,16)  return_target  assigned=PS_1
+robot 5 @(18,17)  return_target  assigned=PS_1
+robot 6 @(19,14)  return_target  assigned=PS_1  wartet auf (19,15)
+robot 7 @(17,15)  retrieve_target assigned=PS_1
+```
+
+Kette:
+
+1. Ein Roboter erhält einen Task, dessen Bin an der **anderen** Station liegt.
+   Die Zuweisung erfolgt in `Scheduler._try_schedule_waiting_task` über
+   „erster idle Roboter + erster wartender Task" – **ohne räumlichen Bezug**
+   zur Station, an der die Bin tatsächlich liegt.
+2. Dieser Roboter steht zu diesem Zeitpunkt auf der **nahen** Port-Zelle und
+   hält deren Reservierung.
+3. Er muss quer durchs Grid und blockiert dabei den Port, den er nicht braucht.
+4. Die übrigen Roboter stauen sich rund um genau diesen Port.
+5. Der Besetzer kommt nicht weg: alle Nachbarzellen sind belegt.
+   `_evade_robot` findet keine freie Zelle; ein Requeue verschiebt ihn nicht.
+6. Ergebnis: Livelock – Replans und Manhattan-Fallbacks steigen weiter
+   (Seed 3: 2043 → 4829 Replans, 564 → 1293 Fallbacks zwischen 1200 und
+   1600 ZE), fachlicher Fortschritt bleibt bei null.
+
+Seed 4 zeigt dasselbe Muster spiegelbildlich: Robot 6 steht auf PS_0(0,15),
+sein Task 165 ist PS_1 zugeordnet, sechs Roboter warten auf PS_0, PS_1 ist
+leer.
+
+### Klassifikation
+
+| Kategorie | Bewertung |
+|---|---|
+| A – normaler Effekt der Lagerverteilung / tieferen Grabens | **nein.** Innenfenster sind unauffällig (median 3–5). |
+| B – Traffic/Recovery | **teilweise.** Detection greift (34–44 Zyklen), die Auflösung kann den Konflikt aber nicht lösen. |
+| C – von einzelnen reproduzierbaren Stalls dominiert | **ja.** Das Maximum ist zu 100 % das eingefrorene Endfenster. |
+| D – neuer Correctness-Fehler | **ja.** Ein deterministischer permanenter Stillstand ist nach der Severity-Definition dieses Audits ein BLOCKER. |
+
+### Nicht placement-spezifisch — Kontrolle mit den anderen Experimentstrategien
+
+Diagnostische Kontrolle bei Seed 3, identische Konfiguration, 1000 ZE
+(**kein** Performancevergleich, nur die Frage: tritt das Problem auch dort auf):
+
+| Strategie | Ergebnis |
+|---|---|
+| LOFI / **RANDOM** (geplante Baseline) | kein Abbruch, aber **permanenter Port-Block** ab t≈854 |
+| **ABC / ABC** | **Abbruch:** `RuntimeError: Event exceeded max retries (20). action_type=None` bei t=868 |
+| **POPULARITY / POPULARITY** | **Abbruch:** `RuntimeError: Event exceeded max retries (20). action_type=None` bei t=944 |
+| LOFI / ORIGINAL (nicht Teil des Vergleichs) | **Abbruch bei Seed 4:** `Cannot select original return stack: stack S_1_10 has no free capacity` |
+
+`action_type=None` kennzeichnet ein **ROBOT_MOVE-Event**. Move-Events besitzen
+als einziger Eventtyp **keine Requeue-Eskalation** – sie verzögern bis
+`max_retries = 20` und werfen dann. Unter Portstau ist das erreichbar.
+
+Alle drei geplanten Experimentstrategien scheitern bei Seed 3 im Zeitfenster
+t ≈ 854–944, mit unterschiedlichen Symptomen und derselben Ursache.
+**Das Problem gehört der Plattform, nicht einer Strategie.**
+
+### Abhängigkeit von der Roboterzahl
+
+Seed 3, identisch, nur `num_robots` variiert:
+
+| Robots | Ergebnis |
+|---|---|
+| 4 | kein Port-Block, Endfenster 20, 87 Completions |
+| 6 | kein Port-Block, Endfenster 9, 133 Completions |
+| **8** | **permanenter Port-Block**, Endfenster 146 → 746 |
+
+Der Stillstand ist ein **Last-/Parameterproblem**: Bei acht Robotern auf zwei
+Port-Zellen reicht die vorhandene Recovery nicht mehr aus, die Ports frei zu
+halten.
+
+### Antwort auf die Leitfrage
+
+> Ist RANDOM unter finalnahen Bedingungen eine stabile, reproduzierbare und
+> für alle späteren Strategien verwendbare gemeinsame Ausgangsbedingung?
+
+**Reproduzierbar: ja.** Deterministisch, alle Invarianten sauber.
+**Stabil und gemeinsam verwendbar: nein** – in der geplanten Konfiguration
+(8 Robots, 2 Pickstations) scheitern alle drei Strategien an derselben
+Portstau-Ursache, zwei davon mit hartem Abbruch.
+
+Der höhere `max_no_progress_window` von RANDOM gegenüber ORIGINAL ist dabei
+**nicht** die eigentliche Auffälligkeit – die Innenfenster sind vergleichbar.
+
+---
+
+## Ziel 2 – `ActionCostModel._pickstation_position()`
+
+### Vollständiger Callgraph
+
+```text
+ActionCostModel._pickstation_position()
+   ^-- final_robot_position()            (action_type == "remove_target")
+   |      ^-- EventBuilder.get_final_robot_position()
+   |             ^-- KEIN Aufrufer im gesamten Repository
+   |
+   ^-- _remove_target_duration()
+   |      ^-- ActionCostModel.action_duration()
+   |             ^-- KEIN Aufrufer im gesamten Repository
+   |
+   ^-- _return_duration()
+          ^-- ActionCostModel.action_duration()   (s.o.)
+```
+
+Der tatsächlich genutzte Dauerpfad ist ein anderer:
+
+```text
+EventHandler._schedule_next_action_for_task_new / _handle_robot_action
+   -> EventBuilder.calculate_action_duration(action, state, robot)
+        -> config.action_cost_bin_manipulation        (Konstante)
+```
+
+`EventBuilder.calculate_action_duration` ruft `ActionCostModel.action_duration`
+**nicht** auf und verwendet keine Pickstation-Position.
+
+Weitere geprüfte Pfade:
+
+| Pfad | Befund |
+|---|---|
+| `ActionCostModel.calculate_path` | nutzt ausschließlich übergebene `from`/`to`; kein `_pickstation_position` |
+| `ActionCostModel.pickstation_service_duration` | nur Zeitwert aus Config + RNG; keine Position |
+| `RelocationSelection` → `cost_model.estimate_relocate_cost` | Methode **existiert nicht** auf `ActionCostModel`; der `hasattr`-Guard schlägt immer fehl → dauerhaft Distanz-Fallback über Stack-Positionen |
+| `config.pickstation_position = (-1, 0)` (Fallback in `event_handler.py`) | nur erreichbar, wenn `state.pickstations` leer ist – tritt nie ein |
+
+### Laufzeitnachweis
+
+Instrumentierung von `_pickstation_position`, `action_duration`,
+`final_robot_position`, `_relocate_duration`, `_remove_target_duration`,
+`_return_duration` über drei vollständige 500-ZE-Läufe
+(7×7, 4 Robots, 1 und 2 Pickstations, Seeds 42/3/1):
+
+```text
+Aufrufe (Methode, Aufrufer): KEINE
+```
+
+### Klassifikation
+
+| Aufrufer | Kategorie | Begründung |
+|---|---|---|
+| `final_robot_position` | **A (tot)** | einziger Aufrufer `EventBuilder.get_final_robot_position` hat selbst keine Aufrufer |
+| `_remove_target_duration`, `_return_duration`, `_relocate_duration` | **A (tot)** | nur über `action_duration` erreichbar, das niemand aufruft |
+| `estimate_relocate_cost` (Kategorie-D-Kandidat) | **A (tot)** | Methode existiert nicht; Relocation-Auswahl nutzt immer den Distanz-Fallback |
+| `config.pickstation_position` | **A (tot)** | unerreichbarer Fallback |
+
+Kein aktiver Aufrufer in Kategorie B, C, D oder E.
+
+### Entscheidung
+
+Nach der vorgegebenen Entscheidungsregel (nur A/B betroffen):
+**keine Produktionsänderung.** Die technische Schuld bleibt dokumentiert.
+
+Korrektur der Phase-2B-Einschätzung: Dort war formuliert, die Kostenschätzung
+könne „Dauerabschätzungen bei zwei Stationen leicht verzerren". Das ist
+**falsch** – der Codepfad wird überhaupt nicht ausgeführt. Die Auswirkung ist
+exakt null.
+
+Empfehlung (nicht ausgeführt, Legacy-Code soll nicht entfernt werden): Die
+toten Methoden bei Gelegenheit als solche kennzeichnen, damit sie nicht
+versehentlich reaktiviert werden.
+
+---
+
+## Ziel 3 – Reproduzierbarkeit und RNG-Kopplung (nur Analyse)
+
+### Determinismus bei identischem Seed
+
+Zwei unabhängige Engine-Instanzen, Seed 42, 12×18, 1150 Bins:
+
+| Signatur | Ergebnis |
+|---|---|
+| Lagerbelegung (Stack → Bin-IDs) | identisch |
+| Roboter-Startpositionen | identisch |
+| Request-Stream (ID, Target-Bin, Ankunft, earliest, latest) | identisch |
+| ABC-Klassenzuordnung | identisch |
+| Anzahl Requests | 239 = 239 |
+
+Verschiedene Seeds erzeugen erwartungsgemäß verschiedene Layouts und Streams.
+
+### Strategie-Neutralität des Initialzustands
+
+Seed 42, vier Strategiekombinationen:
+
+| Kombination | Layout | Roboter | Requests | ABC |
+|---|---|---|---|---|
+| LOFI / RANDOM (Referenz) | `1f2f496f…` | `eb01a074…` | `0afd238b…` | `2e6d3973…` |
+| ABC / ABC | identisch | identisch | identisch | identisch |
+| POPULARITY / POPULARITY | identisch | identisch | identisch | identisch |
+| LOFI / ORIGINAL | identisch | identisch | identisch | identisch |
+
+**Initiallager, Bin-IDs und -Positionen, Request-Stream, Request-Zeitpunkte
+und angefragte Target-Bins sind strategie-neutral.** Grund: Der gesamte
+Initialzustand und die vollständige Future-Request-Queue werden in
+`SimulationEngine._initialize_state()` erzeugt – **bevor**
+`_initialize_simulation_components()` die strategieabhängigen Selektoren
+konstruiert. Strategien können diese Größen nicht beeinflussen.
+
+### RNG-Kopplung — offener Befund für Phase 4
+
+| Komponente | RNG |
+|---|---|
+| `engine.rng` | Basis |
+| `ActionCostModel.rng` | **dasselbe Objekt** |
+| `PlacementSelector.rng` | **dasselbe Objekt** |
+| `RelocationSelection.rng` | eigener Generator |
+| `ReorderingSelector.rng` | eigener Generator |
+
+Aus diesem geteilten Generator wird **während des Laufs** gezogen:
+
+- `ActionCostModel.pickstation_service_duration()` → `rng.integers(min, max+1)`
+  bei **jedem** Service-Start
+- `PlacementSelector._select_random_stack()` → `rng.integers(len(candidates))`
+  bei **jeder** Target-Rücklagerung unter RANDOM
+- `PlacementSelector` ABC/POPULARITY → nur bei Gleichstand
+
+Da die Strategien unterschiedlich oft aus demselben Generator ziehen,
+verschiebt sich die Sequenz. Empirischer Beleg (Seed 42, 12×18, 400 ZE –
+verglichen wird die Sequenz der gezogenen Pickstation-Servicezeiten):
+
+| Strategie | Servicezeiten gezogen | RANDOM-Placement-Ziehungen | erste Werte |
+|---|---|---|---|
+| LOFI / RANDOM | 25 | 19 | 5, 6, 6, 6, 6, 5, **6**, 6, 5, 6 |
+| ABC / ABC | 21 | 0 | 5, 6, 6, 6, 6, 5, **5**, 5, 5, 4 |
+| POPULARITY / POPULARITY | 22 | 21 | 5, 6, 6, 6, 6, 5, **4**, 4, 6, 5 |
+| LOFI / ORIGINAL | 21 | 0 | 5, 6, 6, 6, 6, **6**, 5, 4, 6, 5 |
+
+Erste Abweichung gegenüber der Baseline: Position 6 (ABC, POPULARITY)
+bzw. Position 5 (ORIGINAL).
+
+**Bewertung:** Die Strategien erhalten bei identischem Seed
+**unterschiedliche Realisierungen der Pickstation-Servicezeit** – eines
+exogenen Faktors, der eigentlich für alle identisch sein sollte.
+
+Einordnung mit gebotener Vorsicht: Ein Teil der Abweichung entstünde auch bei
+getrennten Generatoren, weil die Strategien die Pickstation zu
+unterschiedlichen Zeitpunkten und in unterschiedlicher Zahl erreichen. Echte
+Common Random Numbers erfordern, dass exogene Zufallsgrößen an die Entität
+gebunden werden (z. B. Servicezeit deterministisch aus Bin-/Task-ID), nicht
+nur getrennte Streams.
+
+Wie beauftragt wurde hier **nur analysiert**; die Lösung gehört in Phase 4.
+
+---
+
+## Verbleibende Risiken
+
+1. **Portstau-Livelock bei 8 Robotern / 2 Pickstations** (neu, experiment-
+   relevant). Betrifft alle drei geplanten Strategien. Ursache: fehlende
+   räumliche Zuordnung zwischen Abhol-Roboter und Station plus fehlende
+   Eskalation für ROBOT_MOVE-Events.
+2. **ROBOT_MOVE-Events haben keine Requeue-Eskalation** – einziger Eventtyp
+   ohne Ausweg vor `max_retries`.
+3. **RNG-Kopplung** zwischen Servicezeiten und Placement-Ziehungen
+   (keine Common Random Numbers).
+4. **ORIGINAL-Placement bricht bei hohem Füllgrad hart ab**
+   (`no free capacity`). ORIGINAL ist zwar nicht Teil des Vergleichs, aber
+   der **Config-Default**.
+5. **Tiebreak-Regeln im Experimentlayout unerreichbar** (Ports bei x=0 und
+   x=19 → nie Distanzgleichstand). Korrekt implementiert, aber wirkungslos.
+6. Unverändert aus Phase 2B: Legacy-Pfad `pickup_from_pickstation`,
+   AUDIT-008, fehlender Ausweg bei komplett vollem Lager,
+   `test_simulation_visual.py` nicht ausführbar.
+
+## Urteil
+
+```text
+NOT_READY_FOR_STRATEGY_AUDIT
+```
+
+Begründung: In der geplanten finalnahen Konfiguration (20×30, 8 Roboter,
+2 Pickstations, ~90 % Füllgrad) tritt bei 2 von 7 Seeds ein
+**reproduzierbarer permanenter Stillstand** auf. Bei Seed 3 scheitern
+**alle drei geplanten Strategien** im Zeitfenster t ≈ 854–944 – zwei davon
+mit hartem `RuntimeError`. Ein Strategievergleich auf dieser Konfiguration
+würde Strategien vergleichen, die alle aus demselben plattformseitigen Grund
+abbrechen bzw. einfrieren.
+
+Das Urteil beruht **nicht** auf geringerem Durchsatz oder höheren
+No-Progress-Zeiten von RANDOM. Die laufende Simulation ist gesund
+(Innenfenster median 3–5 ZE) und sämtliche Zustandsinvarianten sind in allen
+sieben Seeds sauber.
+
+## Empfohlener nächster Schritt
+
+Zwei Optionen, bewusst als Entscheidung an die Fachseite:
+
+1. **Ursache beheben** (Phase 2D): räumliche Zuordnung beim Abholen –
+   ein Task sollte bevorzugt einem Roboter zugewiesen werden, der sich in der
+   Nähe der Station befindet, an der die Bin liegt; zusätzlich eine
+   Eskalation für ROBOT_MOVE-Events. Das ist eine Scheduling-Änderung und war
+   in diesem Auftrag ausdrücklich ausgeschlossen.
+2. **Parametrierung anpassen**: Der Stillstand tritt bei 4 und 6 Robotern
+   nicht auf. `num_robots = 8` bei zwei Port-Zellen ist die Belastungsgrenze
+   der aktuellen Recovery. Eine Reduktion oder mehr Pickstations wäre eine
+   reine Konfigurationsentscheidung ohne Codeänderung.
+
+Empfehlung: zuerst (1) klären, da (2) das Experimentdesign verändert.
+Parallel für Phase 4 vormerken: exogene Zufallsgrößen an Entitäten binden
+(Common Random Numbers).
+
+Es wurden **keine Git-Commits oder Pushes** ausgeführt und **kein
+Produktionscode geändert**.
+
+---
+
+# Phase 2D – Port-Stall and MOVE-Recovery Hardening
+
+**Datum:** 2026-08-21
+**Baseline-Commit:** `29c075b` (Ergebnis von Phase 2B)
+**Auftrag:** Ausschließlich den in Phase 2C gefundenen gemeinsamen Port-/
+MOVE-Stillstand beheben. Kein Strategievergleich. Keine Änderung an
+Relocation-/Return-Strategien, an RANDOM-Placement, Lagergröße, Anzahl
+Pickstations oder Roboterzahl.
+
+## Ausgangslage
+
+Phase 2C endete mit `NOT_READY_FOR_STRATEGY_AUDIT`. In der finalnahen
+Konfiguration (20×30, 8 Roboter, 2 Pickstations, ~90 % Füllgrad,
+`util = 0.6`, Zipf 1.5) trat bei 2 von 7 Seeds ein reproduzierbarer
+permanenter Stillstand auf, und bei Seed 3 scheiterten alle drei geplanten
+Strategien im Fenster t ≈ 854–944.
+
+Die dort formulierte Hypothese lautete, ein Roboter werde *räumlich
+ungünstig* für einen Pickstation-Return-Task ausgewählt. Diese Hypothese
+wurde in Phase 2D zuerst überprüft – und in zwei Punkten **korrigiert**.
+
+## 1. Root Cause – erneute Bestätigung vor jeder Änderung
+
+### Korrektur 1: Die auslösenden Zuweisungen waren alternativlos
+
+Timeline-Trace über `Scheduler._try_schedule_waiting_task`, protokolliert
+werden Roboterposition, Zielstation, Manhattan-Distanz und die Distanzen
+**aller** zum selben Zeitpunkt freien Roboter:
+
+```text
+Seed 3, t=795: robot=2 task=328 -> PS_0  robot@(19,15) dist=19  andere_idle(dist)=[]
+Seed 4, t=896: robot=6 task=165 -> PS_1  robot@( 0,15) dist=19  andere_idle(dist)=[]
+```
+
+In beiden Fällen existierte **kein** anderer freier Roboter. Eine räumlich
+klügere Auswahl hätte diese Zuweisungen nicht verändert. Fälle *mit*
+Alternative kommen zwar vor (z. B. t=769 `andere_idle=[(7, 0)]`), sie sind
+aber nicht die Auslöser.
+
+Quantifizierung über alle Zuweisungen wartender Pickstation-Tasks
+(1200 ZE, 8 Roboter, LOFI/RANDOM):
+
+| Seed | Zuweisungen | ohne Alternative | räumlich suboptimal | Ersparnis Median / Max |
+|------|-------------|------------------|---------------------|------------------------|
+| 1  | 65  | 60 (92 %)  | 4 (6 %)  | 19 / 19 |
+| 3  | 59  | 56 (95 %)  | 3 (5 %)  | 19 / 19 |
+| 4  | 80  | 74 (92 %)  | 4 (5 %)  | 9 / 10  |
+| 42 | 67  | 64 (96 %)  | 1 (1 %)  | 19 / 19 |
+| 99 | 117 | 101 (86 %) | 10 (9 %) | 14 / 24 |
+
+Bei acht Robotern unter dieser Last ist die Flotte in 86–96 % der
+Zuweisungszeitpunkte vollständig ausgelastet. Eine räumliche Auswahlregel
+hat dort strukturell kaum Hebel.
+
+### Korrektur 2: Eine Eskalationsleiter existiert – sie ist unerreichbar
+
+`ROBOT_MOVE` eskaliert über `event.retry_count`. Zweiganalyse für Robot 2
+ab t=854 (96 Bewegungsversuche):
+
+| Zweig | Häufigkeit |
+|-------|-----------|
+| „Zelle physisch belegt" (immer „attempt 1/2") | 54 |
+| „ReservationTable belegt" – verzögert **ohne** Wait-Edge, ohne Eskalation | 40 |
+| `[REPLAN][PICKUP_POS]` – erzeugt neue MOVE-Events | 5 |
+
+Der übergeordnete Replan setzt `retry_count` etwa alle 5 ZE auf 0 zurück.
+Gemessene Verteilung: 91 MOVE-Events bei retry=0, 91 bei retry=1, nur 5 bei
+retry=2. Robot 2 registrierte 2 Wait-Edges (andere Roboter: 40–48),
+`resolve` lieferte 204 × `False` gegen 5 × `True`, und er wurde nie
+Deadlock-Opfer. Er stand **157+ ZE** still, ohne je `retry_count > 2` zu
+erreichen.
+
+**Ursache:** `retry_count` ist ereignisbezogen und damit als Maß für die
+Dauer eines Bewegungs*versuchs* strukturell unbrauchbar.
+
+### Zwei Ausprägungen desselben Konflikts
+
+Erst die Gegenprobe mit den anderen Strategien zeigte, dass derselbe
+Konflikt zwei Ausgänge hat:
+
+| Ausprägung | Bedingung | Ergebnis | Beobachtet |
+|-----------|-----------|----------|-----------|
+| (1) Semantischer Stall | Replan setzt `retry_count` zurück | dauerhafter Stillstand | LOFI/RANDOM Seed 3, 4 |
+| (2) Erschöpfte Retry-Leiter | kein Replan, `retry_count` läuft bis `max_retries` | harter `RuntimeError` | ABC/ABC t=868, POPULARITY t=944 |
+
+Baseline `29c075b`, Seed 3, 1500 ZE:
+
+```text
+ABC/ABC:                 RuntimeError: Event exceeded max retries (20). action_type=None, time=868
+POPULARITY/POPULARITY:   RuntimeError: Event exceeded max retries (20). action_type=None, time=944
+```
+
+`action_type=None` weist das Event eindeutig als MOVE aus.
+
+### Reproduktion des Dauerstillstands (Baseline, Seed 3)
+
+Offenes No-Progress-Fenster wächst exakt 1:1 mit der Simulationszeit:
+
+```text
+t= 750  Fortschrittsereignisse=128  offenes Fenster=  8
+t=1000  Fortschrittsereignisse=146  offenes Fenster=146
+t=1250  Fortschrittsereignisse=146  offenes Fenster=396
+t=1500  Fortschrittsereignisse=146  offenes Fenster=646
+t=1750  Fortschrittsereignisse=146  offenes Fenster=896
+```
+
+## 2. Änderung
+
+Ein zweiter, **semantischer** Stall-Begriff neben `retry_count`. Die
+Identität eines Bewegungsversuchs ist:
+
+```text
+gleicher Robot + gleicher Task + gleiche Taskphase + keine Positionsänderung
+```
+
+Bewusst **ohne** den geplanten Pfad: Ein Replan um dasselbe Hindernis ist
+kein neuer Versuch – genau dieses Zurücksetzen hat die Eskalation bisher
+verhindert.
+
+Die Recovery hat zwei Auslöser, entsprechend den zwei Ausprägungen:
+
+1. Standzeit ≥ `max_move_stall_before_recovery`
+2. `event.retry_count >= event_builder.max_retries` – das Ende der
+   bestehenden Retry-Leiter ist damit kein Abbruchgrund mehr, sondern deren
+   letzte Sprosse.
+
+Die Recovery selbst nutzt **ausschließlich vorhandene Mechanik**
+(`_resolve_move_deadlock`, `_evade_robot`). Es wurde keine zweite
+Recovery- oder Retry-Architektur gebaut. Eskalationsreihenfolge:
+
+1. der Steckengebliebene weicht selbst aus,
+2. der Roboter, der ihn direkt blockiert,
+3. alle Roboter im unmittelbaren Ring um ihn.
+
+Nach erfolgreicher Recovery wird ein **frisches** MOVE-Event zugestellt
+(`retry_count = 0`) statt `delay_event` zu verwenden – sonst liefe die
+Recovery bei erschöpfter Leiter unmittelbar in genau den `RuntimeError`,
+den sie verhindern soll.
+
+### Die Schwelle ist gemessen, nicht geraten
+
+Ein erster Entwurf mit `max_move_stall_before_recovery = 25` löste die
+Stall-Seeds, verschlechterte aber **gesunde** Läufe messbar:
+
+| Seed 42, 1500 ZE | Baseline | Schwelle 25 |
+|------------------|----------|-------------|
+| Fortschrittsereignisse | 281 | 176 |
+| `requests_completed` | 224 | 202 |
+| max. Innenfenster | 41 | 117 |
+| Replans | 705 | 2357 |
+| Manhattan-Fallbacks | 38 | 77 |
+| Recovery-Aktivierungen | – | 72 |
+
+Ursache: 25 ZE liegen mitten im normalen Staubereich. Gemessene Verteilung
+der Stall-Episoden auf der Baseline (1200 ZE, 8 Roboter, LOFI/RANDOM):
+
+| Seed | Episoden | p50 | p90 | p99 | Max | Ausreißer ab |
+|------|---------|-----|-----|-----|-----|--------------|
+| 99 (gesund)      | 4635 | 1 | 3 | 17 | 31  | – |
+| 42 (gesund)      | 4319 | 1 | 4 | 22 | 48  | – |
+| 3  (Dauerstall)  | 3104 | 1 | 6 | 29 | 404 | 172 |
+| 4  (Dauerstall)  | 2793 | 1 | 9 | 24 | 448 | 198 |
+
+Zwischen dem größten normalen Stau (107 ZE) und dem kleinsten
+pathologischen Fall (172 ZE) liegt eine deutliche Lücke. Physikalisch
+gestützt: der längste legitime Wartegrund ist eine volle Gridquerung des
+Blockierers (20×30 → ~48 Schritte à 1 ZE) plus eine Pickstation-Bedienung
+(4–6 ZE je Bin).
+
+**Gewählt: 120 ZE** – in der Lücke und rund 2,5× über der längsten
+legitimen Querung.
+
+### Teil A wurde bewusst NICHT implementiert
+
+Der Auftrag sah zwei Teile vor und verlangte ausdrücklich, nicht beide zu
+bauen, wenn einer die Root Cause nachweislich vollständig beseitigt.
+
+Belege gegen die Notwendigkeit von Teil A:
+
+* Beide auslösenden Zuweisungen waren alternativlos (Korrektur 1).
+* 86–96 % aller Zuweisungen haben überhaupt keine Alternative.
+* Teil B allein beseitigt beide Ausprägungen über 3000 ZE hinweg, auf allen
+  sieben Seeds, bei allen drei Strategien und bei 4, 6 und 8 Robotern.
+
+Eine räumliche Auswahlregel bleibt als eigenständiges Scheduling-Thema
+denkbar, gehört aber nicht in diesen Fix und wurde daher nicht gebaut.
+
+## 3. Geänderte Dateien
+
+| Datei | Art der Änderung |
+|-------|------------------|
+| `simulation/event_handler.py` | Stall-Erkennung (`_move_attempt_identity`, `_note_move_stall`, `_clear_move_stall`), Recovery (`_recover_stalled_move`, `_requeue_move_after_recovery`), zwei Auslöser in `_handle_robot_move` |
+| `tests/test_move_stall_recovery.py` | neu, 13 Tests |
+
+Keine weitere Produktionsdatei wurde angefasst. `ActionCostModel` unverändert.
+Kein Legacy-Code entfernt. Der RNG-Befund aus Phase 2C wurde **nicht**
+angefasst (gehört in Phase 4).
+
+## 4. Deterministischer Minimaltest
+
+`tests/test_move_stall_recovery.py`, 13 Tests. Der Stau wird von Hand
+hergestellt: der Blockierte will auf die Zelle des Blockierers, und diese
+Zelle ist zugleich sein Ziel – ein Konflikt, den Umplanen grundsätzlich
+nicht lösen kann.
+
+| Test | Prüft |
+|------|-------|
+| `test_jam_persists_without_recovery` | Kontrollgruppe: mit deaktivierter Recovery steht der Roboter 400 ZE unverändert |
+| `test_recovery_does_not_fire_during_normal_congestion` | Schwelle liegt oberhalb des gemessenen Normalbereichs |
+| `test_recovery_fires_and_resolves_the_jam` | erkannt → Recovery → mindestens ein Roboter verlässt den Konflikt |
+| `test_recovery_restarts_its_budget_after_real_movement` | echte Bewegung beendet den Versuch |
+| `test_replan_does_not_reset_the_stall_budget` | Regression gegen die eigentliche Root Cause |
+| `test_new_task_starts_a_new_attempt` | neuer Task = neuer Versuch |
+| `test_phase_change_starts_a_new_attempt` | Phasenwechsel = neuer Versuch |
+| `test_exhausted_retry_ladder_triggers_recovery_instead_of_abort` | zweiter Auslöser greift, Roboter bewegt sich anschließend wirklich |
+| `test_move_at_exhausted_retry_ladder_does_not_raise` | kein harter Abbruch mehr |
+| `test_recovery_pushes_a_fresh_move_attempt` | Folge-Event trägt `retry_count == 0` |
+| `test_carrying_robot_keeps_bin_and_task_through_recovery` | Carrying Safety: Bin und Task bleiben beisammen |
+| `test_carrying_robot_is_never_requeued_by_recovery` | kein Requeue eines tragenden Roboters |
+| `test_full_simulation_recovers_and_keeps_progressing` | Ende-zu-Ende inkl. Bin-Erhaltung |
+
+**Gegenprobe gegen Baseline `29c075b`: 10 der 13 Tests schlagen dort fehl.**
+Die drei bestehenden sind die Kontrollgruppe, der bereits in Phase 2B
+eingeführte Carrying-Requeue-Guard und der Ende-zu-Ende-Test.
+
+## 5. Systemregression
+
+### Problemseeds, lange Läufe
+
+Seed 3, 8 Roboter, LOFI/RANDOM – Fortschritt nach dem alten Stallzeitpunkt:
+
+```text
+             Baseline 29c075b        Phase 2D
+t= 750    prog=128  Fenster=  8    prog=128  Fenster= 8   (identisch)
+t=1000    prog=146  Fenster=146    prog=146  Fenster=146  (Stall bildet sich, Recovery greift)
+t=1250    prog=146  Fenster=396    prog=194  Fenster=  0
+t=1500    prog=146  Fenster=646    prog=236  Fenster=  4
+t=1750    prog=146  Fenster=896    prog=263  Fenster=  2
+t=2000    –                        prog=314  Fenster=  3
+t=2250    –                        prog=354  Fenster=  3
+t=2500    –                        prog=394  Fenster=  3
+t=2750    –                        prog=443  Fenster=  0
+```
+
+Der Verlauf bis t=750 ist identisch – der Fix verändert nichts, solange
+kein Stall vorliegt. Nur **2 Recovery-Aktivierungen** in 2750 ZE; der
+Konflikt entsteht danach nicht erneut.
+
+Seed 4, 3000 ZE vollständig durchgelaufen:
+
+| | Baseline (1500 ZE) | Phase 2D (3000 ZE) |
+|---|---|---|
+| Fortschrittsereignisse | 102 | 470 |
+| davon nach t=850 | 4 | 372 |
+| terminales Fenster | 504 | 1 |
+| Recovery-Aktivierungen | – | 7 (alle ungelöst: 0) |
+| `requests_completed` | 116 | 387 |
+| physikalisch ungültige Aktionen | 0 | 0 |
+
+### Plattformregression – alle sieben Seeds, 1500 ZE, 8 Roboter, LOFI/RANDOM
+
+| Seed | prog | compl | Startfenster | max. Innenfenster | terminal | Recovery (ungelöst) | invalid | Bins verloren | Verletzungen |
+|------|------|-------|--------------|-------------------|----------|---------------------|---------|---------------|--------------|
+| 1  | 243 | 193 | 44 | 40  | 4  | 8 (0) | 0 | 0 | keine |
+| 2  | 248 | 214 | 52 | 59  | 3  | 0 (0) | 0 | 0 | keine |
+| 3  | 236 | 196 | 65 | 162 | 4  | 2 (0) | 0 | 0 | keine |
+| 4  | 180 | 175 | 42 | 94  | 17 | 7 (0) | 0 | 0 | keine |
+| 7  | 264 | 191 | 87 | 35  | 3  | 0 (0) | 0 | 0 | keine |
+| 42 | 281 | 224 | 46 | 41  | 18 | 0 (0) | 0 | 0 | keine |
+| 99 | 231 | 185 | 99 | 35  | 3  | 0 (0) | 0 | 0 | keine |
+
+Kein Lauf bricht ab. Kein terminales Fenster wächst mit der Simulationszeit.
+`invalid` steht für ungültige Pickups / Drops / Moves / Positionskollisionen.
+
+Auf den Seeds 2, 7, 42 und 99 feuert die Recovery **kein einziges Mal**;
+diese Läufe sind gegenüber der Baseline unverändert – nachgewiesen durch
+identische Kennzahlen (Seed 42: prog 281, compl 224, replan 705, dl 15,
+manh 38 in beiden Bäumen).
+
+### Gegenprobe mit den drei geplanten Strategien, Seed 3, 1500 ZE
+
+| Strategie | Baseline `29c075b` | Phase 2D |
+|-----------|--------------------|----------|
+| LOFI/RANDOM | prog 146, dauerhafter Stillstand ab t=854 | prog 236, terminal 4, Recovery 2 |
+| ABC/ABC | prog 123, **RuntimeError t=868** | prog 252, terminal 2, Recovery 5 |
+| POPULARITY/POPULARITY | prog 146, **RuntimeError t=944** | prog 265, terminal 11, Recovery 1 |
+
+Alle drei laufen vollständig durch, ohne Invariantenverletzung und ohne
+physikalisch ungültige Aktion. Dies ist **kein** Strategievergleich – die
+Zahlen belegen nur, dass keine Strategie mehr plattformseitig scheitert.
+
+### Roboterzahl-Gegenprobe, 1500 ZE
+
+| Roboter | Seed | prog (Baseline → 2D) | compl (Baseline → 2D) | Recovery-Aktivierungen |
+|---------|------|----------------------|-----------------------|------------------------|
+| 4 | 3  | 166 → 166 | 152 → 152 | 0 |
+| 4 | 42 | 186 → 186 | 175 → 175 | 0 |
+| 6 | 3  | 261 → 261 | 220 → 220 | 0 |
+| 6 | 42 | 231 → 242 | 231 → 242 | 1 |
+| 8 | 3  | 146 (Stall) → 236 | – → 196 | 2 |
+| 8 | 42 | 281 → 281 | 224 → 224 | 0 |
+
+Bereits funktionierende niedrigere Lasten bleiben unverändert. Die
+Aktivierungshäufigkeit steigt erwartungsgemäß mit der Roboterzahl.
+
+## 6. Testlauf
+
+```text
+python3 -m pytest tests/ -q --ignore=tests/test_simulation_visual.py
+291 passed
+```
+
+Vor Phase 2D: 278 Tests. Neu: 13 in `tests/test_move_stall_recovery.py`.
+Kein bestehender Test wurde verändert.
+
+`tests/test_simulation_visual.py` konnte **nicht** ausgeführt werden
+(`ModuleNotFoundError: No module named 'flask'`) und ist in der Zählung
+nicht enthalten – unverändert gegenüber allen vorherigen Phasen.
+
+Eine Anpassung war produktionsseitig nötig, damit bestehende Tests
+unverändert bleiben konnten: `max_retries` wird über `getattr` gelesen,
+weil `tests/test_event_handler_smart_skip.py` den EventBuilder durch ein
+schlankes Dummy ohne dieses Attribut ersetzt. Fehlt das Attribut, gibt es
+keine erschöpfte Leiter, und nur der semantische Stall bleibt als Auslöser.
+
+## 7. Offene Punkte und Risiken
+
+1. **Seed 3 behält ein Innenfenster von 162 ZE.** Der Stillstand ist
+   begrenzt statt dauerhaft, aber die Auflösung kostet rund 160 ZE. Das ist
+   der bewusste Preis der konservativen Schwelle: Ein früheres Eingreifen
+   war messbar schädlich (siehe Tabelle oben). Wer diese Latenz senken will,
+   müsste die Blockade früher *unterscheidbar* machen, statt sie früher zu
+   behandeln – etwa indem der Zweig „ReservationTable belegt" eine Wait-Edge
+   registriert. Das ist eine eigenständige Änderung an der
+   Deadlock-Erkennung und war nicht Teil dieses Auftrags.
+
+2. **Die Schwelle 120 ist aus 4 Seeds abgeleitet.** Die Lücke zwischen 107
+   und 172 ZE ist deutlich, aber nicht bewiesen allgemeingültig. Bei
+   deutlich anderer Lagergröße oder Roboterzahl sollte die
+   Episodenverteilung neu gemessen werden. Die Größe ist ein Attribut des
+   EventHandlers und ohne Codeänderung überschreibbar.
+
+3. **Recovery-Aktivierungen sind eine Kennzahl, kein Nebeneffekt.** Sie
+   sollten in Experimentläufen mitprotokolliert werden. Ein Anstieg zeigt
+   an, dass die Konfiguration an die Belastungsgrenze der Verkehrsführung
+   kommt. In den obigen Läufen liegt `move_recovery_unresolved` durchgängig
+   bei 0 – jede erkannte Blockade wurde auch aufgelöst.
+
+4. **Der RNG-Befund aus Phase 2C bleibt offen** (`engine.rng` geteilt
+   zwischen `ActionCostModel` und `PlacementSelector`). Auftragsgemäß nicht
+   angefasst; gehört in Phase 4 (Common Random Numbers).
+
+5. **Git-Rest der ReservationTable-Umbenennung nicht bereinigt.** Siehe
+   unten.
+
+## 8. Nicht erledigt: Git-Rest der ReservationTable-Umbenennung
+
+`tests/reservation_table.py` ist auf der Platte gelöscht, aber weiterhin im
+Index von `29c075b` geführt. Der Schritt konnte hier **nicht** ausgeführt
+werden: im Arbeitsverzeichnis liegt ein verwaistes `.git/index.lock`, und
+die Sandbox darf innerhalb von `.git/` keine Dateien löschen.
+
+Zu erledigen (rein indexbezogen, keine Inhaltsänderung):
+
+```bash
+rm -f .git/index.lock
+git rm --cached tests/reservation_table.py
+```
+
+Die Datei ist eine ältere Fassung von `tests/test_reservation_table.py` aus
+der Zeit vor der Modellkorrektur AUDIT-002 (Phase 2B) und enthält den
+inzwischen ungültigen Test `test_negative_x_allowed`.
+
+## Readiness Gate
+
+| Kriterium | Ergebnis |
+|-----------|----------|
+| Kein permanenter Stillstand in der finalnahen Konfiguration | erfüllt (7/7 Seeds, bis 3000 ZE) |
+| Kein Abbruch bei einer der drei geplanten Strategien | erfüllt (Seed 3, alle drei) |
+| Fortschrittsereignisse steigen nach dem alten Stallzeitpunkt weiter | erfüllt (Seed 4: 4 → 372 nach t=850) |
+| Kein terminales Fenster wächst 1:1 mit der Simulationszeit | erfüllt (max. 18 ZE) |
+| Recovery führt zu echtem Fortschritt, nicht nur zu Zustandsänderung | erfüllt (`unresolved = 0` in allen Läufen) |
+| Carrying Safety | erfüllt (Bin nie verloren, nie vom Task getrennt, 0 ungültige Drops) |
+| Physikalische Invarianten | erfüllt (0 ungültige Pickups/Drops/Moves, 0 Kollisionen, 0 verlorene Bins) |
+| Keine Verschlechterung bereits funktionierender Lasten | erfüllt (4 und 6 Roboter unverändert; 4 von 7 Seeds bei 8 Robotern unverändert) |
+| Bestehende Tests unverändert und grün | erfüllt (291 passed) |
+
+## Urteil
+
+```text
+READY_FOR_STRATEGY_AUDIT
+```
+
+Begründung: Der plattformseitige Grund, aus dem in Phase 2C alle drei
+geplanten Strategien bei Seed 3 scheiterten, ist beseitigt und durch
+deterministische Tests abgesichert. Beide Ausprägungen – dauerhafter
+Stillstand und harter `RuntimeError` – sind auf dieselbe Ursache
+zurückgeführt und mit einer einzigen Änderung behoben. Kein Lauf bricht
+mehr ab, kein Lauf friert ein, und in keinem Lauf tritt eine
+Invariantenverletzung oder eine physikalisch unmögliche Aktion auf.
+
+Das Urteil stützt sich **nicht** auf gestiegenen Durchsatz. Auf vier der
+sieben Seeds ist das Verhalten mit der Baseline identisch, weil die
+Recovery dort nie auslöst – das ist ausdrücklich das gewünschte Ergebnis.
+
+Offen bleiben die unter Punkt 7 genannten Risiken; keines davon verhindert
+einen Strategievergleich, aber Punkt 3 (Recovery-Aktivierungen
+mitprotokollieren) sollte in das Experimentdesign aufgenommen werden.
+
+Es wurden **keine Git-Commits oder Pushes** ausgeführt. Phase 3 wurde nicht
+begonnen.

@@ -451,8 +451,85 @@ Semantisch unverändert, Implementierung von O(n²) auf O(n) umgestellt
 
 ---
 
+## 10c. MOVE-Stall-Recovery (Phase 2D)
+
+Ergänzt Abschnitt 4 (Movement-Pipeline) und Abschnitt 5 (Recovery-Inventar).
+
+### Warum es sie gibt
+
+`ROBOT_MOVE` eskalierte bis dahin ausschließlich über `event.retry_count`.
+Dieses Maß ist **ereignisbezogen** und wird zurückgesetzt, sobald ein
+übergeordneter Replan (z. B. `[REPLAN][PICKUP_POS]`) neue MOVE-Events
+erzeugt. Ein Roboter konnte dadurch beliebig lange stillstehen, ohne die
+Eskalationsschwelle je zu erreichen (gemessen: 157+ ZE bei nie mehr als
+`retry_count = 2`).
+
+Fand umgekehrt kein Replan statt, lief `retry_count` bis `max_retries` und
+`delay_event` brach die Simulation mit `RuntimeError` ab. Beide Ausgänge
+gehen auf denselben Konflikt zurück.
+
+### Der zweite, semantische Stall-Begriff
+
+```text
+Identität eines Bewegungsversuchs =
+    (robot_id, task.request_id, task.phase, robot.position)
+```
+
+Bewusst **ohne** den geplanten Pfad — ein Replan um dasselbe Hindernis ist
+kein neuer Versuch.
+
+| Baustein | Ort | Aufgabe |
+|----------|-----|---------|
+| `_move_attempt_identity` | `EventHandler` | fachliche Identität des Versuchs |
+| `_note_move_stall` | `EventHandler` | Standzeit in ZE seit Versuchsbeginn |
+| `_clear_move_stall` | `EventHandler` | wird nach jedem echten Schritt gerufen |
+| `_recover_stalled_move` | `EventHandler` | Eskalation über vorhandene Mechanik |
+| `_requeue_move_after_recovery` | `EventHandler` | frisches MOVE-Event, `retry_count = 0` |
+
+### Zwei Auslöser
+
+1. Standzeit ≥ `max_move_stall_before_recovery` (**120 ZE**, aus gemessenen
+   Episodenverteilungen abgeleitet — Details im Audit-Dokument, Phase 2D)
+2. `event.retry_count >= event_builder.max_retries` — das Ende der
+   bestehenden Retry-Leiter ist deren letzte Sprosse, kein Abbruchgrund
+
+### Eskalationsreihenfolge
+
+1. Der Steckengebliebene weicht selbst aus.
+2. Der Roboter, der ihn direkt blockiert.
+3. Alle Roboter im unmittelbaren Ring um ihn.
+
+Alle drei Stufen laufen über das vorhandene `_resolve_move_deadlock` /
+`_evade_robot`. Es gibt **keine** zweite Recovery- oder Retry-Architektur.
+
+`_evade_robot` bewegt nicht sofort, sondern plant den Ausweichschritt für
+`t+1` ein — beim Lesen von Logs und Tests wichtig.
+
+### Carrying Safety
+
+Ein tragender Roboter wird nie requeued (Guard aus Phase 2B in
+`_resolve_move_deadlock`). Ausweichen selbst ist sicher; der
+Drop-Positions-Guard verhindert anschließend jede physisch unmögliche
+Ablage.
+
+### Diagnose
+
+`[RECOVERY][MOVE_STALL]` mit `grund=stall` bzw. `grund=retry_ladder`.
+Die Zahl der Aktivierungen ist eine sinnvolle Experimentkennzahl: Ein
+Anstieg zeigt an, dass die Konfiguration an die Belastungsgrenze der
+Verkehrsführung kommt. `keine Auflösung möglich` sollte nie auftreten.
+
+### Tests
+
+`tests/test_move_stall_recovery.py` (13 Tests). Gegen Baseline `29c075b`
+schlagen 10 davon fehl.
+
+---
+
 ## 10. Offene Fragen / Unsicherheiten
 
 - Ob P2-Hypothese 1 (fehlende Metrik-1-Erfassung im Zwei-Phasen-Pfad) die konkret beobachteten leeren Felder vollständig erklärt, sollte mit einem kurzen deterministischen Lauf (fester Seed, 1 Robot) verifiziert werden, bevor etwas geändert wird.
 - Die Livelock-Punkte 5.3 sind aus dem Code abgeleitet; ein reproduzierbares Mehr-Roboter-Szenario mit festem Seed (z. B. via `tests/test_multi_robot.py`-Fixtures) wäre der nächste Schritt, um sie einzeln zu belegen.
-- `tests/reservation_table.py` (ohne `test_`-Präfix) wird von pytest vermutlich nicht eingesammelt — bewusst?
+- `tests/reservation_table.py` ist auf der Platte gelöscht, wird aber noch im Git-Index
+  geführt (Rest der Umbenennung nach `tests/test_reservation_table.py`). Bereinigen mit
+  `git rm --cached tests/reservation_table.py`.
