@@ -4,7 +4,25 @@ import math
 import numpy as np
 
 
-def _all_stack_positions(grid):
+def _all_stack_positions(grid, excluded_positions=None):
+    """
+    Alle Positionen, auf denen initial gelagert werden darf.
+
+    PHASE 5 (Experiment Readiness), bewusste Abgrenzung:
+    Die Initialverteilung nutzt weiterhin ALLE Storage-Positionen, also auch
+    die Port-Pufferzone. Das ist keine Policy-Asymmetrie, sondern ein für alle
+    Policies IDENTISCHER Startzustand – die Pufferzonen-Bins laufen unter
+    jeder Policy gleichermaßen aus dem Lager heraus.
+
+    Die Asymmetrie lag beim Placement zur Laufzeit und ist dort behoben
+    (`PlacementSelector._select_random_stack` nutzt jetzt dieselbe
+    Kandidatenmenge wie alle anderen Strategien).
+
+    `excluded_positions` bleibt als Parameter erhalten, falls die Pufferzone
+    später auch initial ausgeschlossen werden soll. Achtung: Auf sehr kleinen
+    Testgrids (z.B. 3x3) verbraucht die Pufferzone einen Großteil des Grids.
+    """
+    excluded = set(excluded_positions or ())
     positions = []
 
     for x in range(grid.width):
@@ -13,13 +31,15 @@ def _all_stack_positions(grid):
             if hasattr(grid, "is_storage_position"):
                 if not grid.is_storage_position(x, y):
                     continue
+            if (x, y) in excluded:
+                continue
             positions.append((x, y))
 
     return positions
 
 
 def init_random_distribution(grid, bins, random_seed=None, max_stack_height=None,
-                             rng=None):
+                             rng=None, excluded_positions=None):
     """
     Verteilt alle Bins zufällig über das Grid.
 
@@ -35,7 +55,7 @@ def init_random_distribution(grid, bins, random_seed=None, max_stack_height=None
     erhalten.
     """
     rng = rng if rng is not None else np.random.default_rng(random_seed)
-    positions = _all_stack_positions(grid)
+    positions = _all_stack_positions(grid, excluded_positions)
 
     if not positions:
         return
@@ -124,6 +144,7 @@ def initialize_bins(
     abc_threshold_a=0.2,
     abc_threshold_b=0.5,
     rng=None,
+    excluded_positions=None,
 ):
     """
     Zentrale Einstiegsmethode für die Initialverteilung.
@@ -145,6 +166,7 @@ def initialize_bins(
             random_seed=random_seed,
             max_stack_height=max_stack_height,
             rng=rng,
+            excluded_positions=excluded_positions,
         )
 
         # Nach der Platzierung: ABC-Klassen vergeben

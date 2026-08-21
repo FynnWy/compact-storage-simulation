@@ -100,23 +100,24 @@ class PlacementSelector:
         """
         Wählt zufälligen Stack mit freier Kapazität (CIRS/AutoStore Baseline).
 
-        Für RANDOM-Placement wird der Pufferzonen-Filter NICHT angewendet:
-        - Kandidaten: alle nicht gesperrten Stacks mit freier Kapazität,
-          unabhängig davon, ob sie in der Buffer-Zone liegen.
+        Entspricht Mellers Beschreibung: Eine Bin, die die Pickstation
+        verlassen hat, wird „to any open hole in the grid" gebracht – ohne
+        Bezug zum Ursprungsstack.
+
+        PHASE 5 (Experiment Readiness):
+        Die Kandidatenmenge ist jetzt dieselbe wie bei allen anderen
+        Placement-Strategien (`_get_eligible_stacks`), schließt also auch die
+        Port-Pufferzone aus.
+
+        Vorher durfte ausschließlich RANDOM dort lagern. Damit war der
+        erreichbare Zustandsraum policyabhängig: Baseline und RR+RR konnten
+        598 Stacks nutzen, NEAREST/ABC/POPULARITY nur 592. Räumliche Metriken
+        wären auf unterschiedlichen Trägermengen gemessen worden.
+
+        Die Pufferzone bleibt frei, weil sie den Zufahrtsweg zum Port
+        offenhält – diese Begründung ist policyunabhängig.
         """
-        max_stack_height = self._get_max_stack_height(state)
-        candidates = []
-
-        for stack in state.grid.all_stacks():
-            if stack.is_locked():
-                continue
-
-            if max_stack_height is not None and stack.height() >= max_stack_height:
-                continue
-
-            # Kein is_valid_storage_position()-Check hier:
-            # RANDOM darf auch Buffer-Zonen-Stacks nutzen.
-            candidates.append(stack)
+        candidates = self._get_eligible_stacks(state)
 
         if not candidates:
             raise RuntimeError(
@@ -328,7 +329,7 @@ class PlacementSelector:
 
         Warmup:
             - total_accesses = Summe aller access_counts im System
-            - Solange total_accesses < popularity_warmup_requests oder
+            - Solange total_accesses < popularity_warmup_retrievals oder
               max_access_count == 0 -> zufällige Wahl aus DERSELBEN
               Kandidatenmenge wie die aktive Phase (`_get_eligible_stacks`),
               also insbesondere ohne Port-Pufferzone (Phase 3B, P3-05).
@@ -343,7 +344,11 @@ class PlacementSelector:
         max_count = max(all_counts) if all_counts else 0
         total_accesses = sum(all_counts)
 
-        warmup_requests = getattr(self.config, "popularity_warmup_requests", 0)
+        # Einheit: kumulierte physische Target-Retrievals (nicht Requests).
+        # `popularity_warmup_requests` ist der historische Alias.
+        warmup_requests = getattr(self.config, "popularity_warmup_retrievals", None)
+        if warmup_requests is None:
+            warmup_requests = getattr(self.config, "popularity_warmup_requests", 0)
 
         # Cold-Start / Warmup: noch keine sinnvolle Popularität verfügbar
         if max_count == 0 or total_accesses < warmup_requests:
@@ -491,8 +496,11 @@ class PlacementSelector:
         - unterhalb max_stack_height (falls definiert)
         - NICHT in einer Port-Pufferzone (falls State dies unterstützt)
 
-        Wird von NEAREST/ABC/POPULARITY verwendet – für ORIGINAL und RANDOM
-        wird bewusst kein Pufferzonen-Filter angewandt.
+        Seit Phase 5 die gemeinsame Definition zulässiger Lagerplätze für
+        ALLE Placement-Strategien (inkl. RANDOM) und für die
+        Initialverteilung. Einzige Ausnahme bleibt ORIGINAL: Dort ist der
+        Zielstack der Ursprungsstack, und der darf laut Initialverteilung
+        überall liegen.
         """
         max_stack_height = self._get_max_stack_height(state)
         candidates = []
@@ -504,7 +512,6 @@ class PlacementSelector:
             if max_stack_height is not None and stack.height() >= max_stack_height:
                 continue
 
-            # Pufferzonen-Filter NUR hier (nicht für ORIGINAL/RANDOM)
             if hasattr(state, "is_valid_storage_position"):
                 pos = self._parse_stack_position(stack)
                 if not state.is_valid_storage_position(pos[0], pos[1]):

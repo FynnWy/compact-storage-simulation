@@ -1774,6 +1774,7 @@ class EventHandler:
                     request=task.request
                 )
 
+
         elif action_type == "return":
             # Bin zurück in Stack legen
             to_stack = self._get_stack_by_id(self.state, action.get("to_stack"))
@@ -1800,6 +1801,13 @@ class EventHandler:
         # Spezialfall: remove_target -> Pickstation-Service starten
         if action_type == "remove_target":
             self._attach_batched_requests_to_task(event)
+            # PHASE 5: Retrieval-Zeile ERST hier schreiben. Vorher ist
+            # `batched_requests` noch leer und die Batchgröße wäre konstant 1.
+            self._record_retrieval_row(
+                robot.current_task, robot,
+                self.state.get_bin_by_id(bin_id),
+                self._resolve_digging_depth_for_task(robot.current_task),
+            )
             self._start_pickstation_service_and_release_robot(event)
             return
 
@@ -2885,6 +2893,64 @@ class EventHandler:
                 return True
 
         return False
+
+    def _record_retrieval_row(self, task, robot, bin_obj, digging_depth):
+        """
+        Schreibt eine Zeile der Retrieval-Tabelle (Phase 5, RQ1/RQ3).
+
+        Genau EINE Zeile je physischem Target-Retrieval, erfasst in dem
+        Moment, in dem die Target-Bin die Pickstation erreicht.
+
+        Warum eine eigene Tabelle statt eines Eventlogs:
+        Meller fragt, ob im dynamischen System tatsächlich rund 80 % der
+        Retrievals aus den obersten 20 % der Ebenen kommen und wie oft 0, 1,
+        2, ... Umlagerungen nötig sind. Beides braucht Rohdaten je Retrieval,
+        aber nur diese wenigen Felder – ein vollständiger Bewegungslog wäre
+        um Größenordnungen größer, ohne mehr zu beantworten.
+
+        `access_count_before` ist der Zählerstand VOR diesem Retrieval: Der
+        Zähler wird unmittelbar zuvor in `_handle_robot_drop` erhöht, deshalb
+        hier minus eins.
+        """
+        hoehe = getattr(task, "retrieval_stack_height", None)
+        level = getattr(task, "retrieval_level", None)
+        start = getattr(task, "retrieval_start_time", None)
+
+        self.metrics.record_retrieval({
+            "t_pickstation": self.state.t,
+            "request_id": task.request_id,
+            "bin_id": getattr(bin_obj, "bin_id", None),
+            "abc_class": bin_obj.get_abc_class() if bin_obj is not None else None,
+            "access_count_before": (
+                max(0, bin_obj.get_access_count() - 1)
+                if bin_obj is not None else None
+            ),
+            # RQ3: Ausgangslage im Stack
+            "level": level,                       # 0 = unterste Ebene
+            "stack_height": hoehe,                # Höhe vor dem Digging
+            "levels_from_top": (
+                None if (hoehe is None or level is None) else hoehe - 1 - level
+            ),
+            # RQ1: Umlagerungsaufwand
+            "blocking_bins": digging_depth,
+            "blockers_returned": bool(
+                self._should_return_blocking_bins_for_metrics()
+            ),
+            # Batching: wie viele Requests bedient dieses eine Retrieval?
+            "batch_size": len(task.all_requests()),
+            "t_retrieval_start": start,
+            "dig_duration": (
+                None if start is None else self.state.t - start
+            ),
+            "pickstation": getattr(task, "assigned_pickstation", None),
+            "robot_id": getattr(robot, "robot_id", None),
+        })
+
+    def _should_return_blocking_bins_for_metrics(self):
+        config = getattr(self.state, "config", None)
+        if config is None:
+            return True
+        return getattr(config, "return_blocking_bins", True)
 
     def _resolve_digging_depth_for_task(self, task):
         """

@@ -46,6 +46,9 @@ class RequestGenerator:
         # Kein Zugriff mehr auf das globale `random`-Modul.
         self.py_random = random.Random(int(self.rng.integers(0, 2 ** 31 - 1)))
 
+        # Konstanter Deadline-Slack (siehe `_generate_latest_time`).
+        self._deadline_slack = int(getattr(config, "deadline_slack", 120))
+
         # Cache für Pareto-Verteilung (Performance-Optimierung)
         self._pareto_cache = {}
 
@@ -114,17 +117,27 @@ class RequestGenerator:
         return t + self.py_random.randint(0, 2)
 
     def _generate_latest_time(self, t):
-        # Priorität bestimmen (75% normal, 10% urgent, 15% low)
-        rand = self.py_random.random()
-        if rand < 0.10:  # 10% urgent
-            base_time = 3
-        elif rand < 0.85:  # 75% normal
-            base_time = 6
-        else:  # 15% low
-            base_time = 12
+        """
+        Deadline eines Requests: `arrival_time + deadline_slack`.
 
-        # Noise hinzufügen (normalverteilt um 0)
-        noise = int(self.rng.normal(0, 0.8))
-        noise = max(-2, min(2, noise))
+        FREEZE-AUDIT – bewusst konstanter Slack.
 
-        return t + base_time + noise
+        Vorher wurde eine Prioritätsklasse gezogen (10 % urgent mit 3 ZE,
+        75 % normal mit 6, 15 % low mit 12) plus normalverteiltes Rauschen in
+        [-2, 2]. Das hatte zwei Probleme:
+
+        1. Der Slack lag bei 1 bis 14 ZE, während allein das Ausgraben und
+           Transportieren einer Bin gemessen rund 30 ZE dauert. Praktisch
+           jeder Request verfehlte seine Deadline (gemessen 91–97 %), die
+           Kennzahl war damit ohne Aussagekraft.
+        2. Heterogene Deadlines machen EDF zu einer eigenen Priorisierungs-
+           politik. Deadlines sind hier aber eine sekundäre Messgröße und
+           keine Forschungsfrage; sie sollen die Storage-Policy-Effekte nicht
+           überlagern.
+
+        Ein konstanter Slack ist exogen, policyneutral, einfach erklärbar und
+        hängt nicht von Bin-ID, Lagerposition, ABC-Klasse oder Popularität ab.
+        EDF entspricht damit im Wesentlichen der Ankunftsreihenfolge, während
+        Verspätung weiterhin vollständig messbar bleibt.
+        """
+        return t + self._deadline_slack

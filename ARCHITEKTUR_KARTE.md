@@ -729,7 +729,99 @@ Phase 3B entfallen; die Tests wirken jetzt als Regressionsschutz.
 
 ---
 
+## 10e. Scheduler und Deadlines (Freeze-Audit)
+
+### Auswahlreihenfolge
+
+```
+Scheduler.try_schedule
+├── 1. _try_schedule_waiting_task   Fortsetzungen, Returns, begonnene Digs
+└── 2. _select_next_request         neue Requests, EDF
+```
+
+Die frühere Zwischenstufe `_try_schedule_opportunistic` ist aus dem
+Hauptpfad entfernt. Sie bevorzugte Requests, deren Target zufällig obenauf
+lag – ein lageabhängiger Bypass vor der Auswahlregel.
+
+Gemessen (20x30, Seed 42, 800 ZE, baseline_reference):
+
+| | Zuweisungen opportunistisch | β | Retrievals aus obersten 20 % |
+|---|---|---|---|
+| mit Bypass | 39 von 47 | 0,73 | 84 % |
+| ohne Bypass | 0 | 2,70 | 33 % |
+
+Der Bypass verzerrte genau die Größen, die RQ1 und RQ3 messen. Die Methode
+bleibt als dokumentierter Legacy-Code erhalten; ein Verhaltenstest stellt
+sicher, dass sie in keinem Lauf mehr aufgerufen wird.
+
+### EDF
+
+```
+Auswahl:    min über (latest_time, arrival_time, request_id)
+Ausschluss: alle Bins in get_all_reserved_bin_ids()
+Default:    config.scheduler_strategy = "EDF"   (vorher "FIFO")
+```
+
+Kein Kriterium hängt von Lagerposition, Digging-Tiefe, ABC-Klasse oder
+Popularität ab.
+
+### Deadline
+
+```
+request.latest_time = arrival_time + config.deadline_slack     (absolut)
+```
+
+Konstanter Slack, gezogen aus keiner Zufallsquelle. Vorher wurde eine
+Prioritätsklasse (3/6/12 ZE) plus Rauschen gezogen; der Slack lag bei 1–14 ZE
+gegenüber ~30 ZE reiner Bearbeitungszeit, die Miss-Rate bei 91–97 %.
+
+Bei konstantem Slack ist EDF äquivalent zur Ankunftsreihenfolge. Die Deadline
+ist damit eine reine Messüberlagerung – testgesichert: der Slackwert
+verändert den physischen Ablauf nicht.
+
+### Completion und Tardiness
+
+```
+completion_time = Ankunft der Target-Bin an der Pickstation
+lateness        = completion_time - deadline
+tardiness       = max(0, lateness)
+```
+
+Batching: `_attach_batched_requests_to_task` meldet jeden gebatchten Request
+einzeln an `Metrics.record_target_bin_at_pickstation`. Alle Requests eines
+Batches teilen den Completion-Zeitpunkt, werden aber gegen ihre EIGENE
+Deadline bewertet – N Zeilen in `requests.csv`, eine in `retrievals.csv`.
+
+### Datenfluss der Messgrößen
+
+```
+_handle_robot_drop (remove_target)
+   ├── increment_access_count            Popularity-Signal
+   ├── record_digging_depth
+   └── record_target_bin_at_pickstation  Deadline-Bewertung
+
+nach _attach_batched_requests_to_task
+   └── _record_retrieval_row             eine Zeile je physischem Retrieval
+                                         (inkl. endgültiger batch_size)
+```
+
+Die Retrieval-Zeile entsteht bewusst NACH dem Anhängen der gebatchten
+Requests – davor wäre `batch_size` konstant 1.
+
+---
+
 ## 10. Offene Fragen / Unsicherheiten
+
+- Steady-State-Regel: Der Wegfall des opportunistischen Bypass hat den
+  Durchsatz etwa halbiert (0,062 -> 0,031 bins/ZE). Die in Phase 5
+  vorgesehene Grenze von 6000 ZE reicht nicht mehr; ABC+ABC braucht bei
+  0,0157 bins/ZE rund 22.000 ZE. Regel und Grenze sind noch nicht
+  validiert (siehe FINAL_EXPERIMENT_FREEZE_2026-08-21.md, Abschnitt 5).
+- Initiale Storage-Eligibility: Es ist entschieden, dass die
+  Initialverteilung dieselben zulässigen Positionen nutzen soll wie die
+  Placement-Policies (Port-Pufferzone ausgeschlossen). Noch nicht
+  umgesetzt – kleine Testgrids (3x3) verlieren dadurch den Großteil
+  ihrer Kapazität.
 
 - Soll NEAREST-Return „zurück in die Nähe des Ursprungsstacks" oder „so nah wie
   möglich an den Port" bedeuten? Implementiert ist Letzteres (Befund P3-04).

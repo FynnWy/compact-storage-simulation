@@ -18,9 +18,37 @@ class Scheduler:
         Versucht, genau einen Task oder Request einem freien Roboter zuzuordnen.
 
         Reihenfolge:
-        1. Wartende aktive Tasks fortsetzen.
-        2. Opportunistisch: Requests, deren Bin bereits oben zugänglich ist.
-        3. Neuen Request nach Scheduler-Strategie (FIFO/EDF).
+        1. Wartende aktive Tasks fortsetzen (bereits begonnene physische
+           Vorgänge und Rücklagerungen bleiben geschützt).
+        2. Neuen Request nach Scheduler-Strategie (FIFO/EDF).
+
+        FREEZE-AUDIT: Die frühere Zwischenstufe „opportunistisch: Requests,
+        deren Bin bereits oben zugänglich ist" ist entfallen.
+
+        Sie war ein lageabhängiger Bypass vor der eigentlichen
+        Auswahlstrategie: Unter Backlog wurden bevorzugt Requests bedient,
+        deren Target ohnehin obenauf lag. Damit war eine versteckte
+        depth-aware Retrieval-Policy aktiv, die genau die Größen verzerrt, die
+        das Experiment messen soll.
+
+        Gemessen (20x30, Seed 42, 800 ZE, baseline_reference):
+
+            mit Bypass:  39 von 47 Zuweisungen opportunistisch,
+                         β = 0,73, Retrievals aus den obersten 20 % = 84 %
+            ohne Bypass: β = 2,70, Retrievals aus den obersten 20 % = 33 %
+
+        Der Bypass hätte Mellers 80/20-Behauptung (RQ3) also scheinbar
+        bestätigt, obwohl der Effekt aus der Request-Auswahl stammte und
+        nicht aus Natural Slotting.
+
+        Der zweite Zweck des alten Zweigs – der opportunistische
+        Ownership-Transfer einer bereits ausgelagerten Blocker-Bin – ist
+        entbehrlich: Blocker-owned Bins sind über
+        `get_all_reserved_bin_ids()` ohnehin von der Auswahl ausgeschlossen
+        und werden frei, sobald der Eigentümer sie zurücklegt
+        (`return_blocking_bins=True`) oder seine Verpflichtung verwirft
+        (`False`, seit Phase 3B inklusive Ownership-Freigabe). Es entsteht
+        Wartezeit, kein Deadlock.
         """
         robot = self._find_idle_robot(state)
 
@@ -38,11 +66,6 @@ class Scheduler:
 
         if not self.active_queue.has_unassigned_requests():
             return None
-
-        # Opportunistisch: Bin liegt bereits oben und ist frei erreichbar (R-E1)
-        opportunistic = self._try_schedule_opportunistic(state, robot, current_time)
-        if opportunistic is not None:
-            return opportunistic
 
         request = self._select_next_request(state)
 
@@ -238,6 +261,7 @@ class Scheduler:
         raise ValueError(f"Unknown scheduler_strategy: {self.scheduler_strategy}")
 
     def _pop_next_fifo_excluding(self, blocked_bin_ids):
+        """Erster nicht blockierter Request in Ankunftsreihenfolge."""
         for request in list(self.active_queue.pending):
             if request.target_box_id not in blocked_bin_ids:
                 self.active_queue.pending.remove(request)
@@ -255,7 +279,24 @@ class Scheduler:
         if not candidates:
             return None
 
-        best_request = min(candidates, key=lambda request: request.latest_time)
+        # Deterministischer Tie-Break (FREEZE-AUDIT):
+        #     Deadline -> Ankunftszeit -> request_id
+        #
+        # Vorher entschied allein `min(..., key=latest_time)`; bei
+        # Deadlinegleichstand gewann die Iterationsreihenfolge von `pending`.
+        # Das war zwar faktisch stabil, aber nicht zugesichert. Bei konstantem
+        # Slack D haben alle Requests desselben Ankunftszeitpunkts dieselbe
+        # Deadline, der Fall tritt also regelmäßig auf.
+        #
+        # Bewusst KEIN Kriterium, das von Lagerposition, Digging-Tiefe,
+        # ABC-Klasse oder Popularität abhängt – das wäre eine versteckte
+        # Priorisierung.
+        best_request = min(
+            candidates,
+            key=lambda request: (request.latest_time,
+                                 request.arrival_time,
+                                 request.request_id),
+        )
         self.active_queue.pending.remove(best_request)
         return best_request
 

@@ -33,7 +33,27 @@ class SimulationConfig:
         FIFO = First In First Out, ältester Request zuerst
         EDF = Earliest Deadline First, Request mit kleinster latest_time zuerst
         """
-        self.scheduler_strategy = "FIFO"
+        # Auswahlregel für NEUE Requests.
+        #   "EDF"  = früheste Deadline zuerst, Tie-Break Deadline -> Ankunft
+        #            -> request_id (deterministisch, lageunabhängig)
+        #   "FIFO" = Ankunftsreihenfolge
+        # Bei konstantem `deadline_slack` sind beide praktisch äquivalent;
+        # EDF ist die im finalen Experiment verwendete Regel.
+        self.scheduler_strategy = "EDF"
+
+        # Deadline eines Requests: `arrival_time + deadline_slack`.
+        # Konstant, exogen und policyneutral (FREEZE-AUDIT).
+        #
+        # Kalibrierung (Seed 42, 1200 ZE, baseline_reference):
+        #   D=60  -> 68 % verspätet, Median-Tardiness 122
+        #   D=120 -> 59 %,                           62
+        #   D=240 -> 44 %,                            0
+        # Gewählt: 240. Das liegt rund eine Größenordnung über der physischen
+        # Bearbeitungszeit eines Retrievals (~30 ZE) und ergibt bei der
+        # geplanten Lauflänge eine diskriminierende Verspätungsquote.
+        # Der Wert verändert den physischen Ablauf nicht (testgesichert) -
+        # die Deadline ist eine reine Messüberlagerung.
+        self.deadline_slack = 240
 
         """
         Request Generierung:
@@ -157,10 +177,21 @@ class SimulationConfig:
         # Popularity-spezifische Parameter (WP3)
         # ------------------------------------------------------------
 
-        # Warmup-Phase: Bis zu dieser Anzahl kumulierter Retrievals
-        # wird Popularity-Placement nicht verwendet, sondern auf
-        # RANDOM-Placement zurückgefallen.
-        self.popularity_warmup_requests = 50
+        # Warmup-Phase des Popularity-Placements.
+        #
+        # EINHEIT (Phase 5 präzisiert): kumulierte **physische
+        # Target-Retrievals**, nicht Requests. Der Zähler ist
+        # `sum(bin.access_count)`, und `access_count` steigt genau einmal je
+        # Retrieval einer Target-Bin an die Pickstation (siehe
+        # `EventHandler._handle_robot_drop`, Zweig `remove_target`).
+        #
+        # Wichtig wegen Batching: Werden mehrere Requests für dieselbe Bin
+        # gemeinsam bedient, gibt es EINEN Retrieval und EINE Erhöhung.
+        # Die Warmup-Länge misst also Systemarbeit, nicht Nachfragemenge.
+        # Das alte Attribut `popularity_warmup_requests` bleibt als Alias
+        # erhalten, damit bestehende Konfigurationen weiter funktionieren.
+        self.popularity_warmup_retrievals = 50
+        self.popularity_warmup_requests = self.popularity_warmup_retrievals
 
         # Schwellen für Hot/Cold-Klassifikation auf Basis des
         # normalisierten Popularity-Scores in [0, 1]

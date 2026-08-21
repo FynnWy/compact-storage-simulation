@@ -24,7 +24,8 @@ Ein Master-Seed, daraus über `SeedSequence.spawn()` unabhängige Ströme. Ein
 Verbraucher zieht nie aus einem Strom, der einer fachlich anderen Größe
 gehört.
 
-    exogen   initialization   Bin-Verteilung, Roboter-Startpositionen
+    exogen   initialization   initiale Bin-Verteilung
+    exogen   robots           Roboter-Startpositionen
     exogen   requests         Ankünfte, Target-Bins, Zeitfenster
     exogen   service          Pickstation-Servicezeit je Request
     endogen  relocation       zufällige Ablage von Blocking-Bins (RR+RR)
@@ -37,6 +38,21 @@ Die Reihenfolge in `STREAM_NAMES` bestimmt, welcher gespawnte Kindstrom ein
 Verbraucher bekommt. Wird ein Name eingefügt oder umsortiert, ändern sich
 sämtliche Zufallsfolgen dahinter und alle bisherigen Läufe sind nicht mehr
 reproduzierbar. Neue Ströme deshalb ausschließlich **hinten** anfügen.
+
+`SeedSequence.spawn(n)` ist inkrementell: `spawn(6)` liefert dieselben ersten
+fünf Kinder wie `spawn(5)`. Anhängen ist deshalb für die bestehenden Ströme
+unschädlich.
+
+Warum `robots` ein eigener Strom ist (Phase 5)
+---------------------------------------------
+Vorher zogen Roboter-Startpositionen und Bin-Verteilung nacheinander aus
+`initialization`. Damit hing das Binlayout an der Roboterzahl: Ein Lauf mit
+6 statt 8 Robotern verbrauchte zwei Ziehungen weniger und erzeugte ein
+anderes Lager. Für Parameterstudien über `num_robots` wäre jeder Vergleich
+dadurch konfundiert gewesen.
+
+Jetzt gilt: Das initiale Binlayout hängt allein am Master-Seed – nicht an der
+Roboterzahl.
 
 Stream-Trennung allein genügt nicht
 -----------------------------------
@@ -60,9 +76,11 @@ STREAM_NAMES = (
     "service",
     "relocation",
     "placement",
+    # Phase 5 (Experiment Readiness) angehaengt – siehe Hinweis unten.
+    "robots",
 )
 
-EXOGENOUS_STREAMS = ("initialization", "requests", "service")
+EXOGENOUS_STREAMS = ("initialization", "requests", "service", "robots")
 ENDOGENOUS_STREAMS = ("relocation", "placement")
 
 

@@ -111,6 +111,21 @@ class TopAccessStrategy(BaseStrategy):
         if task.target_stack_id is None:
             task.target_stack_id = target_stack.stack_id
 
+            # PHASE 5 (RQ3): Ausgangslage der Target-Bin EINMALIG festhalten,
+            # bevor gegraben wird.
+            #
+            # Meller fragt, ob im dynamischen System tatsächlich ~80 % der
+            # Retrievals aus den obersten 20 % der Ebenen kommen. Das lässt
+            # sich nur beantworten, wenn je Retrieval bekannt ist, auf welchem
+            # Level die Bin lag und wie hoch der Stack war. Nachträglich ist
+            # das nicht rekonstruierbar – der Stack verändert sich sofort.
+            #
+            # Bewusst hier und nicht im EventHandler: Dies ist der einzige
+            # Punkt, an dem der Stack garantiert noch unberührt ist.
+            task.retrieval_level = target_level
+            task.retrieval_stack_height = target_stack.height()
+            task.retrieval_start_time = state.t
+
         top_bin = target_stack.peek()
 
         if top_bin is None:

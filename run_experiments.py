@@ -49,9 +49,13 @@ def create_base_config() -> SimulationConfig:
     config.request_arrival_strategy = "Poisson"
     config.request_utilization = 0.6
 
-    # Nachfrageverteilung: Zipf, um Hot/Cold-Bins zu erzeugen
+    # Nachfrageverteilung: Zipf, um Hot/Cold-Bins zu erzeugen.
+    # 1.0 legt bei 4320 Bins 82 % der Nachfrage auf die Top-20 % und trifft
+    # damit das 80/20-Szenario der Literatur. 1.5 (bis zum Freeze-Audit)
+    # konzentrierte 98,5 % auf die Top-20 %; die C-Klasse wurde praktisch nie
+    # angefragt und ABC-/Popularity-Effekte waren nicht mehr differenzierbar.
     config.bin_request_prob_strategy = "zipf"
-    config.zipf_parameter = 1.5
+    config.zipf_parameter = 1.0
 
     # Metriken
     config.distribution_snapshot_interval = 100

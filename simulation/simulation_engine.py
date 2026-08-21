@@ -53,9 +53,14 @@ class SimulationEngine:
         self.rng_streams = RngStreams(self.config.random_seed)
 
         # Der frühere Sammelstrom `self.rng` versorgt jetzt ausschließlich die
-        # Initialisierung (Bin-Verteilung, Roboter-Startpositionen). Der Name
-        # bleibt erhalten, damit bestehende Aufrufstellen lesbar bleiben.
+        # initiale Bin-Verteilung. Der Name bleibt erhalten, damit bestehende
+        # Aufrufstellen lesbar bleiben.
+        #
+        # PHASE 5: Roboter-Startpositionen haben einen EIGENEN Strom. Sonst
+        # verschiebt jede Änderung von `num_robots` auch das Binlayout, und
+        # eine Parameterstudie über die Roboterzahl wäre konfundiert.
         self.rng = self.rng_streams.get("initialization")
+        self.robot_rng = self.rng_streams.get("robots")
         self.service_rng = self.rng_streams.get("service")
         self.relocation_rng = self.rng_streams.get("relocation")
         self.placement_rng = self.rng_streams.get("placement")
@@ -122,11 +127,9 @@ class SimulationEngine:
             bins=bins,
             init_strategy=self._resolve_init_strategy(),
             hot_bin_ids=self.hot_bin_ids,
-            # PHASE 4: Initialisierungs-Strom statt eines zweiten, direkt aus
-            # dem Master-Seed gebauten Generators. Roboter-Startpositionen und
-            # Bin-Verteilung teilen sich diesen Strom in fester Reihenfolge
-            # (erst Roboter in `_create_robots`, dann Bins) – beides exogen und
-            # damit policyunabhängig.
+            # PHASE 4/5: Eigener Initialisierungs-Strom, ausschließlich für die
+            # Bin-Verteilung. Dadurch hängt das Startlayout allein am
+            # Master-Seed – weder an der Policy noch an der Roboterzahl.
             rng=self.rng,
             max_stack_height=self.config.max_stack_height,
             # ABC-Thresholds aus Config an Initialisierung übergeben
@@ -623,8 +626,8 @@ class SimulationEngine:
             attempts = 0
 
             while attempts < max_attempts:
-                x = int(self.rng.integers(0, self.config.grid_width))
-                y = int(self.rng.integers(0, self.config.grid_depth))
+                x = int(self.robot_rng.integers(0, self.config.grid_width))
+                y = int(self.robot_rng.integers(0, self.config.grid_depth))
                 start_pos = (x, y)
 
                 if start_pos not in occupied_positions:

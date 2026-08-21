@@ -38,6 +38,12 @@ class RobotTask:
 
         # NEU: Tracking für Validierung
         self.initial_blocker_count = None  # Wird bei Planung gesetzt
+
+        # PHASE 5 (RQ3): Ausgangslage der Target-Bin, einmalig festgehalten
+        # bevor gegraben wird. Nachträglich nicht rekonstruierbar.
+        self.retrieval_level = None          # 0 = unterste Ebene
+        self.retrieval_stack_height = None   # Stackhöhe vor dem Digging
+        self.retrieval_start_time = None     # ZE, zu der das Digging begann
         self.last_validated_time = None     # Zeitpunkt der letzten Validierung
 
     @property

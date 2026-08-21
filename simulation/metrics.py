@@ -35,6 +35,13 @@ class Metrics:
         # ------------------------------------------------------------------
         self.request_digging_depths = []
 
+        # PHASE 5 (RQ1/RQ3): Eine Zeile je PHYSISCHEM Target-Retrieval.
+        # Kompakte Rohdatentabelle statt eines vollständigen Eventlogs –
+        # daraus lassen sich Level-Verteilung, P(beta = s), Digging-Tiefe je
+        # ABC-Klasse und der Anteil der Retrievals aus den oberen Ebenen
+        # rekonstruieren.
+        self.retrievals = []
+
     # ----------------------------------------------------------------------
     # WP5: Distribution & Positionsänderungen
     # ----------------------------------------------------------------------
@@ -124,6 +131,16 @@ class Metrics:
         if d < 0:
             d = 0
         self.request_digging_depths.append(d)
+
+    def record_retrieval(self, record: dict) -> None:
+        """
+        Erfasst ein physisches Target-Retrieval (eine Bin an der Pickstation).
+
+        Genau EINE Zeile je Retrieval – unabhängig davon, wie viele Requests
+        durch dieses Retrieval bedient werden (Batching). Die Batchgröße steht
+        als Feld in der Zeile.
+        """
+        self.retrievals.append(record)
 
     def get_average_digging_depth(self) -> float:
         """
@@ -331,6 +348,8 @@ class Metrics:
         base.update({
             "average_request_digging_depth": self.get_average_digging_depth(),
             "last_distribution_snapshot": last_distribution_snapshot,
+            # PHASE 5: physische Retrievals – Basis der primären KPI.
+            "physical_retrievals": len(self.retrievals),
         })
 
         return base

@@ -103,12 +103,32 @@ wird:
 - Zielauslastung: `request_utilization = 0.6`
 - Bin-Nachfragewahrscheinlichkeit: Zipf-Verteilung
   (`bin_request_prob_strategy = "zipf"`)
-- Zipf-Parameter: `zipf_parameter = 1.5`
+- Zipf-Parameter: `zipf_parameter = 1.0`  (seit dem Freeze-Audit; vorher 1.5)
 
 Damit entstehen „Hot Bins“, die wesentlich häufiger angefragt werden als der
 Durchschnitt. Dies ist eine notwendige Voraussetzung, um die Effekte der
 ABC- und Popularity-basierten Strategien auf Digging-Depth, Reshuffling-
 Verhalten und räumliche Bin-Verteilung untersuchen zu können.
+
+Der Wert 1,0 ist bewusst gewählt. Bei `bin_num = 4320` entfallen auf die
+20 % meistgefragten Bins:
+
+| `zipf_parameter` | Anteil der Nachfrage auf die Top-20 % |
+|---|---|
+| **1,0** | **82,0 %** |
+| 1,5 | 98,5 % |
+
+Damit trifft 1,0 das in der Literatur diskutierte 80/20-Szenario nahezu
+exakt, während 1,5 die Nachfrage so stark auf wenige Bins konzentriert, dass
+die C-Klasse praktisch nie angefragt wird (0,5 %) und ABC-/Popularity-Effekte
+nicht mehr differenziert messbar sind.
+
+Zur Einordnung der Nachfrageintensität: Die gemessene Systemkapazität liegt
+bei rund 0,031 Retrievals je ZE, das Angebot bei `request_utilization = 0.6`
+bei 0,66 Requests je ZE. Das System läuft damit im gesättigten Bereich; der
+Durchsatz ist kapazitäts- und nicht nachfragebegrenzt. Das ist beabsichtigt,
+weil die primäre Kennzahl die Systemkapazität misst — hat aber Folgen für die
+Interpretation der Termintreue (siehe unten).
 
 ## Zeiteinheiten und Kostenparameter
 
@@ -156,6 +176,100 @@ könnte in zukünftiger Arbeit ergänzt werden. Für die Beantwortung der
 Forschungsfragen RQ1–RQ4 (Vergleich der Reordering- und Placement-Strategien
 innerhalb eines konsistenten Modells) ist eine solche Kalibrierung jedoch
 nicht erforderlich.
+
+## Request-Auswahl und Termine (verbindlich seit dem Freeze-Audit)
+
+### Auswahlreihenfolge
+
+```text
+1. bereits begonnene Tasks, Fortsetzungen und Rücklagerungen
+2. neue Pending Requests ausschließlich nach EDF
+```
+
+`scheduler_strategy = "EDF"` (vorher `"FIFO"`).
+
+Bis zum Freeze-Audit lag zwischen beiden Stufen ein **lageabhängiger
+Bypass**: Lag das Target eines wartenden Requests zufällig obenauf, wurde
+dieser Request bevorzugt bedient. Gemessen (Seed 42, 800 ZE,
+`baseline`) liefen **39 von 47 Zuweisungen** über diesen Bypass, mit
+drastischen Folgen für genau die Größen, die RQ1 und RQ3 messen sollen:
+
+| | β (Blocking Bins je Retrieval) | Retrievals aus den obersten 20 % der Ebenen |
+|---|---|---|
+| mit Bypass | 0,73 | 84 % |
+| ohne Bypass | 2,70 | 33 % |
+
+Der Bypass ist deshalb aus dem Hauptpfad entfernt. Die Request-Auswahl darf
+die untersuchten Storage-Policy-Effekte nicht überlagern; maximaler
+Durchsatz ist ausdrücklich nicht das Ziel.
+
+Der EDF-Tie-Break ist vollständig deterministisch:
+
+```text
+latest_time  →  arrival_time  →  request_id
+```
+
+Kein Kriterium hängt von Lagerposition, Digging-Tiefe, ABC-Klasse oder
+Popularität ab.
+
+### Deadline
+
+```text
+request.latest_time = arrival_time + deadline_slack        (absolut)
+deadline_slack = 240
+```
+
+Der Slack ist für alle Requests konstant, exogen und policyneutral. Er wird
+zusammen mit dem Request-Strom vor Simulationsbeginn festgelegt und ist bei
+gleichem Seed über alle Policies identisch.
+
+Bis zum Freeze-Audit wurde stattdessen eine Prioritätsklasse gezogen
+(10 % urgent = 3 ZE, 75 % normal = 6 ZE, 15 % low = 12 ZE, plus Rauschen
+∈ [−2, 2]). Der resultierende Slack von 1–14 ZE stand rund 30 ZE reiner
+Bearbeitungszeit je Retrieval gegenüber; die Verspätungsquote lag bei
+91–97 % und war damit ohne Aussagekraft.
+
+Kalibrierung von `D` (Seed 42, 1200 ZE, `baseline`):
+
+| `D` | Verspätungsquote | Median Tardiness |
+|---|---|---|
+| 60 | 68 % | 122 |
+| 120 | 59 % | 62 |
+| **240** | **44 %** | **0** |
+
+Bei konstantem Slack entspricht EDF im Wesentlichen der
+Ankunftsreihenfolge. Die Deadline ist damit eine reine Messüberlagerung und
+keine zusätzliche Priorisierungspolitik — testgesichert dadurch, dass der
+Slackwert die physische Retrieval-Sequenz nicht verändert.
+
+### Termintreue: was die Kennzahl aussagt
+
+```text
+completion_time = Ankunft der Target-Bin an der Pickstation
+lateness        = completion_time - latest_time
+tardiness       = max(0, lateness)
+```
+
+Deadline- und Tardiness-Kennzahlen sind **sekundäre** Performance-KPIs; die
+primäre Kennzahl bleibt der Durchsatz.
+
+Weil das System gesättigt läuft (Angebot > Kapazität bei jeder getesteten
+Last), misst die Tardiness hier das **Alter des Rückstands**, nicht die
+Servicequalität eines stabilen Warteschlangensystems. Sie wächst
+systematisch mit der Lauflänge — bei identischem `D = 240` liegt der Median
+bei 1200 ZE noch bei 0 und bei 3000 ZE bereits bei 327.
+
+Zulässig ist deshalb ausschließlich der **gepaarte Vergleich zwischen
+Policies** bei identischem Seed und identischer Lauflänge. Absolute Aussagen
+über Service-Level oder Termintreue sind es nicht, ebensowenig Vergleiche
+zwischen unterschiedlich langen Läufen.
+
+### Batching
+
+Werden mehrere Requests durch ein physisches Retrieval bedient, teilen sie
+den Completion-Zeitpunkt, werden aber **jeder gegen seine eigene Deadline**
+bewertet. Ein Batch erzeugt N Zeilen in `requests.csv` und genau eine Zeile
+in `retrievals.csv`.
 
 ## Strategien und Experimentkonfiguration
 
@@ -255,8 +369,12 @@ zufällige Blocker-Relocation noch den Verzicht auf den Ordered Return. Die
 beiden unterscheiden sich also in zwei Dimensionen gleichzeitig und dürfen
 nicht als Variante voneinander gelesen werden.
 
-Ob `baseline` Teil des finalen Vergleichs sein soll, ist eine offene
-fachliche Frage.
+`baseline` ist Teil des finalen Vergleichs. Sie dient als gemeinsame
+Referenz für beide Arbeiten (A: `baseline`, RR+RR, ABC+ABC;
+B: `baseline`, LR+NR, POPULARITY+POPULARITY) und macht die Ergebnisse
+zwischen den Arbeiten anschlussfähig. Weil sie sich von RR+RR in zwei
+Dimensionen gleichzeitig unterscheidet, darf sie nur als Referenzpunkt und
+nicht als Variante von RR+RR interpretiert werden.
 
 Alle übrigen Parameter (Grid, Füllgrad, Roboterzahl, Pickstations,
 Nachfrageprozess, Kostenparameter) werden aus der gemeinsamen

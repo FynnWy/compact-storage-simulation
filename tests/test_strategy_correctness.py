@@ -718,16 +718,29 @@ def test_popularity_warmup_uses_the_same_eligibility_as_the_active_phase():
         assert pos in zulaessig
 
 
-def test_random_placement_keeps_its_own_semantics():
+@pytest.mark.parametrize("policy", list(POLICIES))
+def test_all_placement_strategies_share_one_eligibility_set(policy):
     """
-    Die Angleichung in P3-05 darf die eigenständige RANDOM-Semantik von RR+RR
-    NICHT verändern: RANDOM darf Pufferzonen-Stacks weiterhin nutzen.
+    MODELLKORREKTUR (Phase 5, Experiment Readiness):
 
-    Nachweis über die Kandidatenmenge: RANDOM zieht aus allen nicht gesperrten
-    Stacks mit Kapazität, also aus einer echt größeren Menge als
-    `_get_eligible_stacks`.
+    Bis Phase 3B durfte AUSSCHLIESSLICH `RANDOM` in die Port-Pufferzone
+    platzieren; NEAREST/ABC/POPULARITY schlossen sie aus. Der zur Laufzeit
+    erreichbare Zustandsraum war dadurch policyabhängig – im finalen Setup
+    598 gegenüber 592 Stacks. Räumliche Metriken wären auf unterschiedlichen
+    Trägermengen gemessen worden, und die Pufferzonen-Stacks liegen ausgerechnet
+    dort, wo NEAREST/ABC/POPULARITY am liebsten platzieren würden.
+
+    Für den wissenschaftlichen Vergleich gilt jetzt EINE gemeinsame Definition
+    zulässiger Lagerplätze für alle Placement-Strategien.
+
+    Der frühere Test hieß `test_random_placement_keeps_its_own_semantics` und
+    sicherte die alte Sonderrolle von RANDOM ab. Sie war als Schutz gegen eine
+    VERSEHENTLICHE Änderung gedacht; hier liegt eine bewusste, begründete
+    Änderung vor. Der Test wurde daher nicht abgeschwächt, sondern auf den
+    heute gültigen gemeinsamen Contract umgestellt.
     """
-    engine = build_engine("LOFI", "RANDOM", False)
+    reordering, placement, rbb = POLICIES[policy]
+    engine = build_engine(reordering, placement, rbb)
     selector = engine.scheduler.strategy._placement_selector
     state = engine.state
 
@@ -735,23 +748,20 @@ def test_random_placement_keeps_its_own_semantics():
         s for s in state.grid.all_stacks()
         if not s.is_locked() and s.height() < max_height(state)
     ]
-    zulaessig = _eligible_stacks(state)
+    zulaessig = {stack_position(s.stack_id) for s in _eligible_stacks(state)}
 
     assert len(alle) > len(zulaessig), (
         "Testszenario hat keine Pufferzonen-Stacks – die Unterscheidung wäre "
         "nicht prüfbar."
     )
 
-    ziele = {
-        stack_position(
-            selector.select_return_stack(state, make_bin(1), None).stack_id)
-        for _ in range(400)
-    }
-    pufferzone = {p for p in ziele if not state.is_valid_storage_position(*p)}
-    assert pufferzone, (
-        "RANDOM nutzt keine Pufferzonen-Stacks mehr – die eigenständige "
-        "RR+RR-Semantik wurde versehentlich mitgeändert."
-    )
+    for _ in range(120):
+        pos = stack_position(
+            selector.select_return_stack(state, make_bin(1), "S_5_5").stack_id)
+        assert pos in zulaessig, (
+            f"{policy} platziert auf {pos} außerhalb der gemeinsamen "
+            f"Kandidatenmenge (Port-Pufferzone)."
+        )
 
 
 def test_popularity_placement_reacts_to_changed_access_counts():
@@ -796,7 +806,12 @@ def test_access_count_increases_on_real_retrievals():
     Vor dem Fix (Phase 3): 109 abgeschlossene Requests, Summe aller
     `access_count` = 0.
     """
-    engine = build_engine("POPULARITY", "POPULARITY", True, sim_time=600)
+    # Starke Nachfragekonzentration, damit einzelne Bins mehrfach abgerufen
+    # werden. Seit dem Wegfall des opportunistischen Bypass (Freeze-Audit)
+    # leistet das System je Zeiteinheit weniger Retrievals; das Szenario
+    # braucht deshalb mehr Zeit und mehr Konzentration.
+    engine = build_engine("POPULARITY", "POPULARITY", True, sim_time=1500)
+    engine.config.zipf_parameter = 1.5
     run_engine(engine)
 
     abgeschlossen = engine.metrics.summary().get("requests_completed", 0) or 0
@@ -861,11 +876,11 @@ def test_popularity_placement_leaves_warmup_in_a_realistic_run():
     Läufen erreicht (siehe Risiko R-12).
     """
     engine = build_engine(
-        "POPULARITY", "POPULARITY", True, robots=4, sim_time=1200
+        "POPULARITY", "POPULARITY", True, robots=4, sim_time=3000
     )
     run_engine(engine)
 
-    warmup = engine.config.popularity_warmup_requests
+    warmup = engine.config.popularity_warmup_retrievals
     gesamt = sum(b.get_access_count() for b in engine.state.bins)
     assert gesamt >= warmup, (
         f"total_accesses={gesamt} < warmup={warmup}: Placement lief "
