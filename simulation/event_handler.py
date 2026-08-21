@@ -1736,6 +1736,33 @@ class EventHandler:
                 f"[TRACE][DROP_TARGET] t={self.state.t} robot={robot.robot_id} "
                 f"bin={bin_id} to=pickstation"
             )
+            # PHASE 3B (Befund P3-01): Beobachteten Zugriff zählen.
+            #
+            # Diese Zeile stand bisher ausschließlich im Legacy-Zweig
+            # `_handle_robot_action`, der zur Laufzeit nur noch für
+            # `pickup_from_pickstation` erreicht wird. `access_count` blieb
+            # dadurch in JEDEM Lauf für JEDE Bin 0 – die POPULARITY-Policy
+            # sortierte nach einem konstanten Schlüssel und ihr Placement kam
+            # nie aus dem RANDOM-Warmup heraus.
+            #
+            # Der Zähler gehört an genau diese Stelle des aktiven
+            # Zwei-Phasen-Pfads: Die Target-Bin ist physisch an der
+            # Pickstation angekommen, der Retrieval ist damit fachlich
+            # erfolgt. Der Positions- und Stale-Guard oben ist bereits
+            # passiert, ein Doppelaufruf pro Retrieval ist also
+            # ausgeschlossen.
+            #
+            # Bewusst NICHT gezählt werden Blocker-Bewegungen (`relocate`)
+            # und Rücklagerungen (`return`) – sie sind keine Nachfrage.
+            #
+            # Batching: Werden mehrere Requests für dieselbe Bin gebündelt,
+            # gibt es genau EINEN physischen Retrieval und damit genau EINE
+            # Erhöhung. `access_count` misst also Zugriffshäufigkeit, nicht
+            # Requestanzahl. Das entspricht der ursprünglichen Absicht
+            # ("Jeder erfolgreiche Retrieval zählt") und der Verwendung als
+            # Grabtiefen-Proxy in `_calc_expected_digging_depth`.
+            bin_obj.increment_access_count()
+
             # NEU: Metrik für Pickstation-Ankunft erfassen
             task = robot.current_task
             if task is not None:
@@ -2788,12 +2815,15 @@ class EventHandler:
             request = event.payload.get("request")
             self.metrics.record_target_bin_at_pickstation(self.state, action, request)
 
-            # Access-Count Tracking: Jeder erfolgreiche Retrieval zählt
-            bin_id = action.get("bin_id")
-            if bin_id is not None:
-                bin_obj = self.state.get_bin_by_id(bin_id)
-                if bin_obj is not None:
-                    bin_obj.increment_access_count()
+            # PHASE 3B (P3-01): Die frühere `increment_access_count()`-Zählung
+            # stand hier und war damit tot – dieser Zweig wird zur Laufzeit nur
+            # noch für `pickup_from_pickstation` erreicht. Sie ist in den
+            # aktiven Zwei-Phasen-Pfad verschoben worden
+            # (`_handle_robot_drop`, Zweig `remove_target`).
+            #
+            # Bewusst NICHT dupliziert: Zwei Zählstellen würden bei einer
+            # späteren Reaktivierung dieses Zweigs jeden Retrieval doppelt
+            # zählen und die Popularität verzerren.
 
         self.executor.execute(event, self.state)
 
@@ -2802,16 +2832,6 @@ class EventHandler:
         request = event.payload.get("request")
         robot = event.payload.get("robot")
         task = getattr(robot, "current_task", None) if robot is not None else None
-
-        if bin_id == 102:
-            print(
-                f"[TRACE][POST_ACTION] t={self.state.t} type={action_type} bin={bin_id} "
-                f"req={request.request_id if request else None} "
-                f"task={task.request_id if task else None} "
-                f"task_phase={getattr(task, 'phase', None)} "
-                f"target_stack_id={getattr(task, 'target_stack_id', None)} "
-                f"actual_return_stack_id={getattr(task, 'actual_return_stack_id', None)} "
-            )
 
         # in_transit zurücksetzen NACH erfolgreicher Ausführung
         self._mark_bin_in_transit(action, state=self.state, in_transit=False)
@@ -3257,10 +3277,6 @@ class EventHandler:
             raise RuntimeError("Cannot handle pickstation completion: event has no task")
 
         task.mark_pickstation_completed()
-
-        if task.target_bin_id == 102:
-            print(f"[TRACE][PS_COMPLETE] t={self.state.t} task={task.request_id} "
-                  f"bin={task.target_bin_id}")
 
         # Finde Pickstation, an der dieser Task war
         pickstation = None

@@ -526,7 +526,166 @@ schlagen 10 davon fehl.
 
 ---
 
+## 10d. Strategy-Schicht: tatsächliche Verdrahtung (Phase 3)
+
+Ergänzt Abschnitt 7 (Modul-Spickzettel). Die Strategy-Schicht war dort bisher
+gar nicht abgebildet. Grundlage: `STRATEGY_CORRECTNESS_AUDIT_2026-08-21.md`.
+
+### Aufbau
+
+```
+SimulationEngine  (simulation_engine.py:154-186)
+├── RelocationSelection(cost_model, active_queue)     ← OHNE rng  (Befund P3-03)
+├── PlacementSelector(config, rng=self.rng)
+├── ReorderingSelector(config)
+└── TopAccessStrategy(...)  →  Scheduler  →  engine.scheduler.strategy
+```
+
+Es gibt keinen `engine.strategy`-Zugriffspunkt; die Strategie hängt am
+Scheduler.
+
+### Wer entscheidet was
+
+| Entscheidung | Zuständig | Nicht zuständig |
+|---|---|---|
+| Ablage einer **Blocking-Bin** | `RelocationSelection.select_temporary_stack` | `PlacementSelector` |
+| Rücklagerung der **Target-Bin** nach der Pickstation | `PlacementSelector.select_return_stack` | `RelocationSelection` |
+| Reihenfolge der **Blocker-Rücklagerung** | `ReorderingSelector.reorder_blockers` | – |
+| Ob Blocker überhaupt zurückgelegt werden | `config.return_blocking_bins`, ausgewertet in `TopAccessStrategy._next_restore_blockers_action` | – |
+
+### Ownership-Freigabe bei `return_blocking_bins=False`
+
+Wird die Restore-Verpflichtung verworfen, müssen **zwei** Buchungen fallen:
+
+```
+task.temp_storage                     -> geleert von clear_all_relocations()
+ActiveQueue._blocker_ownership        -> freigegeben von derselben Methode,
+                                         sofern der Task noch Eigentümer ist
+```
+
+Bis Phase 3B fiel nur die erste. Die zweite blieb bestehen, sperrte die Bin
+global und den Stack als Relocation-Ziel und führte im opportunistischen
+Ownership-Transfer zu `RuntimeError: Cannot release ownership of bin N`
+(Befund P3-02).
+
+`TopAccessStrategy` bekommt die Queue dafür injiziert
+(`active_queue=`), analog zu `RelocationSelection`. Ohne diese Injektion
+fällt die Freigabe still aus – der Guard in
+`Scheduler._try_schedule_opportunistic` verhindert dann zwar den Abbruch,
+nicht aber die Reservierung.
+
+Zum Vergleich das etablierte Muster in
+`EventHandler._release_foreign_blocker_ownership`: erst `still_open` prüfen,
+dann die globale Sperre in jedem Fall lösen. Der Scheduler folgt seit
+Phase 3B demselben Muster.
+
+### Policy-Mapping
+
+| Policy | reordering | placement | `return_blocking_bins` |
+|---|---|---|---|
+| RR+RR | LOFI | RANDOM | False |
+| LR+NR | LOFI | NEAREST* | False |
+| ABC+ABC | ABC | ABC | True |
+| POP+POP | POPULARITY | POPULARITY | True |
+| baseline | LOFI | RANDOM | True |
+
+\* `NEAREST` = nächster zulässiger Stack relativ zum **Originalstack** der
+Target-Bin (Tie-Break y, dann x; der Originalstack gewinnt mit Distanz 0).
+Bis Phase 3B war die Distanz zur **Pickstation** implementiert – eine andere
+Policy (Befund P3-04). Messungen aus Phase 3 sind mit heutigen nicht
+vergleichbar.
+
+Achtung: Der Zufallszweig der Blocker-Relocation greift nur bei
+`placement_strategy == "RANDOM"` **und** `return_blocking_bins is False`.
+`baseline` erfüllt das nicht und benutzt die kostenbasierte Relocation.
+Baseline und RR+RR unterscheiden sich damit in zwei Dimensionen gleichzeitig.
+
+### Datenfluss `access_count` (seit Phase 3B)
+
+```
+ROBOT_DROP  (remove_target)   -> _handle_robot_drop
+                                 increment_access_count           ✓ AKTIV
+                                 record_digging_depth             ✓
+                                 record_target_bin_at_pickstation ✓
+
+ROBOT_ACTION (remove_target)  -> _handle_robot_action
+                                 (keine Zählung mehr)
+```
+
+Bis Phase 3B stand die Zählung ausschließlich im Legacy-Zweig
+`_handle_robot_action`, der zur Laufzeit nur noch für
+`pickup_from_pickstation` erreicht wird. `access_count` blieb dadurch in jedem
+Lauf für jede Bin `0`, und die POPULARITY-Policy war wirkungslos (Befund
+P3-01). Die Zählung ist in den aktiven Zwei-Phasen-Pfad verschoben – bewusst
+verschoben und nicht dupliziert, damit keine zweite Zählstelle entstehen kann.
+
+Semantik: **eine Erhöhung je physischem Retrieval**, nicht je Request.
+Blocker-Bewegungen (`relocate`) und Rücklagerungen (`return`) zählen nicht.
+Durch Batching entfallen im Mittel 2,4–2,7 Requests auf einen Retrieval;
+`access_count` misst also Zugriffshäufigkeit, nicht Nachfragemenge.
+
+Merksatz für die Legacy-Diskussion: Der Legacy-Zweig war **nicht** nur tote
+Last – er enthielt produktive Logik, die im Live-Pfad fehlte. Beim Aufräumen
+alter Zweige lohnt der Blick, ob dort etwas Aktives hängt.
+
+### Zwei Zulässigkeitsbegriffe, die nicht deckungsgleich sind
+
+| Prädikat | schließt aus | benutzt von |
+|---|---|---|
+| `grid.is_storage_position(x, y)` | nur Portzellen | Initialverteilung, `_select_random_stack`, `_select_original_stack` |
+| `state.is_valid_storage_position(x, y)` | Portzellen **und** Pufferzone (Manhattan ≤ 1) | `_get_eligible_stacks` (NEAREST/ABC/POPULARITY), `RelocationSelection` |
+
+Bins können also in der Pufferzone starten, unter NEAREST/ABC/POPULARITY aber
+nie dorthin zurückkehren. Das ist ein systematischer Drift, der die Policies
+unterschiedlich trifft, und beim Auswerten räumlicher Metriken zu beachten.
+
+### `max_stack_height` liegt nicht am State
+
+`State` hat kein Attribut `max_stack_height`. Die Selektoren lesen es defensiv
+über `state.config`. Wer in Tests oder Diagnosewerkzeugen
+`getattr(state, "max_stack_height", None)` benutzt, bekommt `None` und
+überspringt seine Kapazitätsprüfung stillschweigend.
+
+### RNG-Verdrahtung (seit Phase 3B)
+
+| Verbraucher | Strom |
+|---|---|
+| `ActionCostModel` (Servicezeiten) | `engine.rng` = `default_rng(seed)` |
+| `PlacementSelector` | `engine.rng` |
+| `RelocationSelection` | `engine.relocation_rng` = `default_rng([seed, 1])` |
+| Request-Generierung | globaler NumPy-RNG, in `RequestGenerator.__init__` via `np.random.seed(seed)` |
+
+`RelocationSelection` bekam vorher gar keinen RNG und erzeugte sich intern
+einen ungeseedeten (Befund P3-03). Der eigene abgeleitete Strom ist bewusst
+**nicht** `engine.rng`, um die in Phase 2C dokumentierte Kopplung nicht zu
+verschärfen. Das ist noch keine Common-Random-Numbers-Architektur – die
+gehört in Phase 4 und löst auch die Ad-hoc-Ableitung `[seed, 1]` ab.
+
+### Reproduzierbarkeit je Policy (gemessen, je 3 Läufe, identischer Seed)
+
+| Policy | vor Phase 3B | nach Phase 3B |
+|---|---|---|
+| RR+RR | **nein** | ja |
+| LR+NR | ja | ja |
+| ABC+ABC | ja | ja |
+| POP+POP | ja | ja |
+| baseline | ja | ja |
+
+### Tests
+
+`tests/test_strategy_correctness.py` (43 Tests, alle grün). Die sechs
+`xfail(strict=True)`-Markierungen aus Phase 3 sind mit der Remediation in
+Phase 3B entfallen; die Tests wirken jetzt als Regressionsschutz.
+
+---
+
 ## 10. Offene Fragen / Unsicherheiten
+
+- Soll NEAREST-Return „zurück in die Nähe des Ursprungsstacks" oder „so nah wie
+  möglich an den Port" bedeuten? Implementiert ist Letzteres (Befund P3-04).
+  Beides ist eine legitime Policy – die Entscheidung ist fachlich, nicht technisch.
+- Ist die Konfiguration `baseline` (LOFI/RANDOM mit `return_blocking_bins=True`)
+  als fünfte Vergleichsgröße neben den vier Policies gewollt?
 
 - Ob P2-Hypothese 1 (fehlende Metrik-1-Erfassung im Zwei-Phasen-Pfad) die konkret beobachteten leeren Felder vollständig erklärt, sollte mit einem kurzen deterministischen Lauf (fester Seed, 1 Robot) verifiziert werden, bevor etwas geändert wird.
 - Die Livelock-Punkte 5.3 sind aus dem Code abgeleitet; ein reproduzierbares Mehr-Roboter-Szenario mit festem Seed (z. B. via `tests/test_multi_robot.py`-Fixtures) wäre der nächste Schritt, um sie einzeln zu belegen.

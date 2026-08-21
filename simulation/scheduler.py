@@ -151,18 +151,31 @@ class Scheduler:
                                 robot.assign_task(task)
                                 self.active_queue.mark_assigned(request, robot)
 
-                                # ✅ Ownership-Transfer: DEFENSIV
-                                released = owner_task.release_blocker_ownership(bin_id)
+                                # Ownership-Transfer.
+                                #
+                                # PHASE 3B (P3-02, Absicherung): Die frühere
+                                # Fassung rief `release_blocker_ownership()`
+                                # ungeprüft und wertete den Rückgabewert aus.
+                                # Die Methode liefert aber nie None – sie
+                                # liefert den Eintrag oder wirft. Stand die
+                                # Bin nicht mehr in `temp_storage`, brach die
+                                # Simulation daher mit
+                                # `RuntimeError: ... bin not found in
+                                # temp_storage` ab.
+                                #
+                                # Hier gilt jetzt dasselbe Muster wie in
+                                # `EventHandler._release_foreign_blocker_ownership`:
+                                # erst prüfen, ob die Verpflichtung überhaupt
+                                # noch offen ist, dann die globale Sperre
+                                # in jedem Fall lösen.
+                                still_open = any(
+                                    reloc["bin_id"] == bin_id
+                                    for reloc in owner_task.temp_storage
+                                )
+                                if still_open:
+                                    owner_task.release_blocker_ownership(bin_id)
 
-                                # ✅ Nur wenn erfolgreich freigegeben, Ownership übernehmen
-                                if released is not None:
-                                    self.active_queue.release_blocker_ownership(bin_id)
-                                else:
-                                    # Ownership war bereits weg → trotzdem fortfahren
-                                    print(
-                                        f"[INFO] Opportunistic transfer of bin {bin_id}: "
-                                        f"ownership already released, proceeding anyway"
-                                    )
+                                self.active_queue.release_blocker_ownership(bin_id)
 
                                 action = self.strategy.next_action(state, task)
                                 return {

@@ -13,6 +13,7 @@ class TopAccessStrategy(BaseStrategy):
         placement_strategy="ORIGINAL",
         placement_selector=None,
         reordering_selector=None,
+        active_queue=None,
     ):
         """
         Top-Access-Strategie mit Next-Step-Planning.
@@ -34,6 +35,12 @@ class TopAccessStrategy(BaseStrategy):
                 (sollte in der Praxis aber immer über SimulationEngine injiziert werden).
             reordering_selector:
                 Optionale Instanz von ReorderingSelector für Blocking-Bin-Reordering.
+            active_queue:
+                Optionale ActiveQueue-Instanz. Wird ausschließlich benötigt,
+                um beim Verwerfen der Blocker-Restore-Verpflichtung
+                (`return_blocking_bins=False`) die globale Blocker-Ownership
+                freizugeben (Phase 3B, Befund P3-02). Analog zur bereits
+                vorhandenen Injektion in `RelocationSelection`.
         """
         super().__init__()
         self._relocation_selector = relocation_selector or RelocationSelection()
@@ -41,6 +48,7 @@ class TopAccessStrategy(BaseStrategy):
         self.placement_strategy = placement_strategy
         self._placement_selector = placement_selector
         self._reordering_selector = reordering_selector
+        self._active_queue = active_queue
         # Fallback, falls jemand TopAccessStrategy direkt ohne Selector konstruiert.
         # In der regulären Simulation wird eine korrekt konfigurierte Instanz injiziert.
         if self._placement_selector is None:
@@ -133,8 +141,11 @@ class TopAccessStrategy(BaseStrategy):
     def _next_restore_blockers_action(self, state, task):
         # NEU: Prüfen, ob Blocking-Bins überhaupt zurückgelegt werden sollen
         if not self._should_return_blocking_bins(state):
-            # Alle Relocation-Einträge verwerfen (Bins bleiben wo sie sind)
-            task.clear_all_relocations()
+            # Alle Relocation-Einträge verwerfen (Bins bleiben wo sie sind).
+            # PHASE 3B (P3-02): Zusammen mit der Task-lokalen Verpflichtung
+            # muss auch die globale Blocker-Ownership fallen, sonst bleibt die
+            # Bin dauerhaft reserviert, obwohl niemand sie mehr zurücklegt.
+            task.clear_all_relocations(active_queue=self._active_queue)
 
             # Weiter zur nächsten Phase
             if not task.pickstation_completed:

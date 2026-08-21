@@ -50,8 +50,8 @@ class PlacementSelector:
             return self._select_popularity_stack(state, bin_obj)
 
         if strategy == "NEAREST":
-            # LR+NR: NÄCHSTER zulässiger Stack RELATIV ZUR PICKSTATION
-            return self._select_nearest_stack(state)
+            # LR+NR: nächster zulässiger Stack RELATIV ZUM ORIGINALSTACK
+            return self._select_nearest_stack(state, original_stack_id)
 
         raise ValueError(f"Unknown placement strategy: {strategy}")
 
@@ -126,19 +126,37 @@ class PlacementSelector:
         index = int(self.rng.integers(len(candidates)))
         return candidates[index]
 
-    def _select_nearest_stack(self, state):
+    def _select_nearest_stack(self, state, original_stack_id=None):
         """
-        Wählt den nächstgelegenen zulässigen Stack relativ zur Pickstation.
+        Wählt den nächstgelegenen zulässigen Stack relativ zum ORIGINALSTACK
+        der Target-Bin.
 
-        Distanz wird über Manhattan-Distanz zur NÄCHSTGELEGENEN Pickstation
-        berechnet (get_min_distance_to_pickstation).
+        Verbindlicher Contract (Phase 3B, Befund P3-04):
+            1. minimale Manhattan-Distanz zum Originalstack
+            2. bei Gleichstand kleinere y-Koordinate
+            3. danach kleinere x-Koordinate
 
-        Bei Gleichstand: Tie-Breaking nach y-Koordinate, dann x-Koordinate.
+        Ist der Originalstack selbst zulässig, gewinnt er mit Distanz 0. Die
+        Policy ist damit strukturerhaltend: Bins kehren in ihre Nachbarschaft
+        zurück.
 
-        Zulässigkeitskriterien:
+        Zuvor implementiert war die Distanz zur nächstgelegenen PICKSTATION.
+        Das ist eine andere Policy („so nah wie möglich an den Port") und
+        führte dazu, dass sich die gesamte Rücklagerung auf 8–13 Stacks am
+        Rand der Pufferzone konzentrierte (gemessen: 646 Rücklagerungen auf
+        9 distinkte Ziele im finalnahen Lauf).
+
+        Zulässigkeitskriterien (unverändert, `_get_eligible_stacks`):
         - Nicht gesperrt
         - Freie Kapazität (< max_stack_height)
         - Nicht in Port-Pufferzone
+
+        Fallback:
+        Lässt sich der Originalstack nicht auflösen, wird auf das frühere,
+        ebenfalls deterministische Kriterium „Distanz zur nächsten
+        Pickstation" zurückgefallen. Dieser Fall ist im regulären Ablauf
+        nicht erreichbar – `_next_return_target_action` bricht bereits ab,
+        wenn `task.target_stack_id` fehlt.
         """
         candidates = self._get_eligible_stacks(state)
 
@@ -147,15 +165,59 @@ class PlacementSelector:
                 "No suitable stack with free capacity available for NEAREST placement"
             )
 
-        # Sortieren nach Distanz zur Pickstation mit deterministischem Tie-Breaking
-        def sort_key(stack):
-            pos = self._parse_stack_position(stack)
-            distance = distance_helpers.get_min_distance_to_pickstation(state, pos)
-            # Tie-Breaking: y-Koordinate, dann x-Koordinate
-            return (distance, pos[1], pos[0])
+        origin = self._resolve_stack_position(state, original_stack_id)
+
+        if origin is None:
+            print(
+                f"[NEAREST][FALLBACK] Originalstack {original_stack_id!r} nicht "
+                f"auflösbar – weiche auf Distanz zur nächsten Pickstation aus"
+            )
+
+            def sort_key(stack):
+                pos = self._parse_stack_position(stack)
+                distance = distance_helpers.get_min_distance_to_pickstation(
+                    state, pos
+                )
+                return (distance, pos[1], pos[0])
+        else:
+            def sort_key(stack):
+                pos = self._parse_stack_position(stack)
+                distance = abs(pos[0] - origin[0]) + abs(pos[1] - origin[1])
+                # Tie-Breaking: y-Koordinate, dann x-Koordinate
+                return (distance, pos[1], pos[0])
 
         candidates_sorted = sorted(candidates, key=sort_key)
         return candidates_sorted[0]
+
+    def _resolve_stack_position(self, state, stack_id):
+        """
+        Ermittelt die (x, y)-Position zu einer Stack-ID.
+
+        Unterstützt Tuple- und `S_x_y`-Form und fällt auf die Suche im Grid
+        zurück. Gibt None zurück, wenn die ID nicht auflösbar ist.
+        """
+        if stack_id is None:
+            return None
+
+        if isinstance(stack_id, tuple) and len(stack_id) == 2:
+            return stack_id
+
+        if isinstance(stack_id, str) and stack_id.startswith("S_"):
+            parts = stack_id.split("_")
+            if len(parts) == 3:
+                try:
+                    return int(parts[1]), int(parts[2])
+                except ValueError:
+                    pass
+
+        stack = self._get_stack_by_id(state, stack_id)
+        if stack is None:
+            return None
+
+        try:
+            return self._parse_stack_position(stack)
+        except RuntimeError:
+            return None
 
     def _select_abc_stack(self, state, bin_obj):
         """
@@ -267,7 +329,9 @@ class PlacementSelector:
         Warmup:
             - total_accesses = Summe aller access_counts im System
             - Solange total_accesses < popularity_warmup_requests oder
-              max_access_count == 0 -> Fallback: RANDOM-Placement
+              max_access_count == 0 -> zufällige Wahl aus DERSELBEN
+              Kandidatenmenge wie die aktive Phase (`_get_eligible_stacks`),
+              also insbesondere ohne Port-Pufferzone (Phase 3B, P3-05).
         """
         candidates = self._get_eligible_stacks(state)
 
@@ -283,8 +347,18 @@ class PlacementSelector:
 
         # Cold-Start / Warmup: noch keine sinnvolle Popularität verfügbar
         if max_count == 0 or total_accesses < warmup_requests:
-            # Empfehlung aus Aufgabenstellung: Random-Fallback
-            return self._select_random_stack(state)
+            # Zufällige Wahl, ABER aus derselben Kandidatenmenge wie die
+            # aktive Popularity-Phase.
+            #
+            # PHASE 3B (Befund P3-05): Vorher rief der Warmup
+            # `_select_random_stack`, das den Pufferzonen-Filter bewusst NICHT
+            # anwendet (das ist die eigenständige RANDOM-Semantik von RR+RR).
+            # Die POPULARITY-Policy platzierte dadurch in Zellen, die sie in
+            # ihrer aktiven Phase als unzulässig behandelt – gemessen 596
+            # Fälle. Warmup und aktive Phase benutzen jetzt dieselben
+            # Eligibility-Regeln.
+            index = int(self.rng.integers(len(candidates)))
+            return candidates[index]
 
         popularity = self._get_popularity_score(state, bin_obj, all_counts=all_counts, max_count=max_count)
 

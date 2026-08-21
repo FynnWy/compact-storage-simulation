@@ -159,18 +159,75 @@ nicht erforderlich.
 
 ## Strategien und Experimentkonfiguration
 
-Die drei Strategien werden über die `ExperimentConfig` ausschließlich über
-die Reordering- und Placement-Strategien unterschieden:
+Stand: Phase 3B, 2026-08-21.
 
-- Baseline:
-  - `reordering_strategy = "LOFI"`
-  - `placement_strategy = "RANDOM"`
-- ABC Policy:
-  - `reordering_strategy = "ABC"`
-  - `placement_strategy = "ABC"`
-- Popularity Policy:
-  - `reordering_strategy = "POPULARITY"`
-  - `placement_strategy = "POPULARITY"`
+Eine Policy wird über **drei** Felder der `ExperimentConfig` festgelegt, nicht
+über zwei. Neben `reordering_strategy` und `placement_strategy` entscheidet
+`return_blocking_bins` mit – dieser Schalter trennt die Policies fundamental.
+
+### Die vier untersuchten Policies
+
+| Policy | `reordering_strategy` | `placement_strategy` | `return_blocking_bins` |
+|---|---|---|---|
+| **RR+RR** – Random Relocation + Random Return | `LOFI` | `RANDOM` | `False` |
+| **LR+NR** – Local Relocation + Nearest Return | `LOFI` | `NEAREST` | `False` |
+| **ABC+ABC** – ABC-Reordering + ABC-Placement | `ABC` | `ABC` | `True` |
+| **POPULARITY+POPULARITY** | `POPULARITY` | `POPULARITY` | `True` |
+
+### `return_blocking_bins`
+
+- `True` – **Ordered Return.** Alle für ein Retrieval ausgelagerten
+  Blocking-Bins werden anschließend in ihren Originalstack zurückgelegt. Die
+  Reihenfolge bestimmt `reordering_strategy`. Nur in diesem Fall hat das
+  Reordering überhaupt eine Wirkung.
+- `False` – **Kein Ordered Return.** Die Blocking-Bins bleiben liegen, wo sie
+  während des Retrievals abgelegt wurden. `reordering_strategy` ist dann
+  wirkungslos; der Eintrag `LOFI` bei RR+RR und LR+NR ist reine Formsache.
+
+Zusätzlich schaltet die Kombination `placement_strategy = "RANDOM"` **und**
+`return_blocking_bins = False` die **zufällige** Wahl des temporären
+Ablageplatzes für Blocking-Bins frei (`RelocationSelection`). In allen
+anderen Fällen wird der Ablageplatz kostenbasiert gewählt
+(Manhattan-Distanz zum Quellstack plus Bonus für direkte Nachbarn).
+
+### `NEAREST`
+
+`NEAREST` bezeichnet den nächstgelegenen zulässigen Stack **relativ zum
+Originalstack der Target-Bin**:
+
+1. minimale Manhattan-Distanz zum Originalstack,
+2. bei Gleichstand kleinere `y`-Koordinate,
+3. danach kleinere `x`-Koordinate.
+
+Ist der Originalstack selbst zulässig, gewinnt er mit Distanz 0. Die Policy
+ist damit strukturerhaltend.
+
+Zulässig ist ein Stack, wenn er nicht gesperrt ist, freie Kapazität hat und
+nicht in der Port-Pufferzone liegt (Manhattan-Distanz ≤ 1 zu einem Port).
+
+Bis Phase 3B maß `NEAREST` die Distanz zur nächsten **Pickstation**. Das war
+eine andere Policy („so nah wie möglich an den Port"); Messungen aus Phase 3
+sind mit den heutigen nicht vergleichbar.
+
+### Zusätzliche Referenzkonfiguration `baseline`
+
+`run_experiments.py` führt neben den vier Policies eine fünfte Konfiguration
+namens `baseline` aus:
+
+```text
+reordering_strategy  = "LOFI"
+placement_strategy   = "RANDOM"
+return_blocking_bins = True
+```
+
+`baseline` ist **nicht** RR+RR. Beide nutzen `RANDOM`-Placement, aber
+`baseline` legt Blocking-Bins geordnet zurück und benutzt deshalb weder die
+zufällige Blocker-Relocation noch den Verzicht auf den Ordered Return. Die
+beiden unterscheiden sich also in zwei Dimensionen gleichzeitig und dürfen
+nicht als Variante voneinander gelesen werden.
+
+Ob `baseline` Teil des finalen Vergleichs sein soll, ist eine offene
+fachliche Frage.
 
 Alle übrigen Parameter (Grid, Füllgrad, Roboterzahl, Pickstations,
 Nachfrageprozess, Kostenparameter) werden aus der gemeinsamen

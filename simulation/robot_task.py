@@ -76,16 +76,51 @@ class RobotTask:
             "buffer_stack": buffer_stack,
         })
 
-    def clear_all_relocations(self):
+    def clear_all_relocations(self, active_queue=None):
         """
         Entfernt alle temporären Relocation-Einträge.
 
         Wird verwendet, wenn Blocking-Bins NICHT zurückgelegt werden sollen
         (Strategien RR+RR, LR+NR).
+
+        PHASE 3B (Befund P3-02):
+        Das Verwerfen der Restore-Verpflichtung muss die globale Sperre in
+        `ActiveQueue._blocker_ownership` mit auflösen. Sonst bleibt die Bin
+        reserviert, obwohl sie niemand mehr zurücklegt:
+          * ihr Stack ist als Relocation-Ziel gesperrt
+            (`RelocationSelection._get_critical_stack_ids`),
+          * sie kann nicht mehr regulär Target werden
+            (`get_all_reserved_bin_ids`),
+          * und der opportunistische Ownership-Transfer läuft in
+            `RuntimeError: ... bin not found in temp_storage`.
+
+        `active_queue` ist optional, damit Aufrufer ohne Queue-Kontext
+        (z.B. isolierte Task-Tests) unverändert funktionieren.
+
+        Args:
+            active_queue: ActiveQueue-Instanz zur Freigabe der globalen
+                Blocker-Ownership. None -> nur der Task-lokale Zustand wird
+                zurückgesetzt.
+
+        Returns:
+            list: die verworfenen Relocation-Einträge.
         """
+        discarded = list(self.temp_storage)
+
+        if active_queue is not None:
+            for relocation in discarded:
+                bin_id = relocation["bin_id"]
+                # Nur die eigene Ownership auflösen. Wurde die Bin zwischen-
+                # zeitlich an einen anderen Task übertragen, gehört sie nicht
+                # mehr uns und bleibt unangetastet.
+                if active_queue.get_blocker_owner(bin_id) is self:
+                    active_queue.release_blocker_ownership(bin_id)
+
         self.temp_storage.clear()
         # Verhindert, dass später noch ein Reordering-Versuch angestoßen wird
         self.blockers_reordered = True
+
+        return discarded
 
     def peek_last_relocation(self):
         """

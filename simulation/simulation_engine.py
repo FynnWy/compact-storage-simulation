@@ -38,6 +38,27 @@ class SimulationEngine:
         self.config = config
         self.rng = np.random.default_rng(self.config.random_seed)
 
+        # PHASE 3B (Befund P3-03): eigener Zufallsstrom für die
+        # Blocker-Relocation.
+        #
+        # Vorher bekam `RelocationSelection` gar keinen RNG und erzeugte sich
+        # intern ein ungeseedetes `np.random.default_rng()`. Policy RR+RR war
+        # dadurch bei identischem Seed nicht reproduzierbar (drei Läufe mit
+        # Seed 42 lieferten 21/23/23 abgeschlossene Requests).
+        #
+        # Bewusst NICHT `self.rng` mitbenutzt: Dieser Strom versorgt bereits
+        # `ActionCostModel` (Servicezeiten) und `PlacementSelector`. Eine
+        # dritte Partei darin würde die in Phase 2C dokumentierte Kopplung
+        # verschärfen, die Phase 4 gerade auflösen soll.
+        #
+        # `default_rng([seed, 1])` leitet über eine SeedSequence einen
+        # eigenen, vom Simulationsseed abhängigen und von `self.rng`
+        # unabhängigen Strom ab. Das ist noch KEINE
+        # Common-Random-Numbers-Architektur – nur Reproduzierbarkeit.
+        self.relocation_rng = np.random.default_rng(
+            [self.config.random_seed, 1]
+        )
+
         self.state = None
         self.hot_bin_ids = []
         self._is_started = False
@@ -154,6 +175,7 @@ class SimulationEngine:
         relocation_selector = RelocationSelection(
             cost_model=self.cost_model,
             active_queue=self.active_queue,
+            rng=self.relocation_rng,
         )
 
         # NEU: Strategie-Konfiguration aus SimulationConfig auslesen
@@ -177,6 +199,7 @@ class SimulationEngine:
             placement_strategy=placement_strategy,
             placement_selector=placement_selector,
             reordering_selector=reordering_selector,
+            active_queue=self.active_queue,
         )
 
         self.scheduler = Scheduler(
