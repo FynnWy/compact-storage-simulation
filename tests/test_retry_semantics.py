@@ -30,6 +30,23 @@ from simulation.robot_task import RobotTask
 from simulation.simulation_engine import SimulationEngine
 
 
+def _find_non_empty_stack(engine, exclude=()):
+    """
+    Liefert irgendeinen belegten Stack.
+
+    PHASE 4: Die Initialverteilung stammt jetzt aus einem abgeleiteten
+    Zufallsstrom, dadurch ist nicht mehr jede fest verdrahtete Position
+    belegt. Die Tests stellen ihre Vorbedingung deshalb explizit her, statt
+    sich auf ein zufälliges Layout zu verlassen. Geprüft wird unverändert
+    dasselbe Verhalten. (Dasselbe Muster nutzt
+    `tests/test_pickup_physical_invariants.py` bereits seit Phase 2B.)
+    """
+    for stack in engine.state.grid.all_stacks():
+        if stack.height() > 0 and stack.stack_id not in exclude:
+            return stack
+    raise AssertionError("Kein nicht-leerer Stack im Testaufbau gefunden")
+
+
 def _build_engine(num_robots=2):
     config = SimulationConfig()
     config.grid_width = 6
@@ -183,6 +200,8 @@ def test_pickup_position_replan_keeps_retry_budget():
     robot.assign_task(task)
 
     source_stack = engine.state.grid.get_stack(3, 3)
+    if source_stack is None or source_stack.height() == 0:
+        source_stack = _find_non_empty_stack(engine)
     top_bin = source_stack.peek()
     robot.set_position((0, 0))  # nicht am Stack
 
@@ -242,6 +261,8 @@ def test_drop_redirect_to_other_stack_starts_a_fresh_attempt():
     robot.set_position((2, 2))
 
     carried_src = engine.state.grid.get_stack(5, 5)
+    if carried_src is None or carried_src.height() == 0:
+        carried_src = _find_non_empty_stack(engine)
     carried = carried_src.peek()
     carried_src.pop()
     handler._sync_stack_bin_metadata(carried_src)
@@ -289,6 +310,8 @@ def test_moving_robot_resets_drop_position_retry_budget():
 
     robot = engine.state.robots[0]
     carried_src = engine.state.grid.get_stack(5, 5)
+    if carried_src is None or carried_src.height() == 0:
+        carried_src = _find_non_empty_stack(engine)
     carried = carried_src.peek()
     carried_src.pop()
     handler._sync_stack_bin_metadata(carried_src)

@@ -18,7 +18,8 @@ def _all_stack_positions(grid):
     return positions
 
 
-def init_random_distribution(grid, bins, random_seed=None, max_stack_height=None):
+def init_random_distribution(grid, bins, random_seed=None, max_stack_height=None,
+                             rng=None):
     """
     Verteilt alle Bins zufällig über das Grid.
 
@@ -26,8 +27,14 @@ def init_random_distribution(grid, bins, random_seed=None, max_stack_height=None
     - Diese Initialisierung kennt keine Hot Items.
     - Hot Items werden ausschließlich über die Request-Wahrscheinlichkeit simuliert.
     - max_stack_height wird respektiert.
+
+    PHASE 4:
+    `rng` hat Vorrang vor `random_seed`. Die Engine übergibt hier den
+    Initialisierungs-Strom aus `RngStreams`, damit alle Zufallsgrößen aus
+    einem Master-Seed stammen. `random_seed` bleibt für direkte Aufrufe
+    erhalten.
     """
-    rng = np.random.default_rng(random_seed)
+    rng = rng if rng is not None else np.random.default_rng(random_seed)
     positions = _all_stack_positions(grid)
 
     if not positions:
@@ -116,6 +123,7 @@ def initialize_bins(
     max_stack_height=None,
     abc_threshold_a=0.2,
     abc_threshold_b=0.5,
+    rng=None,
 ):
     """
     Zentrale Einstiegsmethode für die Initialverteilung.
@@ -136,6 +144,7 @@ def initialize_bins(
             bins=bins,
             random_seed=random_seed,
             max_stack_height=max_stack_height,
+            rng=rng,
         )
 
         # Nach der Platzierung: ABC-Klassen vergeben

@@ -3246,9 +3246,14 @@ class EventHandler:
         task.assigned_pickstation = pickstation.station_id
         
         # Servicezeit berechnen (skaliert mit Batch-Größe)
-        batch_count = len(task.batched_requests) + 1
+        # PHASE 4: Die Servicezeit ergibt sich aus den vorab gezogenen
+        # `service_time`-Werten der bedienten Requests, nicht aus einer
+        # Laufzeitziehung. `task.all_requests()` liefert den primären Request
+        # plus alle gebatchten.
+        served_requests = task.all_requests()
         service_duration = self.event_builder.calculate_pickstation_service_duration(
-            batch_count=batch_count,
+            batch_count=len(served_requests),
+            requests=served_requests,
         )
         
         # Servicezeit tracken

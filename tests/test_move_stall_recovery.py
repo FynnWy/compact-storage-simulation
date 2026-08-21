@@ -437,6 +437,9 @@ def test_carrying_robot_keeps_bin_and_task_through_recovery():
     blocked, blocker = _jam(engine)
 
     stack = engine.state.grid.get_stack(0, 0)
+    if stack is None or stack.height() == 0:
+        # Vorbedingung explizit herstellen statt auf das Zufallslayout bauen.
+        stack = next(s for s in engine.state.grid.all_stacks() if s.height() > 0)
     bin_obj = stack.peek()
     assert bin_obj is not None
     stack.pop()

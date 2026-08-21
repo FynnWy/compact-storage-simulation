@@ -4,6 +4,7 @@ import math
 import numpy as np
 
 from config.init_strategy import initialize_bins
+from config.rng_streams import RngStreams
 from requests_.active_queue import ActiveQueue
 from requests_.request_generator import RequestGenerator
 from simulation.action_cost_model import ActionCostModel
@@ -36,27 +37,35 @@ from collections import Counter
 class SimulationEngine:
     def __init__(self, config):
         self.config = config
-        self.rng = np.random.default_rng(self.config.random_seed)
 
-        # PHASE 3B (Befund P3-03): eigener Zufallsstrom für die
-        # Blocker-Relocation.
+        # PHASE 4: Alle Zufallsströme stammen aus einem Master-Seed und sind
+        # voneinander unabhängig (siehe `config/rng_streams.py`).
         #
-        # Vorher bekam `RelocationSelection` gar keinen RNG und erzeugte sich
-        # intern ein ungeseedetes `np.random.default_rng()`. Policy RR+RR war
-        # dadurch bei identischem Seed nicht reproduzierbar (drei Läufe mit
-        # Seed 42 lieferten 21/23/23 abgeschlossene Requests).
+        # Vorher versorgte ein einziger Generator drei fachlich unabhängige
+        # Größen: Roboter-Startpositionen, Pickstation-Servicezeiten und die
+        # Placement-Entscheidungen der Strategie. Da die Policies
+        # unterschiedlich oft aus dem Placement ziehen, verschob sich die
+        # Servicezeit-Folge zwischen ihnen – ein Vergleich „bei gleichem
+        # Seed" war keiner.
         #
-        # Bewusst NICHT `self.rng` mitbenutzt: Dieser Strom versorgt bereits
-        # `ActionCostModel` (Servicezeiten) und `PlacementSelector`. Eine
-        # dritte Partei darin würde die in Phase 2C dokumentierte Kopplung
-        # verschärfen, die Phase 4 gerade auflösen soll.
-        #
-        # `default_rng([seed, 1])` leitet über eine SeedSequence einen
-        # eigenen, vom Simulationsseed abhängigen und von `self.rng`
-        # unabhängigen Strom ab. Das ist noch KEINE
-        # Common-Random-Numbers-Architektur – nur Reproduzierbarkeit.
-        self.relocation_rng = np.random.default_rng(
-            [self.config.random_seed, 1]
+        # Die Ad-hoc-Ableitung `default_rng([seed, 1])` aus Phase 3B für die
+        # Relocation ist in diese Struktur aufgegangen und entfallen.
+        self.rng_streams = RngStreams(self.config.random_seed)
+
+        # Der frühere Sammelstrom `self.rng` versorgt jetzt ausschließlich die
+        # Initialisierung (Bin-Verteilung, Roboter-Startpositionen). Der Name
+        # bleibt erhalten, damit bestehende Aufrufstellen lesbar bleiben.
+        self.rng = self.rng_streams.get("initialization")
+        self.service_rng = self.rng_streams.get("service")
+        self.relocation_rng = self.rng_streams.get("relocation")
+        self.placement_rng = self.rng_streams.get("placement")
+
+        # Das Kostenmodell wird bereits hier gebaut: Die Servicezeiten werden
+        # zusammen mit dem Request-Strom gezogen, also noch vor dem Aufbau der
+        # übrigen Simulationskomponenten. Es hält keinen State.
+        self.cost_model = ActionCostModel(
+            config=self.config,
+            rng=self.service_rng,
         )
 
         self.state = None
@@ -113,7 +122,12 @@ class SimulationEngine:
             bins=bins,
             init_strategy=self._resolve_init_strategy(),
             hot_bin_ids=self.hot_bin_ids,
-            random_seed=self.config.random_seed,
+            # PHASE 4: Initialisierungs-Strom statt eines zweiten, direkt aus
+            # dem Master-Seed gebauten Generators. Roboter-Startpositionen und
+            # Bin-Verteilung teilen sich diesen Strom in fester Reihenfolge
+            # (erst Roboter in `_create_robots`, dann Bins) – beides exogen und
+            # damit policyunabhängig.
+            rng=self.rng,
             max_stack_height=self.config.max_stack_height,
             # ABC-Thresholds aus Config an Initialisierung übergeben
             abc_threshold_a=self.config.abc_threshold_a,
@@ -141,10 +155,9 @@ class SimulationEngine:
         """
         self.active_queue = ActiveQueue()
 
-        self.cost_model = ActionCostModel(
-            config=self.config,
-            rng=self.rng,
-        )
+        # `self.cost_model` existiert bereits aus `__init__` (siehe dort):
+        # Die exogenen Servicezeiten werden schon beim Erzeugen des
+        # Request-Stroms gezogen.
 
         self.event_builder = EventBuilder(
             cost_model=self.cost_model,
@@ -183,9 +196,12 @@ class SimulationEngine:
         placement_strategy = getattr(self.config, "placement_strategy", "ORIGINAL")
 
         # NEU: PlacementSelector für Target-Bin-Rücklagerung (CIRS / Baseline / Erweiterungen)
+        # PHASE 4: Placement-Entscheidungen sind endogene Strategie-Zufälligkeit
+        # und bekommen einen eigenen Strom. Zusätzliche Ziehungen einer Policy
+        # verschieben damit keine exogene Größe mehr.
         placement_selector = PlacementSelector(
             config=self.config,
-            rng=self.rng,
+            rng=self.placement_rng,
         )
 
         # NEU: ReorderingSelector für Blocking-Bin-Reordering (LOFI / ABC)
@@ -631,14 +647,66 @@ class SimulationEngine:
         """
         Generiert alle Requests vorab und speichert sie in der Future-Queue.
         """
-        request_generator = RequestGenerator(self.config)
+        request_generator = RequestGenerator(
+            self.config,
+            rng=self.rng_streams.get("requests"),
+        )
         requests = request_generator.generate_requests()
+
+        self._assign_exogenous_service_times(requests)
 
         future_queue = FutureRequestQueue()
         for request in requests:
             future_queue.push(request)
 
         return future_queue
+
+    def _assign_exogenous_service_times(self, requests):
+        """
+        Zieht die Pickstation-Bearbeitungszeit JE REQUEST einmalig vorab.
+
+        PHASE 4 – der eigentliche Common-Random-Numbers-Schritt.
+
+        Warum nicht zur Laufzeit ziehen?
+        --------------------------------
+        Ein eigener Zufallsstrom genügt nur, wenn auch die Ziehungsreihenfolge
+        policyunabhängig ist. Servicezeiten wurden bisher in der Reihenfolge
+        gezogen, in der Roboter an den Pickstations eintreffen – und die hängt
+        vom Verhalten der Policy ab. Zwei Policies mit identischem Seed
+        bekamen dadurch für denselben Request unterschiedliche Servicezeiten.
+
+        Warum die `request_id` der richtige Schlüssel ist
+        ------------------------------------------------
+        Gesucht ist eine Entität, deren Menge und Identität in allen Policies
+        gleich ist. Das trifft nur auf den Request zu: Der komplette
+        Request-Strom wird vor Simulationsbeginn erzeugt und ist bei gleichem
+        Master-Seed über alle Policies identisch.
+
+        Nicht geeignet wären:
+          * der Servicejob – welche Requests gemeinsam bedient werden, hängt
+            vom Timing und damit von der Policy ab,
+          * die Target-Bin – wie oft eine Bin physisch geholt wird, hängt
+            ebenfalls vom Batching und damit von der Policy ab.
+
+        Batching
+        --------
+        Gebatcht werden mehrere Requests auf DIESELBE Bin. Fachlich entnimmt
+        die Bedienperson dann mehrere Artikel aus einer Bin; jeder Request ist
+        ein Griff. Die Gesamtdauer eines Servicejobs ist deshalb die SUMME der
+        Bearbeitungszeiten seiner Requests (siehe
+        `EventBuilder.calculate_pickstation_service_duration`).
+
+        Damit ist die Realisierung unabhängig davon, wie die Requests auf
+        Servicejobs verteilt werden: Request 7 trägt immer seinen eigenen
+        Wert bei, ob allein bedient oder gemeinsam mit Request 9.
+        """
+        # Die Verteilung ist bewusst nur an EINER Stelle definiert
+        # (`ActionCostModel.pickstation_service_duration`), damit
+        # `pickstation_service_time_min/max` nicht doppelt interpretiert wird.
+        # Die Ziehungsreihenfolge ist die Request-Reihenfolge und damit
+        # policyunabhängig.
+        for request in requests:
+            request.service_time = self.cost_model.pickstation_service_duration()
 
     def _determine_hot_bin_ids(self):
         """

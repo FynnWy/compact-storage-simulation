@@ -646,34 +646,84 @@ unterschiedlich trifft, und beim Auswerten räumlicher Metriken zu beachten.
 `getattr(state, "max_stack_height", None)` benutzt, bekommt `None` und
 überspringt seine Kapazitätsprüfung stillschweigend.
 
-### RNG-Verdrahtung (seit Phase 3B)
+### RNG-Verdrahtung (seit Phase 4)
 
-| Verbraucher | Strom |
-|---|---|
-| `ActionCostModel` (Servicezeiten) | `engine.rng` = `default_rng(seed)` |
-| `PlacementSelector` | `engine.rng` |
-| `RelocationSelection` | `engine.relocation_rng` = `default_rng([seed, 1])` |
-| Request-Generierung | globaler NumPy-RNG, in `RequestGenerator.__init__` via `np.random.seed(seed)` |
+Alle Ströme stammen aus einem Master-Seed über
+`np.random.SeedSequence(seed).spawn(...)`, siehe `config/rng_streams.py`.
 
-`RelocationSelection` bekam vorher gar keinen RNG und erzeugte sich intern
-einen ungeseedeten (Befund P3-03). Der eigene abgeleitete Strom ist bewusst
-**nicht** `engine.rng`, um die in Phase 2C dokumentierte Kopplung nicht zu
-verschärfen. Das ist noch keine Common-Random-Numbers-Architektur – die
-gehört in Phase 4 und löst auch die Ad-hoc-Ableitung `[seed, 1]` ab.
-
-### Reproduzierbarkeit je Policy (gemessen, je 3 Läufe, identischer Seed)
-
-| Policy | vor Phase 3B | nach Phase 3B |
+| Strom | Verbraucher | Art |
 |---|---|---|
-| RR+RR | **nein** | ja |
-| LR+NR | ja | ja |
-| ABC+ABC | ja | ja |
-| POP+POP | ja | ja |
-| baseline | ja | ja |
+| `initialization` | `_create_robots`, `init_random_distribution` | exogen |
+| `requests` | `RequestGenerator` (numpy + eigener `random.Random`) | exogen |
+| `service` | `ActionCostModel.pickstation_service_duration` | exogen |
+| `relocation` | `RelocationSelection` | endogen |
+| `placement` | `PlacementSelector` (RANDOM, Tie-Breaks, Warmup) | endogen |
+
+Vorher versorgte ein einziger Generator (`engine.rng`) drei fachlich
+unabhängige Größen: Roboterpositionen, Servicezeiten **und** Placement. Weil
+die Policies unterschiedlich oft aus dem Placement ziehen, verschob sich die
+Servicezeit-Folge zwischen ihnen – gemessen stimmten von rund 50 Werten je
+nach Policy nur 15 bis 24 überein (Befund P4-01).
+
+`engine.rng` existiert weiter, ist aber nur noch der
+Initialisierungs-Strom. Die Ad-hoc-Ableitung `default_rng([seed, 1])` aus
+Phase 3B ist entfallen.
+
+**`STREAM_NAMES` ist append-only.** Die Reihenfolge bestimmt die Zuordnung
+der gespawnten Kindströme; Einfügen oder Umsortieren macht alle bisherigen
+Läufe unreproduzierbar.
+
+### Servicezeiten: exogen und an die `request_id` gebunden
+
+```
+RequestGenerator erzeugt alle Requests   (Strom: requests)
+        |
+        v
+_assign_exogenous_service_times          (Strom: service)
+        -> request.service_time je Request, in request_id-Reihenfolge
+        |
+        v
+zur Laufzeit KEINE Ziehung mehr:
+EventBuilder.calculate_pickstation_service_duration(requests=...)
+        -> sum(r.service_time for r in task.all_requests())
+```
+
+Stream-Trennung allein genügte nicht: Servicezeiten wurden in der
+Reihenfolge gezogen, in der Roboter an den Stationen eintreffen, und die ist
+policyabhängig. Der Request ist die einzige Entität, deren Menge und
+Identität in allen Policies gleich ist – deshalb ist er der Schlüssel.
+
+Batching: Mehrere Requests auf dieselbe Bin ergeben einen Servicejob, dessen
+Dauer die **Summe** der Request-Zeiten ist. Vorher war es eine Ziehung mal
+`batch_count`, was alle Griffe eines Batches auf dieselbe Dauer zwang.
+
+### Reproduzierbarkeit und Common Random Numbers (gemessen)
+
+Je 3 Läufe mit identischem Seed, verglichen wird der vollständige Endzustand
+inklusive `access_count`-Verteilung:
+
+| Policy | vor Phase 3B | nach Phase 3B | nach Phase 4 |
+|---|---|---|---|
+| RR+RR | **nein** | ja | ja |
+| LR+NR | ja | ja | ja |
+| ABC+ABC | ja | ja | ja |
+| POP+POP | ja | ja | ja |
+
+Policyübergreifend bei gleichem Master-Seed:
+
+| Exogene Größe | vor Phase 4 | nach Phase 4 |
+|---|---|---|
+| Initiallayout, Roboterpositionen, ABC-Klassen | identisch | identisch |
+| Request-Strom | identisch | identisch |
+| **Servicezeit-Realisierungen** | **verschoben ab Position 3–5** | **identisch** |
+
+Gegenprobe: Die Endzustände der vier Policies unterscheiden sich weiterhin
+(4 von 4 verschieden) – die Kopplung betrifft nur die exogenen Größen.
 
 ### Tests
 
-`tests/test_strategy_correctness.py` (43 Tests, alle grün). Die sechs
+`tests/test_strategy_correctness.py` (43 Tests) und
+`tests/test_reproducibility_crn.py` (27 Tests), alle grün. Die sechs
 `xfail(strict=True)`-Markierungen aus Phase 3 sind mit der Remediation in
 Phase 3B entfallen; die Tests wirken jetzt als Regressionsschutz.
 

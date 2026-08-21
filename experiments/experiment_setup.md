@@ -209,6 +209,35 @@ Bis Phase 3B maß `NEAREST` die Distanz zur nächsten **Pickstation**. Das war
 eine andere Policy („so nah wie möglich an den Port"); Messungen aus Phase 3
 sind mit den heutigen nicht vergleichbar.
 
+## Reproduzierbarkeit (verbindlich seit Phase 4)
+
+Ein Lauf ist vollständig durch `random_seed` zusammen mit der übrigen
+Konfiguration bestimmt. Alle Zufallsgrößen stammen aus einem Master-Seed
+(`config/rng_streams.py`).
+
+**Exogen** – bei gleichem Seed für alle Policies identisch:
+
+- initiale Bin-Verteilung und Roboter-Startpositionen
+- Request-Strom: Ankunftszeiten, angefragte Bins, Zeitfenster
+- Pickstation-Bearbeitungszeit **je Request**
+
+**Endogen** – gehört zur jeweiligen Policy, nur reproduzierbar:
+
+- zufällige Ablage von Blocking-Bins (RR+RR)
+- RANDOM-Placement, ABC-/Popularity-Tie-Breaks, Popularity-Warmup
+
+Eine Policy darf beliebig viele eigene Zufallsentscheidungen treffen, ohne
+die exogenen Größen einer anderen zu verschieben. Damit sind die vier
+Policies unter Common Random Numbers vergleichbar.
+
+Die Bearbeitungszeit ist an die `request_id` gebunden und wird vor
+Simulationsbeginn gezogen. Beim Batching mehrerer Requests auf dieselbe Bin
+ist die Servicezeit des Jobs die **Summe** der Request-Zeiten – jeder Request
+trägt unabhängig von der Gruppierung denselben Wert bei.
+
+Achtung: Die Reihenfolge der Stromnamen in `config/rng_streams.py` ist
+append-only. Wird sie geändert, sind frühere Läufe nicht mehr reproduzierbar.
+
 ### Zusätzliche Referenzkonfiguration `baseline`
 
 `run_experiments.py` führt neben den vier Policies eine fünfte Konfiguration

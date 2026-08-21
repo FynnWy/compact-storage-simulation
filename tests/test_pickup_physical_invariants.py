@@ -247,6 +247,8 @@ def test_pickup_from_stack_is_rejected_while_carrying_another_bin():
     carried = _take_bin_into_hand(engine, robot)
 
     source = engine.state.grid.get_stack(3, 3)
+    if source is None or source.height() == 0:
+        source = _find_non_empty_stack(engine)
     target_bin = source.peek()
     height_before = source.height()
     robot.set_position((3, 3))

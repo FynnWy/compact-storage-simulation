@@ -8,6 +8,16 @@ class Request:
         self.earliest_time = t_earliest
         self.latest_time = t_latest
 
+        # PHASE 4 (Common Random Numbers):
+        # Exogene Bearbeitungszeit dieses Requests an der Pickstation.
+        # Wird einmalig beim Erzeugen des Request-Stroms gezogen und ist damit
+        # an die `request_id` gebunden – NICHT an die Reihenfolge, in der
+        # Roboter an den Stationen eintreffen. Genau dadurch bleibt die
+        # Realisierung über alle Policies identisch.
+        # None bedeutet: nicht vorab gezogen (z.B. handgebauter Request in
+        # Tests); der EventBuilder fällt dann auf eine Laufzeitziehung zurück.
+        self.service_time = None
+
     def __lt__(self, other):
         if not isinstance(other, Request):
             return NotImplemented

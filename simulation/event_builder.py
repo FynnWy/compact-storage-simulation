@@ -185,14 +185,43 @@ class EventBuilder:
 
         return 0
 
-    def calculate_pickstation_service_duration(self, batch_count=1):
+    def calculate_pickstation_service_duration(self, batch_count=1, requests=None):
         """
         Berechnet die Servicezeit an der Pickstation.
 
-        batch_count: Anzahl der Requests, die an dieser Pickstation gemeinsam
-                     bedient werden (primärer Request + gebatchte Requests).
-                     Die Servicezeit steigt linear mit der Batch-Größe.
+        PHASE 4 (Common Random Numbers):
+        Werden die bedienten Requests übergeben, ist die Servicezeit die SUMME
+        ihrer vorab gezogenen `service_time`-Werte. Jeder Request trägt damit
+        immer denselben exogenen Beitrag bei, unabhängig davon, mit welchen
+        anderen Requests er zusammen bedient wird und in welcher Reihenfolge
+        die Servicejobs starten.
+
+        Fachlich: Gebatcht werden mehrere Requests auf DIESELBE Bin. Die
+        Bedienperson entnimmt dann mehrere Artikel aus einer Bin, ein Request
+        ist ein Griff. `pickstation_service_time_min/max` beschreibt die Dauer
+        eines Griffs, die Gesamtdauer ist deren Summe.
+
+        Vorher: EINE Ziehung mal `batch_count`. Das erzwang für alle Requests
+        eines Batches denselben Wert und war zur Laufzeit von der
+        policyabhängigen Aufrufreihenfolge abhängig.
+
+        Fallback:
+        Ohne `requests` (oder wenn ein Request keine vorab gezogene
+        `service_time` hat) wird wie bisher zur Laufzeit gezogen. Das betrifft
+        nur direkt konstruierte Requests, etwa in Tests.
+
+        Args:
+            batch_count: Anzahl gemeinsam bedienter Requests (Fallbackpfad).
+            requests: Iterable der bedienten Request-Objekte.
         """
+        if requests is not None:
+            werte = [
+                r.service_time for r in requests
+                if getattr(r, "service_time", None) is not None
+            ]
+            if len(werte) == len(list(requests)):
+                return sum(werte)
+
         if self.cost_model is None:
             return max(1, batch_count)
 

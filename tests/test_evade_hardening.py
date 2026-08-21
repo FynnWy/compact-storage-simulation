@@ -43,11 +43,41 @@ def _build_engine(num_robots=2, width=6, depth=6, seed=42, pickstations=1):
     return SimulationEngine(config)
 
 
+
+
+def _find_non_empty_stack(engine, exclude=()):
+    """
+    Liefert irgendeinen belegten Stack.
+
+    PHASE 4: Die Initialverteilung stammt jetzt aus einem abgeleiteten
+    Zufallsstrom, dadurch ist nicht mehr jede fest verdrahtete Position
+    belegt. Die Tests stellen ihre Vorbedingung deshalb explizit her, statt
+    sich auf ein zufälliges Layout zu verlassen. Geprüft wird unverändert
+    dasselbe Verhalten. (Dasselbe Muster nutzt
+    `tests/test_pickup_physical_invariants.py` bereits seit Phase 2B.)
+    """
+    for stack in engine.state.grid.all_stacks():
+        if stack.height() > 0 and stack.stack_id not in exclude:
+            return stack
+    raise AssertionError("Kein nicht-leerer Stack im Testaufbau gefunden")
+
+
+def _position_of(stack):
+    """(x, y)-Position eines Stacks aus seiner ID."""
+    stack_id = stack.stack_id
+    if isinstance(stack_id, tuple):
+        return stack_id
+    parts = stack_id.split("_")
+    return int(parts[1]), int(parts[2])
+
+
 def _take_bin_into_transit(engine, stack_position):
     """Nimmt die oberste Bin eines Stacks 'in die Hand' des Roboters."""
     stack = engine.state.grid.get_stack(*stack_position)
+    if stack is None or stack.height() == 0:
+        stack = _find_non_empty_stack(engine)
     bin_obj = stack.peek()
-    assert bin_obj is not None, f"Stack {stack_position} ist leer"
+    assert bin_obj is not None, f"Stack {stack.stack_id} ist leer"
     stack.pop()
     engine.event_handler._sync_stack_bin_metadata(stack)
     bin_obj.mark_in_transit()
@@ -280,9 +310,12 @@ def test_stale_pickup_event_after_evade_is_rejected():
     handler = engine.event_handler
 
     robot = engine.state.robots[0]
-    robot.set_position((3, 3))
-
     source_stack = engine.state.grid.get_stack(3, 3)
+    if source_stack is None or source_stack.height() == 0:
+        source_stack = _find_non_empty_stack(engine)
+    # Der Roboter steht zunächst am Quellstack und weicht gleich aus.
+    robot.set_position(_position_of(source_stack))
+
     top_bin = source_stack.peek()
     height_before = source_stack.height()
 
@@ -405,8 +438,11 @@ def test_carried_bin_link_is_set_on_pickup_and_cleared_on_drop():
 
     robot = engine.state.robots[0]
     source_stack = engine.state.grid.get_stack(3, 3)
+    if source_stack is None or source_stack.height() == 0:
+        source_stack = _find_non_empty_stack(engine)
     top_bin = source_stack.peek()
-    robot.set_position((3, 3))
+    # Der Roboter muss physisch am Quellstack stehen (Pickup-Positions-Guard).
+    robot.set_position(_position_of(source_stack))
 
     assert not robot.is_carrying_bin()
 
