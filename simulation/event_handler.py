@@ -45,6 +45,12 @@ class EventHandler:
         # delayen (bis `max_retries` → RuntimeError).
         self.max_drop_retries_before_redirect = 5
 
+        # LIVENESS (2026-08-22): Zaehler fuer die Task-/Relocation-
+        # Abhaengigkeit (verschuettete Blocker-Bin, die sich nicht freiraeumen
+        # laesst). Getrennt vom MOVE-Deadlock gefuehrt, weil es ein anderer
+        # Fehlerfall ist. Muss am Ende eines gesunden Laufs 0 sein.
+        self.task_dependency_deadlocks = 0
+
         # Drop-Positionsfehler: Ab dieser Retry-Zahl OHNE Bewegungsfortschritt
         # wird die Bewegung zur Ablageposition neu geplant (analog zu
         # Pickup-Positionsfehlern).
@@ -1220,6 +1226,36 @@ class EventHandler:
             )
             return
 
+        # LIVENESS (2026-08-22): Dieselbe Prüfung für den Fall, dass der
+        # Roboter GAR KEINEN Task mehr hält.
+        #
+        # Die Prüfung darüber greift nur bei `current_task is not None`. Wird
+        # ein Task requeued (`robot.clear_task()`), bleiben seine bereits
+        # eingeplanten Pickup-Events in der Queue. Ohne Task lief das Event
+        # ungeprüft durch:
+        #
+        #   * an der Pickstation nahm der Roboter dann eine FREMDE Bin auf
+        #     (belegt für LR+NR/Seed 42: t=2184 nimmt Roboter 1 ohne Task die
+        #     Bin 6 auf, die zum Task von Roboter 0 gehört). Danach bekam er
+        #     einen neuen Task, konnte dessen Bin wegen der getragenen fremden
+        #     Bin nie aufnehmen und blockierte dauerhaft die einzige Portzelle;
+        #   * ohne passende Bin lief dasselbe Event bis `max_retries` und
+        #     brach den Lauf ab (belegt für RR+RR/Seed 1: Roboter 7 ohne Task,
+        #     sechs Events für `return bin=73`, Abbruch bei t=3603 mit
+        #     `Event exceeded max retries (20)`).
+        #
+        # Ein Pickup gehört immer zu einem Task. Hält der Roboter keinen, ist
+        # das Event verwaist und wird verworfen – der Task selbst liegt in
+        # `waiting_tasks` und wird regulär neu zugeteilt.
+        if current_task is None:
+            print(
+                f"[STALE][PICKUP_NO_TASK] t={self.state.t} robot={robot.robot_id} "
+                f"action={action_type} bin={bin_id} -> robot holds no task, "
+                f"drop orphaned pickup event"
+            )
+            self._handle_robot_becomes_idle(robot)
+            return
+
         from_stack = self._get_stack_by_id(self.state, action.get("from_stack"))
 
 
@@ -1300,6 +1336,34 @@ class EventHandler:
                         # (Seed-1-Endlosschleife: 457 identische Wiederholungen).
                         same_attempt = self._is_same_attempt(action, new_action)
                         next_retry = event.retry_count + 1 if same_attempt else 0
+
+                        # LIVENESS (2026-08-22): Eigene Detection fuer die
+                        # Task-/Relocation-Abhaengigkeit.
+                        #
+                        # Diese ist NICHT dasselbe wie ein MOVE-Deadlock: dort
+                        # blockieren sich Roboter auf dem Grid, hier wartet ein
+                        # Task auf eine Bin, die unter fremden Bins liegt. Der
+                        # bestehende Wait-Graph sieht das nicht.
+                        #
+                        # Wiederholt die Strategie exakt denselben
+                        # Blocker-Return, konnte sie auch nicht freiraeumen
+                        # (`_next_unbury_action` liefert dann None, z.B. weil
+                        # kein zulaessiger Ausweichstack existiert). Dieser
+                        # Zustand loest sich nicht von allein - er wird
+                        # deshalb eindeutig gemeldet, statt sich hinter einem
+                        # allgemeinen Replan-Log zu verstecken.
+                        if (
+                                same_attempt
+                                and action_type == "return"
+                                and action.get("return_kind") == "blocker"
+                        ):
+                            self.task_dependency_deadlocks += 1
+                            print(
+                                f"[TASK_DEADLOCK][RESTORE_BURIED] t={self.state.t} "
+                                f"robot={robot.robot_id} task={task.request_id} "
+                                f"blocker={bin_id} buffer={action.get('from_stack')} "
+                                f"retry={next_retry} -> kein Freiraeumen moeglich"
+                            )
 
                         # Eskalation: Wiederholt sich derselbe Versuch dauerhaft,
                         # blockiert der Roboter meist eine Ressource, die ein
@@ -1654,6 +1718,25 @@ class EventHandler:
                     self._schedule_next_action_for_same_task_new(event)
                 return
 
+        # LIVENESS (2026-08-22): Ablageziel kurz vor dem Absetzen erneut
+        # prüfen.
+        #
+        # `to_stack` wird zum PLANUNGSzeitpunkt gewählt. Während der Roboter
+        # unterwegs ist, kann ein anderer Task dort eine Blocker-Bin geparkt
+        # haben. Das Absetzen wäre physisch möglich – es verschüttet die
+        # fremde Bin aber dauerhaft, weil deren Ordered Return sie genau dort
+        # abholen will und keinen Schritt zum Freiräumen kennt.
+        #
+        # Belegt im 7x7-Arbeitsfall: Blocker 110 wird t=2864 auf S_4_4
+        # geparkt, ein t<2864 geplanter Target-Return legt t=2883 die Bin 100
+        # darauf. Danach kommt der Eigentümer nie mehr an seine Bin.
+        #
+        # Die Auswahl wird deshalb mit derselben Strategie wiederholt, die sie
+        # ursprünglich getroffen hat – die Placement-Policy bleibt zuständig,
+        # es wird kein policyfremdes Ausweichziel eingeführt.
+        if self._redirect_drop_that_would_bury_blocker(robot, action, request):
+            return
+
         # Constraint-Prüfung für Drop
         can_drop, reason = self._can_drop(action, self.state)
 
@@ -1900,6 +1983,111 @@ class EventHandler:
         )
         delayed_event = self.event_builder.delay_event(event, self.state.t)
         self.event_queue.push(delayed_event)
+
+    def _stack_holds_foreign_blocker(self, stack_id, task):
+        """
+        Liegt auf `stack_id` eine Blocker-Bin, die einem ANDEREN Task gehört?
+
+        Quelle ist ausschließlich `ActiveQueue._blocker_ownership` über
+        `get_blocker_owned_bin_ids()`; es entsteht keine zweite
+        Ownership-Struktur.
+        """
+        if stack_id is None:
+            return False
+
+        queue = getattr(self, "active_queue", None)
+        if queue is None:
+            return False
+
+        try:
+            owned = queue.get_blocker_owned_bin_ids()
+        except AttributeError:
+            return False
+
+        for bin_id in owned:
+            if task is not None and queue.get_blocker_owner(bin_id) is task:
+                continue
+            bin_obj = self.state.get_bin_by_id(bin_id)
+            if bin_obj is None:
+                continue
+            pos = bin_obj.get_stack()
+            if pos is None:
+                continue
+            if isinstance(pos, tuple) and len(pos) == 2:
+                pos = f"S_{pos[0]}_{pos[1]}"
+            if pos == stack_id:
+                return True
+        return False
+
+    def _redirect_drop_that_would_bury_blocker(self, robot, action, request):
+        """
+        Lenkt einen Drop um, der eine fremde Blocker-Bin verschütten würde.
+
+        Zuständigkeiten bleiben, wo sie sind:
+        * `return`/`target` – die Placement-Policy wählt erneut. Sie schließt
+          verschüttungsgefährdete Stacks seit dieser Änderung selbst aus, das
+          neue Ziel ist also policykonform.
+        * `relocate` – die Relocation-Selection wählt erneut, wie bei der
+          ursprünglichen Planung.
+        * `return`/`blocker` – NICHT umgelenkt. Der Ursprungsstack ist Teil
+          des Ordered Return und damit der untersuchten Strategie. Verschüttet
+          wird dort seit der Park-Seiten-Einschränkung ohnehin nicht mehr.
+
+        Returns:
+            True, wenn umgeplant wurde (Aufrufer beendet die Verarbeitung).
+        """
+        action_type = action.get("type")
+        return_kind = action.get("return_kind")
+
+        if action_type not in ("relocate", "return"):
+            return False
+        if action_type == "return" and return_kind != "target":
+            return False
+
+        ziel = action.get("to_stack")
+        task = robot.current_task
+        if not self._stack_holds_foreign_blocker(ziel, task):
+            return False
+
+        alternative = None
+        try:
+            if action_type == "return":
+                bin_obj = self.state.get_bin_by_id(action.get("bin_id"))
+                alternative = self.scheduler.strategy._placement_selector.select_return_stack(
+                    state=self.state,
+                    bin_obj=bin_obj,
+                    original_stack_id=getattr(task, "target_stack_id", None),
+                )
+            else:
+                quelle = self._get_stack_by_id(self.state, action.get("from_stack"))
+                if quelle is not None:
+                    alternative = self.scheduler.strategy._select_relocation_stack(
+                        state=self.state,
+                        exclude_stack=quelle,
+                    )
+        except (RuntimeError, AttributeError) as exc:
+            print(
+                f"[BLOCKED][DROP_BURY] t={self.state.t} robot={robot.robot_id} "
+                f"bin={action.get('bin_id')} stack={ziel} kein Ausweichziel: {exc}"
+            )
+            return False
+
+        if alternative is None or alternative.stack_id == ziel:
+            return False
+
+        print(
+            f"[REPLAN][DROP_BURY] t={self.state.t} robot={robot.robot_id} "
+            f"action={action_type}/{return_kind} bin={action.get('bin_id')} "
+            f"{ziel} -> {alternative.stack_id} (fremde Blocker-Bin auf {ziel})"
+        )
+        action["to_stack"] = alternative.stack_id
+        self._schedule_move_to_drop(
+            robot=robot,
+            action=action,
+            request=request,
+            start_time=self.state.t,
+        )
+        return True
 
     def _redirect_blocked_drop(self, event, robot, action, request, reason):
         """
@@ -2297,6 +2485,22 @@ class EventHandler:
 
         if action_type == "relocate":
             bin_id = action.get("bin_id")
+            # LIVENESS (2026-08-22): Eine Freiraeum-Umlagerung (`unbury`) ist
+            # KEIN Blocker dieses Retrievals. Sie darf deshalb weder in
+            # `temp_storage` noch in die Blocker-Ownership wandern:
+            #
+            #  * in `temp_storage` wuerde sie per LIFO als Erste
+            #    zurueckgelegt - ausgerechnet auf den Stack, den wir gerade
+            #    freigeraeumt haben, und die eigene Bin waere erneut
+            #    verschuettet;
+            #  * als Ownership wuerde sie die Rueckgabeverpflichtung eines
+            #    fremden Vorgangs an diesen Task binden.
+            #
+            # Die Bin bleibt auf ihrem neuen Stack liegen. Der Ordered Return
+            # der EIGENEN Blocker bleibt davon unberuehrt.
+            if action.get("unbury"):
+                return
+
             task.remember_relocation(
                 bin_id=bin_id,
                 from_stack=action.get("from_stack"),
@@ -2325,6 +2529,22 @@ class EventHandler:
 
         if action_type == "relocate":
             bin_id = action.get("bin_id")
+            # LIVENESS (2026-08-22): Eine Freiraeum-Umlagerung (`unbury`) ist
+            # KEIN Blocker dieses Retrievals. Sie darf deshalb weder in
+            # `temp_storage` noch in die Blocker-Ownership wandern:
+            #
+            #  * in `temp_storage` wuerde sie per LIFO als Erste
+            #    zurueckgelegt - ausgerechnet auf den Stack, den wir gerade
+            #    freigeraeumt haben, und die eigene Bin waere erneut
+            #    verschuettet;
+            #  * als Ownership wuerde sie die Rueckgabeverpflichtung eines
+            #    fremden Vorgangs an diesen Task binden.
+            #
+            # Die Bin bleibt auf ihrem neuen Stack liegen. Der Ordered Return
+            # der EIGENEN Blocker bleibt davon unberuehrt.
+            if action.get("unbury"):
+                return
+
             task.remember_relocation(
                 bin_id=bin_id,
                 from_stack=action.get("from_stack"),

@@ -36,6 +36,40 @@ Die Initialisierungslogik (`init_random_distribution`) verwendet ausschließlich
 echte Storage-Positionen (d.h. keine Port-/Pickstation-Zellen) und berechnet
 die verfügbare Kapazität genau auf Basis dieser effektiven Stack-Anzahl.
 
+### Initialverteilung und Storage-Eligibility (verbindlich seit dem Freeze-Closeout)
+
+Die Initialverteilung nutzt **exakt dieselben** zulässigen Storage-Positionen
+wie die Placement-Policies zur Laufzeit. `SimulationEngine._initialize_state`
+berechnet dazu die Port-Pufferzone mit `utils.port_buffer_zone.
+calculate_buffer_zone` und übergibt sie als `excluded_positions` an
+`initialize_bins` — dieselbe Funktion, aus der auch `State.buffer_zone` und
+damit `State.is_valid_storage_position` gespeist wird.
+
+Verboten sind also initial wie zur Laufzeit:
+
+- die Port-/Pickstation-Zellen selbst,
+- alle Zellen mit Manhattan-Distanz ≤ 1 zu einem Port.
+
+Im finalen Layout betrifft das 8 Zellen, davon 2 Ports:
+
+\[
+C_{\text{zulässig}} = 592 \times 8 = 4736 \text{ Slots},\qquad
+\text{Füllgrad} = \frac{4320}{4736} \approx 0{,}912.
+\]
+
+**Grund:** Mellers RQ4 fragt nach der Reorganisation aus einem zufälligen,
+aber bereits *gültigen* Lagerzustand. Startete das Lager mit Bins in der
+Pufferzone, würde zusätzlich deren erzwungenes Ausströmen aus Zellen
+gemessen, die nach t=0 nie wieder belegt werden dürfen. Nebeneffekt der
+alten Variante: die Pufferzonen-Stacks liefen im Laufe der Simulation leer
+und lieferten unbemerkt zusätzliche freie Kapazität — der effektive Füllgrad
+war damit nicht stationär.
+
+**Kein Fallback.** Reicht die Kapazität nach Abzug der Pufferzone nicht,
+wirft `init_random_distribution` einen `ValueError`. Die Modellsemantik
+schaltet nie um; kleine Testkonfigurationen müssen ihre Voraussetzungen
+explizit gültig wählen (Grid groß genug oder Binzahl klein genug).
+
 ## Bin-Anzahl und physische Auslastung
 
 Die Anzahl der Bins wird so gewählt, dass das Lager stark ausgelastet, aber
@@ -270,6 +304,122 @@ Werden mehrere Requests durch ein physisches Retrieval bedient, teilen sie
 den Completion-Zeitpunkt, werden aber **jeder gegen seine eigene Deadline**
 bewertet. Ein Batch erzeugt N Zeilen in `requests.csv` und genau eine Zeile
 in `retrievals.csv`.
+
+## Lauflänge und Messfenster (Methodik verbindlich seit 2026-08-22)
+
+Alle 50 finalen Runs laufen **bis zur selben festen Simulationszeit**
+`T_final`. Es gibt kein policyabhängiges Stoppen mehr.
+
+```text
+Warm-up:      t = 0            bis  T_measure_start
+Messfenster:  T_measure_start  bis  T_final          (für ALLE Runs identisch)
+```
+
+Gründe:
+
+1. Vergleichbarkeit — alle Policies werden über dasselbe Zeitintervall
+   bewertet.
+2. Deutlich einfachere Experimentlogik als eine policyabhängige Stop-Regel.
+3. **Tardiness ist nur bei identischer Lauflänge vergleichbar.** Das System
+   läuft bewusst gesättigt; die Verspätung misst das Alter des Rückstands und
+   wächst mit der Lauflänge. Unterschiedlich lange Policy-Runs wären nicht
+   vergleichbar.
+4. RQ4 geht dadurch nicht verloren, im Gegenteil: `convergence_time_ZE` und
+   `convergence_retrieval_count` werden je Lauf **offline** aus der
+   vollständigen Zeitreihe ab t=0 bestimmt und sind damit selbst eine
+   Ergebnisgröße. Ein Lauf darf bei t=12.000 konvergieren und trotzdem bis
+   `T_final` weiterlaufen.
+
+Performance-KPIs werden ausschließlich im gemeinsamen Messfenster berechnet:
+`bin_throughput`, `request_throughput`, `deadline_miss_rate`,
+`mean_tardiness`, `mean_blocking_bins`, `mean_dig_duration`,
+`pickstation_utilisation`. Die RQ3-Verteilungen werden bevorzugt ebenfalls
+für das gemeinsame Fenster berichtet; RQ4 nutzt zusätzlich die komplette
+Zeitreihe ab t=0.
+
+`100` physische Retrievals bleiben eine grobe Mindestgröße für
+Verteilungsaussagen, sind aber **keine** Stop-Regel mehr.
+
+### Noch offen
+
+`T_final` und `T_measure_start` sind **noch nicht festgelegt**. Sie sollen
+aus langen Läufen so bestimmt werden, dass auch die langsamste
+Policy/Seed-Kombination mit Reserve vor `T_measure_start` konvergiert ist.
+Dafür müssen die langen Läufe zuverlässig durchlaufen — siehe den offenen
+Portstau in `FINAL_EXPERIMENT_FREEZE_2026-08-21.md`, Abschnitt D.2 (Klasse C).
+
+## Räumliche Konvergenz für RQ4 (vorgesehen)
+
+Als Konvergenzsignal ist die **Verteilung der statischen A/B/C-Klassen über
+die Grid-Level** vorgesehen, verglichen zwischen aufeinanderfolgenden
+Beobachtungsblöcken über die Total-Variation-Distance.
+
+Begründung: Die ABC-Klassen existieren für alle Policies, sind statisch über
+die `bin_id` definiert, damit policyübergreifend vergleichbar, und sie bilden
+direkt ab, worum es Meller in RQ4 geht — ob häufig nachgefragte Bins nach
+oben wandern.
+
+Nicht verwendet werden:
+
+* `hot_bins_top_ratio` — über den gesamten Lauf konstant (0,52–0,55) und
+  damit blind für die Reorganisation;
+* `bin_distribution_entropy` — liefert konstant 0,0, ist also defekt und
+  wird aus der Methodik genommen;
+* β allein — zu verrauscht als Konvergenzkriterium (siehe unten). β bleibt
+  als operative, digging-bezogene Zusatzgröße erhalten,
+  `stack_height_variance` als Plausibilitätscheck.
+
+## Steady-State-/Stop-Regel (Stand Freeze-Closeout: OFFEN)
+
+Die Regel ist auf der finalen Konfiguration real durchlaufen worden und
+hat sich in der bisherigen Parametrierung **nicht bewährt**. Sie ist deshalb
+hier bewusst *nicht* als verbindlich eingetragen.
+
+Geprüfte Parametrierung:
+
+```text
+Blockgröße          = 50 physische Retrievals
+Signal              = mittleres β (Blocking Bins je Retrieval)
+Schwelle            = 10 % relative Änderung
+stabile Paare       = 2
+Measurement Window  = 100 physische Retrievals
+```
+
+Ergebnis über 15 Piloten (5 Policies × Seeds 42, 1, 7): **ein** Lauf löste
+aus, und dieser eine war ein Fehlalarm — nach den beiden Unterschreitungen
+(0,076; 0,098) folgte sofort 0,224. Ein statistisch gleichartiger Lauf
+derselben Policy löste nie aus.
+
+Ursache ist die Streuung des Signals, nicht das Prinzip:
+
+```text
+über 2134 Retrievals:   mean(β) = 2,31   sd(β) = 2,27   CV = 0,98
+erwartete relative Änderung ≈ √2 · CV / √B
+```
+
+| Blockgröße B | erwartete relative Änderung |
+|---|---|
+| 50 | 0,197 |
+| 100 | 0,139 |
+| 200 | 0,098 |
+| 300 | 0,080 |
+
+Bei B = 50 liegt die 10-%-Schwelle um den Faktor 2 unter dem reinen Rauschen.
+Belastbar wäre eine Blockgröße ab **rund 200 Retrievals** — dann werden je
+Lauf etwa 600 Retrievals bis zur Konvergenz plus 100 für das Measurement
+Window gebraucht. Zum Vergleich: Lehmann & de Koster (2026) mitteln über
+Blöcke von 10.000 Command Cycles bei einer Schwelle von 0,1 % bzw. 1 % und
+messen für ihre Systeme 20.000–120.000 Command Cycles bis zum Steady State.
+
+Ebenfalls offen: β ist **nicht** als Proxy für räumliche Stabilität
+bestätigt. `hot_bins_top_ratio` ist über den gesamten Lauf konstant
+(0,52–0,55) und damit als Signal ungeeignet; die Stackhöhenvarianz stieg zum
+gemeldeten β-Konvergenzpunkt noch monoton weiter.
+
+Vorbedingung für die Festlegung: Die Läufe müssen die Konvergenz überhaupt
+erreichen können. Derzeit fahren sich Läufe beim Ordered Return über
+zyklisch verschüttete Puffer-Blocker fest (Details in
+`FINAL_EXPERIMENT_FREEZE_2026-08-21.md`, Abschnitt C.3).
 
 ## Strategien und Experimentkonfiguration
 

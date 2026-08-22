@@ -31,6 +31,7 @@ from state.pickstation import Pickstation
 from traffic.reservation_table import ReservationTable
 from traffic.traffic_manager import TrafficManager
 from traffic.highway_rules import HighwayRules
+from utils.port_buffer_zone import calculate_buffer_zone
 from collections import Counter
 
 
@@ -122,11 +123,30 @@ class SimulationEngine:
 
         self.hot_bin_ids = self._determine_hot_bin_ids()
 
+        # FINAL FREEZE CLOSEOUT: Initialverteilung und Laufzeit-Placement
+        # nutzen DIESELBE Storage-Eligibility.
+        #
+        # Zur Laufzeit prüft `State.is_valid_storage_position` gegen
+        # `State.buffer_zone`, die aus derselben Funktion stammt. Der Aufruf
+        # steht hier vorne, weil `initialize_port_zones` erst nach dem Bau des
+        # State möglich ist – die Menge ist in beiden Fällen identisch, weil
+        # sie aus denselben Port-Positionen und Grid-Maßen berechnet wird.
+        #
+        # Ohne diesen Ausschluss würde der Startzustand Bins in Zellen legen,
+        # die nach t=0 nie wieder belegt werden dürfen. RQ4 misst dann
+        # zusätzlich deren erzwungenes Ausströmen statt reiner Reorganisation.
+        storage_exclusions = calculate_buffer_zone(
+            port_positions=[ps.position for ps in pickstations],
+            grid_width=grid.width,
+            grid_depth=grid.depth,
+        )
+
         initialize_bins(
             grid=grid,
             bins=bins,
             init_strategy=self._resolve_init_strategy(),
             hot_bin_ids=self.hot_bin_ids,
+            excluded_positions=storage_exclusions,
             # PHASE 4/5: Eigener Initialisierungs-Strom, ausschließlich für die
             # Bin-Verteilung. Dadurch hängt das Startlayout allein am
             # Master-Seed – weder an der Policy noch an der Roboterzahl.
@@ -205,6 +225,11 @@ class SimulationEngine:
         placement_selector = PlacementSelector(
             config=self.config,
             rng=self.placement_rng,
+            # LIVENESS (2026-08-22): Die Rücklagerung darf keine Bin
+            # verschütten, die ein anderer Task noch aus ihrem Pufferstack
+            # abholen muss. Quelle ist ausschließlich die vorhandene
+            # Blocker-Ownership der ActiveQueue.
+            active_queue=self.active_queue,
         )
 
         # NEU: ReorderingSelector für Blocking-Bin-Reordering (LOFI / ABC)

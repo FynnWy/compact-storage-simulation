@@ -444,6 +444,20 @@ def test_carried_bin_link_is_set_on_pickup_and_cleared_on_drop():
     # Der Roboter muss physisch am Quellstack stehen (Pickup-Positions-Guard).
     robot.set_position(_position_of(source_stack))
 
+    # LIVENESS (2026-08-22): Ein Pickup gehört immer zu einem Task. Ein
+    # Pickup-Event eines Roboters OHNE Task ist seit dieser Änderung verwaist
+    # und wird verworfen – im Produktivlauf war genau das die Ursache dafür,
+    # dass ein Roboter eine fremde Bin aufnahm und die Portzelle blockierte.
+    # Die Fixture stellt die reale Vorbedingung deshalb explizit her.
+    from events.event_types import EventType as _EvT
+    from requests_.request import Request as _Req
+    from simulation.robot_task import RobotTask
+
+    robot.assign_task(RobotTask(_Req(
+        request_id=9401, event_type=_EvT.ARRIVAL, bin_id=top_bin.bin_id,
+        t_arrival=0, t_earliest=0, t_latest=1000,
+    )))
+
     assert not robot.is_carrying_bin()
 
     pickup_action = {

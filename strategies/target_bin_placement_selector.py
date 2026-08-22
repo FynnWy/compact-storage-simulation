@@ -14,16 +14,22 @@ class PlacementSelector:
       der Pickstation gelegt werden soll.
     """
 
-    def __init__(self, config, rng=None):
+    def __init__(self, config, rng=None, active_queue=None):
         """
         Args:
             config:
                 SimulationConfig mit Attribut placement_strategy.
             rng:
                 Optionaler Random Number Generator für reproduzierbare Zufallsauswahl.
+            active_queue:
+                Optional: ActiveQueue, um Stacks zu erkennen, auf denen ein
+                anderer Task noch eine ausgelagerte Blocker-Bin liegen hat.
+                Ohne diese Information kann eine Rücklagerung eine solche Bin
+                verschütten – siehe `_get_blocked_stack_ids`.
         """
         self.config = config
         self.rng = rng or np.random.default_rng()
+        self.active_queue = active_queue
 
     # ------------------------------------------------------------------ #
     # Öffentliches Interface
@@ -503,6 +509,7 @@ class PlacementSelector:
         überall liegen.
         """
         max_stack_height = self._get_max_stack_height(state)
+        blocked = self._get_blocked_stack_ids(state)
         candidates = []
 
         for stack in state.grid.all_stacks():
@@ -517,9 +524,70 @@ class PlacementSelector:
                 if not state.is_valid_storage_position(pos[0], pos[1]):
                     continue
 
+            # LIVENESS (2026-08-22): Kein Stack, auf dem ein anderer Task noch
+            # eine ausgelagerte Blocker-Bin liegen hat.
+            if stack.stack_id in blocked:
+                continue
+
             candidates.append(stack)
 
         return candidates
+
+    def _get_blocked_stack_ids(self, state):
+        """
+        Stacks, auf denen eine Bin mit AKTIVER Blocker-Ownership liegt.
+
+        Warum: Ein Task, der Blocking-Bins ausgelagert hat, holt sie zum
+        Ordered Return exakt dort wieder ab, wo er sie abgelegt hat. Sein
+        Rücklagerungsplan enthält KEINEN Schritt, um eine zwischenzeitlich
+        daraufgelegte fremde Bin abzuräumen. Wird die Blocker-Bin verschüttet,
+        scheitert der Pickup dauerhaft mit `expected bin X not on top`; Retry
+        und Requeue ändern daran nichts, weil niemand die fremde Bin entfernt.
+        Der Lauf macht ab da keinen Fortschritt mehr.
+
+        Gemessen an ABC+ABC/Seed 42: sieben von acht Robotern warteten in
+        `restore_blockers` auf je eine verschüttete eigene Blocker-Bin; die
+        darüber liegenden Bins waren überwiegend zurückgelagerte A-Klasse-
+        Target-Bins, also genau Ergebnisse dieser Auswahl hier.
+
+        `RelocationSelection` kennt dieselbe Einschränkung bereits
+        (`_get_critical_stack_ids`, dort sogar weiter gefasst über alle
+        reservierten Bins). Diese Methode schließt die verbliebene Lücke im
+        Rücklagerungspfad. Es entsteht KEINE zweite Ownership-Struktur: die
+        Quelle ist ausschließlich `ActiveQueue._blocker_ownership`.
+
+        Bewusst NICHT ausgeschlossen werden Stacks, die nur eine Target-Bin
+        eines anderen Tasks enthalten. Deren Retrieval gräbt ohnehin alles ab,
+        was darüber liegt – das ist Teil des Modells und der Grund, warum
+        `blocking_bins` größer als `levels_from_top` werden kann.
+        """
+        queue = self.active_queue
+        if queue is None:
+            return frozenset()
+
+        try:
+            blocker_ids = queue.get_blocker_owned_bin_ids()
+        except AttributeError:
+            return frozenset()
+
+        if not blocker_ids:
+            return frozenset()
+
+        blocked = set()
+        for bin_id in blocker_ids:
+            bin_obj = state.get_bin_by_id(bin_id)
+            if bin_obj is None:
+                continue
+            stack_pos = bin_obj.get_stack()
+            if stack_pos is None:
+                # Bin gerade in Transport – sie liegt auf keinem Stack.
+                continue
+            if isinstance(stack_pos, tuple) and len(stack_pos) == 2:
+                blocked.add(f"S_{stack_pos[0]}_{stack_pos[1]}")
+            else:
+                blocked.add(stack_pos)
+
+        return blocked
 
     def _parse_stack_position(self, stack):
         """

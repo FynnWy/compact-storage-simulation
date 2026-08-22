@@ -65,6 +65,30 @@ def _put_bin_at_pickstation(engine, station, source=None):
     return bin_obj
 
 
+def _give_robot_task_for(engine, robot, bin_id, request_id=9001):
+    """
+    Stattet den Roboter mit einem Task für genau diese Bin aus.
+
+    LIVENESS (2026-08-22): Ein Pickup gehört immer zu einem Task. Ein
+    Pickup-Event eines Roboters OHNE Task gilt seit dieser Änderung als
+    verwaist und wird verworfen – im Produktivlauf nahm ein solcher Roboter
+    sonst eine FREMDE Bin an der Pickstation auf und blockierte danach
+    dauerhaft die einzige Portzelle (LR+NR/Seed 42, t=2184).
+
+    Die Fixtures stellen die reale Vorbedingung deshalb explizit her, statt
+    sich auf einen Zustand zu stützen, den es im Produktivlauf nicht gibt.
+    """
+    from requests_.request import Request
+    from simulation.robot_task import RobotTask
+
+    task = RobotTask(Request(
+        request_id=request_id, event_type=EventType.ARRIVAL, bin_id=bin_id,
+        t_arrival=0, t_earliest=0, t_latest=1000,
+    ))
+    robot.assign_task(task)
+    return task
+
+
 def _take_bin_into_hand(engine, robot, source=(2, 3)):
     stack = engine.state.grid.get_stack(*source)
     if stack is None or stack.height() == 0:
@@ -132,6 +156,7 @@ def test_pickup_from_pickstation_succeeds_on_port():
     robot = engine.state.robots[0]
     bin_obj = _put_bin_at_pickstation(engine, station)
     robot.set_position(station.position)
+    _give_robot_task_for(engine, robot, bin_obj.bin_id)
 
     action = {
         "type": "return",

@@ -628,16 +628,42 @@ Merksatz für die Legacy-Diskussion: Der Legacy-Zweig war **nicht** nur tote
 Last – er enthielt produktive Logik, die im Live-Pfad fehlte. Beim Aufräumen
 alter Zweige lohnt der Blick, ob dort etwas Aktives hängt.
 
-### Zwei Zulässigkeitsbegriffe, die nicht deckungsgleich sind
+### Zwei Zulässigkeitsbegriffe — seit dem Freeze-Closeout deckungsgleich
 
 | Prädikat | schließt aus | benutzt von |
 |---|---|---|
-| `grid.is_storage_position(x, y)` | nur Portzellen | Initialverteilung, `_select_random_stack`, `_select_original_stack` |
+| `grid.is_storage_position(x, y)` | nur Portzellen | `_select_random_stack`, `_select_original_stack` |
 | `state.is_valid_storage_position(x, y)` | Portzellen **und** Pufferzone (Manhattan ≤ 1) | `_get_eligible_stacks` (NEAREST/ABC/POPULARITY), `RelocationSelection` |
 
-Bins können also in der Pufferzone starten, unter NEAREST/ABC/POPULARITY aber
-nie dorthin zurückkehren. Das ist ein systematischer Drift, der die Policies
-unterschiedlich trifft, und beim Auswerten räumlicher Metriken zu beachten.
+**Geänderter Datenfluss (Freeze-Closeout 2026-08-21):** Die Initialverteilung
+gehört nicht mehr in die erste Zeile. `SimulationEngine._initialize_state`
+berechnet die Pufferzone jetzt vor `initialize_bins` und übergibt sie als
+`excluded_positions`:
+
+```text
+_create_grid()  ->  pickstations
+        |
+        v
+calculate_buffer_zone(port_positions, w, d)   # utils/port_buffer_zone.py
+        |                              \
+        v                               \--> initialize_bins(excluded_positions=...)
+State(...)                                       -> init_random_distribution
+        |                                           -> _all_stack_positions
+        v                                              (Ports via grid + excluded)
+state.initialize_port_zones(pickstations)
+        -> state.buffer_zone   (dieselbe Funktion, dieselbe Menge)
+        -> state.is_valid_storage_position
+```
+
+Beide Wege stammen damit aus **einer** Quelle. Der frühere systematische
+Drift – Bins starten in der Pufferzone und laufen unter allen Policies aus
+ihr heraus – existiert nicht mehr. Nebeneffekt, den man beim Vergleich mit
+alten Läufen kennen muss: die Pufferzonen-Stacks lieferten früher im Verlauf
+zusätzliche freie Kapazität, der effektive Füllgrad war also nicht stationär.
+
+Reicht die Kapazität nach Abzug der Pufferzone nicht, wirft
+`init_random_distribution` einen `ValueError` (fail fast). Es gibt bewusst
+keinen Fallback, der die Pufferzone bei knapper Kapazität wieder freigibt.
 
 ### `max_stack_height` liegt nicht am State
 
@@ -812,16 +838,48 @@ Requests – davor wäre `batch_size` konstant 1.
 
 ## 10. Offene Fragen / Unsicherheiten
 
-- Steady-State-Regel: Der Wegfall des opportunistischen Bypass hat den
-  Durchsatz etwa halbiert (0,062 -> 0,031 bins/ZE). Die in Phase 5
-  vorgesehene Grenze von 6000 ZE reicht nicht mehr; ABC+ABC braucht bei
-  0,0157 bins/ZE rund 22.000 ZE. Regel und Grenze sind noch nicht
-  validiert (siehe FINAL_EXPERIMENT_FREEZE_2026-08-21.md, Abschnitt 5).
-- Initiale Storage-Eligibility: Es ist entschieden, dass die
-  Initialverteilung dieselben zulässigen Positionen nutzen soll wie die
-  Placement-Policies (Port-Pufferzone ausgeschlossen). Noch nicht
-  umgesetzt – kleine Testgrids (3x3) verlieren dadurch den Großteil
-  ihrer Kapazität.
+- **Verschütteter Blocker beim Ordered Return — BEHOBEN (2026-08-22).**
+  Ein Task parkte Blocking-Bins auf Pufferstacks und holte sie zum Ordered
+  Return genau dort wieder ab; legte in der Zwischenzeit ein fremder Vorgang
+  eine Bin darauf, scheiterte der Pickup dauerhaft
+  (`expected bin X not on top`). Zwei Wege führten dorthin: der Ordered
+  Return eines anderen Tasks auf seinen Ursprungsstack, und die
+  Target-Rücklagerung, deren Ziel zum Planungszeitpunkt gewählt wird.
+  Prävention: `ActiveQueue.get_blocker_owned_bin_ids()` /
+  `get_pending_restore_stack_ids()` als Filter in `RelocationSelection`
+  (Park-Seite) und `PlacementSelector` (Ablage-Seite), plus eine erneute
+  Prüfung unmittelbar vor dem Absetzen
+  (`EventHandler._redirect_drop_that_would_bury_blocker`). Restfall:
+  `TopAccessStrategy._next_unbury_action` räumt frei, statt den Pickup zu
+  wiederholen — ohne die freigeräumte Bin in `temp_storage` oder die
+  Ownership aufzunehmen.
+- **Verwaistes Pickup-Event — BEHOBEN (2026-08-22).** Nach einem Requeue
+  (`robot.clear_task()`) blieben eingeplante Pickup-Events in der Queue. Die
+  Stale-Prüfung griff nur bei `current_task is not None`; ohne Task lief das
+  Event durch, der Roboter nahm an der Pickstation eine fremde Bin auf und
+  blockierte die Portzelle, oder das Event lief bis `max_retries` und brach
+  den Lauf ab. `_handle_robot_pickup` verwirft solche Events jetzt
+  (`[STALE][PICKUP_NO_TASK]`).
+- **Portstau (offener Blocker).** Bis zu acht Roboter sammeln sich in den
+  sieben Zellen um eine Pickstation und blockieren sich gegenseitig, während
+  die zweite Station leer läuft. Der Zustand ist invariantenrein, es fehlt
+  ausschließlich der Fortschritt. Die vorhandene Auflösung erkennt nur
+  Zyklen zwischen ZWEI Robotern (`[DEADLOCK] Detected cycle ... robots [a, b]`);
+  `[DEADLOCK][REQUEUE] robot cannot evade` feuert wirkungslos. Vorbestehend,
+  bisher durch die beiden oben genannten Fehler verdeckt. Reproduktion mit
+  festem Seed: ABC+ABC/Seed 42 (ab t≈2973), POPULARITY/Seed 1 (ab t≈1992).
+  Details: FINAL_EXPERIMENT_FREEZE_2026-08-21.md, Abschnitt D.2 (Klasse C).
+- Steady-State-Regel: real durchlaufen und in der bisherigen Parametrierung
+  widerlegt. β je Retrieval hat CV ≈ 1; bei Blöcken à 50 Retrievals liegt
+  die erwartete relative Änderung bei 0,197, also doppelt so hoch wie die
+  10-%-Schwelle. Belastbar wäre eine Blockgröße ab ≈ 200. β ist zudem nicht
+  als Proxy für räumliche Stabilität bestätigt (Abschnitt C.2 ebenda).
+- `bin_distribution_entropy` liefert in allen Snapshots konstant 0,0. Die
+  Metrik ist offenbar defekt; nicht untersucht, nirgends verwendet.
+- Initiale Storage-Eligibility: **umgesetzt** (siehe oben,
+  „Zwei Zulässigkeitsbegriffe"). Kleine Testfixtures wurden dafür auf
+  explizit gültige Vorbedingungen gesetzt (`small_config` 3x3 -> 4x4,
+  `test_strategy_correctness.build_engine` 240 -> 180 Bins).
 
 - Soll NEAREST-Return „zurück in die Nähe des Ursprungsstacks" oder „so nah wie
   möglich an den Port" bedeuten? Implementiert ist Letzteres (Befund P3-04).

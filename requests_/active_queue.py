@@ -213,6 +213,52 @@ class ActiveQueue:
     def is_bin_blocker_owned(self, bin_id):
         return bin_id in self._blocker_ownership
 
+    def get_blocker_owned_bin_ids(self):
+        """
+        Nur die Bins mit AKTIVER Blocker-Ownership – ohne Target-Bins.
+
+        Abgrenzung zu `get_all_reserved_bin_ids()`: dort geht es um die Frage
+        „auf welche Bin darf kein NEUER Task starten", hier um die engere
+        Frage „welche Bin muss ein laufender Task noch genau dort abholen, wo
+        sie liegt". Nur diese Bins dürfen nicht verschüttet werden; eine
+        Target-Bin wird beim Retrieval ohnehin freigegraben.
+
+        Lesender Zugriff auf dieselbe Struktur, keine zweite Ownership-Quelle.
+        """
+        return frozenset(self._blocker_ownership.keys())
+
+    def get_pending_restore_stack_ids(self):
+        """
+        Stacks, auf die ein laufender Task seine ausgelagerten Blocker noch
+        zurücklegen wird (`from_stack` der offenen `temp_storage`-Einträge).
+
+        Warum das gebraucht wird: Der Ordered Return legt Blocker per
+        Definition auf ihren URSPRUNGSSTACK zurück – dieses Ziel ist Teil der
+        untersuchten Strategie und darf nicht umgelenkt werden. Parkt ein
+        FREMDER Task in der Zwischenzeit eine Bin auf genau diesem Stack, so
+        verschüttet der spätere Ordered Return sie, und der fremde Task
+        scheitert dauerhaft mit `expected bin X not on top`.
+
+        Belegt im 7x7-Arbeitsfall: Roboter 3 parkt Blocker 124 bei t=1001 auf
+        S_1_4; Roboter 0 legt bei t=1007..1078 vier eigene Blocker auf S_1_4
+        zurück – das ist sein Originalstack. Danach kommt Roboter 3 nie mehr
+        an seine Bin.
+
+        Die Lösung liegt deshalb auf der PARK-Seite: nicht dort parken, wo ein
+        anderer Task noch zurücklegen muss.
+
+        Lesender Zugriff auf `_blocker_ownership`, keine zweite Struktur.
+        """
+        stacks = set()
+        for task in set(self._blocker_ownership.values()):
+            for eintrag in (getattr(task, "temp_storage", None) or []):
+                if not isinstance(eintrag, dict):
+                    continue
+                ziel = eintrag.get("from_stack")
+                if ziel is not None:
+                    stacks.add(ziel)
+        return frozenset(stacks)
+
     # ------------------------------------------------------------------
     # Hilfsmethode für EventHandler (Pickstation-Pickup)
     # ------------------------------------------------------------------

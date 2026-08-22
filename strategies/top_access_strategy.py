@@ -185,6 +185,34 @@ class TopAccessStrategy(BaseStrategy):
         relocation = task.peek_last_relocation()
 
         if relocation is not None:
+            # LIVENESS (2026-08-22): Ist die eigene Blocker-Bin verschüttet,
+            # zuerst freiräumen statt den Pickup endlos zu wiederholen.
+            #
+            # Der Rücklagerungsplan holt jede Blocker-Bin genau dort ab, wo sie
+            # geparkt wurde. Liegt inzwischen eine fremde Bin darauf, scheiterte
+            # der Pickup bisher dauerhaft mit `expected bin X not on top`;
+            # Retry und Requeue änderten daran nichts, weil kein Schritt
+            # existierte, der die fremde Bin entfernt. Der Lauf machte ab da
+            # keinen Fortschritt mehr (ABC+ABC/Seed 42, POP/Seed 1).
+            #
+            # Prävention (Park-Seite und Ablage-Umleitung) macht diesen Fall
+            # selten; er bleibt aber möglich, solange Planungs- und
+            # Ausführungszeitpunkt auseinanderfallen. Deshalb hier der
+            # zusätzliche, fachlich korrekte Schritt: die aufliegende Bin wird
+            # umgelagert – dieselbe Arbeit, die auch ein Retrieval leisten
+            # müsste.
+            #
+            # Policyneutral: Die Rücklagerung selbst bleibt unverändert
+            # (Ordered Return auf den Ursprungsstack, Reihenfolge weiter durch
+            # `reordering_strategy`). Es wird keine Verpflichtung verworfen.
+            #
+            # Kein Einfluss auf RQ1: `blocking_bins` wird beim Eintreffen der
+            # Target-Bin an der Pickstation festgeschrieben, also VOR dieser
+            # Phase.
+            freigabe = self._next_unbury_action(state, task, relocation)
+            if freigabe is not None:
+                return freigabe
+
             to_stack_id = relocation["from_stack"]
 
             # R-D2: Ziel-Stack für Rücklagerung validieren – ist er zugänglich?
@@ -216,6 +244,46 @@ class TopAccessStrategy(BaseStrategy):
 
         task.phase = RobotTask.PHASE_RETURN_TARGET
         return self.next_action(state, task)
+
+    def _next_unbury_action(self, state, task, relocation):
+        """
+        Liefert eine Relocate-Aktion, wenn die naechste zurueckzulegende
+        Blocker-Bin unter fremden Bins liegt.
+
+        Returns:
+            dict | None: `relocate`-Aktion fuer die oberste aufliegende Bin,
+            oder None, wenn die Blocker-Bin bereits zugaenglich ist.
+        """
+        buffer_stack = self._get_stack_by_id(state, relocation.get("buffer_stack"))
+        if buffer_stack is None:
+            return None
+
+        bin_id = relocation.get("bin_id")
+        top_bin = buffer_stack.peek()
+        if top_bin is None or top_bin.bin_id == bin_id:
+            return None
+
+        # Nur eingreifen, wenn die eigene Bin wirklich in DIESEM Stack liegt.
+        if not any(b.bin_id == bin_id for b in buffer_stack.bins):
+            return None
+
+        ziel = self._select_relocation_stack(state=state, exclude_stack=buffer_stack)
+        if ziel is None or ziel.stack_id == buffer_stack.stack_id:
+            return None
+
+        print(
+            f"[UNBURY] t={getattr(state, 't', None)} task={task.request_id} "
+            f"blocker={bin_id} liegt unter {top_bin.bin_id} auf "
+            f"{buffer_stack.stack_id} -> {ziel.stack_id}"
+        )
+
+        return {
+            "type": "relocate",
+            "from_stack": buffer_stack.stack_id,
+            "to_stack": ziel.stack_id,
+            "bin_id": top_bin.bin_id,
+            "unbury": True,
+        }
 
     def _next_wait_for_pickstation_action(self, task):
         """

@@ -112,12 +112,35 @@ def test_retrieval_rows_are_complete_for_rq3():
 
 def test_blocking_bins_matches_the_position_in_the_stack():
     """
-    Die gemeldete Digging-Tiefe muss der tatsächlichen Anzahl darüber
-    liegender Bins entsprechen.
+    β (`blocking_bins`) und `levels_from_top` messen fast immer dasselbe –
+    aber nicht per Definition.
 
-    Ausnahme: Wird ein Blocker zwischenzeitlich von einem anderen Task
-    übernommen (Ownership-Transfer), kann der eigene Aufwand kleiner sein.
-    Mehr als `levels_from_top` darf es aber nie sein.
+    `levels_from_top` ist ein SNAPSHOT: die Anzahl Bins über der Target-Bin
+    in dem Moment, in dem der Task den Zielstapel zum ersten Mal ansieht
+    (`TopAccessStrategy`, `task.target_stack_id is None`). `blocking_bins`
+    ist der TATSÄCHLICHE Umlagerungsaufwand, den der Task bis zum Retrieval
+    geleistet hat (`len(task.temp_storage)`).
+
+    In einem Mehrrobotersystem können beide auseinanderlaufen, in beide
+    Richtungen:
+
+    * kleiner – ein Blocker wird zwischenzeitlich von einem anderen Task
+      übernommen (Ownership-Transfer), der eigene Aufwand sinkt;
+    * größer – ein anderer Roboter legt während des laufenden Digs eine Bin
+      auf den Zielstapel, die dann zusätzlich abgeräumt werden muss.
+      Nachgewiesen im Trace: Dig-Start t=95 auf S_0_3, fremder Push t=137,
+      Abräumen t=150 – gemeldet werden 5 Blocker bei `levels_from_top = 4`.
+
+    Der zweite Fall ist keine Folge der Initial-Eligibility: er tritt auch
+    auf dem alten Startzustand auf (Seeds 3 und 7). Eine Assertion
+    `blocking_bins <= levels_from_top` war deshalb faktisch falsch und lief
+    bei Seed 42 nur zufällig durch.
+
+    Geprüft wird daher, was tatsächlich gelten muss:
+    die beiden Größen stimmen in der großen Mehrzahl der Retrievals exakt
+    überein, Abweichungen bleiben selten und bleiben in der Größenordnung
+    eines Stapels. Läuft das auseinander, misst die Digging-Tiefe etwas
+    anderes als gedacht.
     """
     engine = build_engine(sim_time=300)
     run(engine)
@@ -125,16 +148,29 @@ def test_blocking_bins_matches_the_position_in_the_stack():
     rows = engine.metrics.retrievals
     assert rows
 
+    max_height = engine.config.max_stack_height
     exakt = sum(1 for r in rows if r["blocking_bins"] == r["levels_from_top"])
+    zu_viel = [r for r in rows if r["blocking_bins"] > r["levels_from_top"]]
+
     for row in rows:
-        assert row["blocking_bins"] <= row["levels_from_top"], (
-            f"Mehr Blocker gemeldet ({row['blocking_bins']}) als Bins über der "
-            f"Target-Bin lagen ({row['levels_from_top']})"
+        assert row["blocking_bins"] >= 0
+        abweichung = abs(row["blocking_bins"] - row["levels_from_top"])
+        assert abweichung <= max_height, (
+            f"Digging-Tiefe {row['blocking_bins']} weicht um {abweichung} von "
+            f"levels_from_top {row['levels_from_top']} ab – mehr als eine "
+            f"volle Stapelhöhe ({max_height}) ist nicht durch Interferenz "
+            f"erklärbar."
         )
 
     assert exakt / len(rows) > 0.8, (
         f"Nur {exakt}/{len(rows)} Retrievals stimmen exakt überein – "
         f"die Digging-Tiefe misst offenbar etwas anderes."
+    )
+
+    assert len(zu_viel) / len(rows) < 0.2, (
+        f"{len(zu_viel)}/{len(rows)} Retrievals melden MEHR Blocker als beim "
+        f"Dig-Start über der Target-Bin lagen. Vereinzelt ist das durch "
+        f"Fremdablage auf dem Zielstapel erklärbar, häufig nicht."
     )
 
 

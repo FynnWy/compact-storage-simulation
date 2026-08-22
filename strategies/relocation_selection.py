@@ -250,6 +250,17 @@ class RelocationSelection:
         Dazu gehören u.a.:
         - Target-Bins zugewiesener/wartender/Pickstation-Tasks.
         - Alle Blocker-Bins mit aktiver Ownership.
+
+        LIVENESS (2026-08-22), zweites Kriterium:
+        - Stacks, auf die ein anderer Task seine ausgelagerten Blocker noch
+          zurücklegen wird (`ActiveQueue.get_pending_restore_stack_ids()`).
+
+        Der Ordered Return legt Blocker auf ihren Ursprungsstack zurück; dieses
+        Ziel gehört zur untersuchten Strategie und darf nicht umgelenkt
+        werden. Wird dort in der Zwischenzeit fremd geparkt, verschüttet der
+        Return die fremde Bin und deren Eigentümer kommt nie mehr an sie
+        heran. Die Einschränkung greift deshalb auf der Park-Seite und gilt
+        für alle Policies gleich.
         """
         if self.active_queue is None:
             return set()
@@ -260,10 +271,18 @@ class RelocationSelection:
         except Exception:
             return set()
 
-        if not reserved_bin_ids:
-            return set()
-
         critical_stack_ids = set()
+
+        # Offene Rücklagerungsziele fremder Tasks (siehe Docstring).
+        try:
+            critical_stack_ids.update(
+                self.active_queue.get_pending_restore_stack_ids()
+            )
+        except AttributeError:
+            pass
+
+        if not reserved_bin_ids:
+            return critical_stack_ids
 
         for bin_id in reserved_bin_ids:
             bin_obj = state.get_bin_by_id(bin_id)

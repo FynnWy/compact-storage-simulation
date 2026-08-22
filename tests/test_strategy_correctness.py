@@ -47,8 +47,29 @@ POLICIES = {
 
 
 def build_engine(reordering, placement, return_blocking_bins,
-                 seed=42, robots=3, width=7, depth=7, bins=240,
+                 seed=42, robots=3, width=7, depth=7, bins=180,
                  height=6, util=0.5, sim_time=400, pickstations=2):
+    """
+    FINAL FREEZE CLOSEOUT: `bins` von 240 auf 180 gesenkt.
+
+    Seit die Initialverteilung dieselbe Storage-Eligibility nutzt wie das
+    Laufzeit-Placement, ist die Port-Pufferzone auch initial gesperrt. Auf
+    7x7 sind das 6 der 47 Storage-Stacks, also 13 % der Kapazität; zulässig
+    bleiben 41 Stacks x 6 = 246 Slots statt 282.
+
+    Vorher war die Pufferzone initial belegt und lief über die Laufzeit leer
+    – das Lager verschob sich also von 240/282 = 85 % auf 240/246 = 98 % der
+    NUTZBAREN Kapazität. Mit unveränderten 240 Bins beginnt der Lauf jetzt
+    sofort bei 98 %, es bleiben 6 freie Top-Positionen und Relocations
+    scheitern (`No relocation stack with free capacity available`).
+
+    180 Bins (73 % der zulässigen Kapazität, 66 freie Slots) halten die
+    Fixture über den gesamten Lauf in dem Regime, für das die Tests gedacht
+    sind: genug Stapelhöhe für echtes Digging, genug Headroom für
+    Relocations. Die geprüften Policy-Eigenschaften hängen nicht am
+    Füllgrad. Kein Fallback in der Produktionslogik – die Vorbedingung ist
+    explizit gültig.
+    """
     config = SimulationConfig()
     config.grid_width = width
     config.grid_depth = depth

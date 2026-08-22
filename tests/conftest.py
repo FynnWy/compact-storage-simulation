@@ -22,12 +22,32 @@ from traffic.highway_rules import HighwayRules
 
 @pytest.fixture
 def small_config():
-    """Minimale Konfiguration für schnelle Tests."""
+    """
+    Minimale Konfiguration für schnelle Tests.
+
+    FINAL FREEZE CLOSEOUT: Seit die Initialverteilung dieselbe
+    Storage-Eligibility nutzt wie das Laufzeit-Placement, ist die
+    Port-Pufferzone (Manhattan ≤ 1 um den Port) auch initial gesperrt.
+
+    Auf dem alten 3x3-Grid sperrt sie 4 der 9 Zellen. Übrig blieben 5
+    zulässige Stacks – zu wenig, um überhaupt umlagern zu können: der
+    Originalstack läuft beim Rücklagern zuverlässig voll
+    (`Cannot select original return stack: ... has no free capacity`).
+    Ein 3x3-Grid mit Port ist unter der finalen Eligibility schlicht keine
+    gültige Konfiguration mehr.
+
+    Deshalb 4x4 statt 3x3: die Pufferzone sperrt weiterhin 4 Zellen, es
+    bleiben aber 12 zulässige Stacks mit 12 x 4 = 48 Slots. `bin_num = 30`
+    hält den ursprünglichen Füllgrad von 62,5 % (vorher 20/32) exakt.
+
+    Kein Fallback in der Produktionslogik: die Fixture erfüllt die
+    Vorbedingung jetzt explizit.
+    """
     config = SimulationConfig()
-    config.grid_width = 3
-    config.grid_depth = 3
+    config.grid_width = 4
+    config.grid_depth = 4
     config.max_stack_height = 4
-    config.bin_num = 20
+    config.bin_num = 30
     config.num_robots = 1
     config.simulation_time = 200
     config.random_seed = 42

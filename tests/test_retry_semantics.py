@@ -142,6 +142,26 @@ def test_repeated_identical_action_reaches_requeue_threshold():
         bin_id=buried.bin_id, from_stack="S_1_1",
         buffer_stack=buffer_stack.stack_id,
     )
+
+    # LIVENESS (2026-08-22): Aufbau angepasst, Prüfung unverändert.
+    #
+    # Seit die Strategie eine verschüttete eigene Blocker-Bin freiräumt
+    # (`_next_unbury_action`), liefert sie in diesem Fall eine ANDERE Aktion –
+    # der Versuch wiederholt sich also nicht mehr identisch, und der
+    # Retry-Zähler wird korrekterweise zurückgesetzt. Damit prüfte der alte
+    # Aufbau die Eskalationsschwelle nicht mehr.
+    #
+    # Getestet werden soll aber weiterhin genau diese Schwelle. Dafür braucht
+    # es einen Fall, in dem sich der Versuch tatsächlich identisch wiederholt:
+    # der Rücklagerungsplan zeigt auf einen Pufferstack, in dem die Bin gar
+    # nicht (mehr) liegt. Freiräumen hilft dann nicht, die Strategie liefert
+    # denselben Blocker-Return erneut – und die Eskalation muss greifen.
+    buffer_stack.bins.remove(buried)
+    handler._sync_stack_bin_metadata(buffer_stack)
+    ausweich = engine.state.grid.get_stack(4, 4)
+    ausweich.push(buried)
+    handler._sync_stack_bin_metadata(ausweich)
+
     robot.set_position((2, 2))
 
     action = {

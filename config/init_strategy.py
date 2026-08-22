@@ -8,19 +8,22 @@ def _all_stack_positions(grid, excluded_positions=None):
     """
     Alle Positionen, auf denen initial gelagert werden darf.
 
-    PHASE 5 (Experiment Readiness), bewusste Abgrenzung:
-    Die Initialverteilung nutzt weiterhin ALLE Storage-Positionen, also auch
-    die Port-Pufferzone. Das ist keine Policy-Asymmetrie, sondern ein für alle
-    Policies IDENTISCHER Startzustand – die Pufferzonen-Bins laufen unter
-    jeder Policy gleichermaßen aus dem Lager heraus.
+    FINAL FREEZE CLOSEOUT (2026-08-21):
+    Die Initialverteilung nutzt GENAU DIESELBEN zulässigen Storage-Positionen
+    wie die Placement-Policies zur Laufzeit. `SimulationEngine._initialize_state`
+    übergibt dafür die Port-Pufferzone aus `utils.port_buffer_zone.
+    calculate_buffer_zone` – dieselbe Funktion, aus der auch
+    `State.is_valid_storage_position` ihre Menge bezieht.
 
-    Die Asymmetrie lag beim Placement zur Laufzeit und ist dort behoben
-    (`PlacementSelector._select_random_stack` nutzt jetzt dieselbe
-    Kandidatenmenge wie alle anderen Strategien).
+    Grund: Mellers RQ4 fragt nach der Reorganisation aus einem zufälligen,
+    aber bereits GÜLTIGEN Lagerzustand. Startete das Lager mit Bins in der
+    Pufferzone, würde zusätzlich das erzwungene Ausströmen aus Zellen gemessen,
+    die nach t=0 nie wieder belegt werden dürfen.
 
-    `excluded_positions` bleibt als Parameter erhalten, falls die Pufferzone
-    später auch initial ausgeschlossen werden soll. Achtung: Auf sehr kleinen
-    Testgrids (z.B. 3x3) verbraucht die Pufferzone einen Großteil des Grids.
+    Kein stiller Fallback: Reicht die Kapazität nach Abzug der Pufferzone
+    nicht, wirft `init_random_distribution` einen Fehler. Kleine Testfixtures
+    müssen ihre Voraussetzungen explizit gültig konfigurieren (Grid groß
+    genug oder Binzahl klein genug), statt die Modellsemantik umzuschalten.
     """
     excluded = set(excluded_positions or ())
     positions = []
@@ -66,11 +69,16 @@ def init_random_distribution(grid, bins, random_seed=None, max_stack_height=None
     total_capacity = len(positions) * max_stack_height
 
     if len(bins) > total_capacity:
+        # Fail fast statt stillem Umschalten der Modellsemantik: Wenn die
+        # zulässigen Storage-Positionen (ohne Port-Pufferzone) nicht reichen,
+        # ist die KONFIGURATION unzulässig – die Eligibility wird nicht
+        # aufgeweicht.
         raise ValueError(
             f"Not enough storage capacity: bin_count={len(bins)}, "
             f"capacity={total_capacity}, "
             f"stacks={len(positions)}, "
-            f"max_stack_height={max_stack_height}"
+            f"max_stack_height={max_stack_height}, "
+            f"excluded_positions={len(set(excluded_positions or ()))}"
         )
 
     shuffled_bins = list(bins)
