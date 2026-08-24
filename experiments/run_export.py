@@ -31,6 +31,58 @@ import csv
 import json
 from pathlib import Path
 
+from metrics.rq4_plateau import analyse_engine
+
+
+# ====================================================================== #
+# Measurement Window — EINE Quelle
+# ====================================================================== #
+
+def measurement_window(engine):
+    """
+    Die eine Definition des Auswertungsfensters.
+
+    Rueckgabe: `(modus, t_start, t_ende)`.
+
+    Vorher gab es zwei voneinander unabhaengige Definitionen: `summarise_run`
+    filterte auf `[t_measure_start, t_final]`, `retrieval_rows` markierte
+    dagegen aus dem alten, retrievalgezaehlten Steady-State-Fenster. Beide
+    Definitionen konnten verschiedene Mengen meinen — und taten es auch: im
+    Trockenlauf der 50er-Matrix war `in_measurement_window` durchgehend
+    `False`, waehrend `runs.csv` 3 bis 13 Retrievals im Fenster zaehlte
+    (Befund J-1, 2026-08-24).
+
+    Deshalb entscheidet ausschliesslich diese Funktion, und alle Exportteile
+    fragen sie. Die Semantik ist die bereits getestete aus `summarise_run`:
+    beidseitig INKLUSIVE Grenzen auf `t_pickstation`.
+
+    Ohne konfiguriertes Fenster (Tests, Diagnoselaeufe) gilt der ganze Lauf.
+    Der alte retrievalgezaehlte Steady-State-Modus existiert nicht mehr: er
+    gehoert zur verworfenen beta-Stop-Regel und haette als zweite
+    Fensterdefinition genau das Problem reproduziert, das J-1 ausmacht.
+    """
+    config = engine.config
+    t_start = getattr(config, "t_measure_start", None)
+    t_ende = getattr(config, "t_final", None) or engine.state.t
+    if t_start is None:
+        return "full_run", None, engine.state.t
+    return "time_window", t_start, t_ende
+
+
+def is_in_measurement_window(zeitpunkt, modus, t_start, t_ende):
+    """Gehoert ein Zeitpunkt zum Auswertungsfenster?"""
+    if zeitpunkt is None:
+        return False
+    if modus != "time_window":
+        return True
+    return t_start <= zeitpunkt <= t_ende
+
+
+def retrievals_in_window(retrievals, modus, t_start, t_ende):
+    return [r for r in retrievals
+            if is_in_measurement_window(r.get("t_pickstation"),
+                                        modus, t_start, t_ende)]
+
 
 RUN_FIELDS = [
     # Identität
@@ -50,9 +102,27 @@ RUN_FIELDS = [
     "deadline_slack", "requests_evaluated", "deadline_miss_rate",
     "mean_tardiness", "median_tardiness", "p95_tardiness", "mean_flow_time",
     "pickstation_utilisation_mean",
-    # Steady State (RQ4)
-    "steady_state_status", "convergence_time", "convergence_retrievals",
-    "measurement_retrievals", "measurement_complete",
+    "pickstation_utilisation_ps0", "pickstation_utilisation_ps1",
+    "retrievals_ps0", "retrievals_ps1",
+    # Measurement Window (gemeinsames Zeitfenster aller Runs)
+    "measurement_retrievals", "measurement_mode", "t_measure_start", "t_final",
+    # RQ4 — offline aus der vollstaendigen Zeitreihe ab t=0.
+    #
+    # Die frueheren Spalten `steady_state_status`, `convergence_time`,
+    # `convergence_retrievals` und `measurement_complete` stammten aus der
+    # verworfenen beta-Stop-Regel (`metrics/steady_state.py`) und blieben im
+    # Kampagnenpfad ausnahmslos leer, weil die gelesenen Schluessel dort gar
+    # nicht existierten (Befund J-2, 2026-08-24). Eine Spalte, die etwas
+    # verspricht und leer bleibt, ist schlechter als keine Spalte — sie sind
+    # deshalb entfernt und durch die Felder der TATSAECHLICH eingefrorenen
+    # Regel ersetzt (`metrics/rq4_plateau.py`).
+    #
+    # `rq4_status` ist immer gesetzt. Die uebrigen Felder sind bewusst
+    # bedingt: `rq4_convergence_time_ZE` und `rq4_convergence_retrievals`
+    # existieren nur bei `converged`, `rq4_plateau_level` nur, wenn ueberhaupt
+    # ein Plateau gefunden wurde.
+    "rq4_status", "rq4_convergence_time_ZE", "rq4_convergence_retrievals",
+    "rq4_plateau_level", "rq4_redivergence", "rq4_blocks",
     # Diagnose / Laufgesundheit
     "move_stall_recoveries", "move_recovery_unresolved", "error",
 ]
@@ -85,26 +155,45 @@ def _mittel(werte):
     return sum(werte) / len(werte) if werte else None
 
 
-def summarise_run(run_id, policy, seed, engine, steady, error=None,
+def summarise_run(run_id, policy, seed, engine, rq4=None, error=None,
                   recoveries=0, unresolved=0):
     """
     Baut die Zeile für `runs.csv`.
 
-    Die primäre KPI `bin_throughput` wird über das Measurement Window
-    berechnet, sofern der Lauf konvergiert ist – sonst über den gesamten Lauf,
-    dann aber mit `steady_state_status = not_converged` gekennzeichnet.
+    Alle Performance-KPIs beziehen sich auf das Measurement Window, das
+    `measurement_window()` liefert — dieselbe Quelle, die auch
+    `retrieval_rows` benutzt.
+
+    Args:
+        rq4: Ergebnis der eingefrorenen Offline-RQ4-Regel. Wird `None`
+            übergeben, rechnet der Export es selbst aus der vollständigen
+            Zeitreihe des Laufs (`metrics.rq4_plateau.analyse_engine`). Es
+            gibt genau eine Implementierung dieser Regel; das
+            Kalibrationsskript benutzt dieselbe.
+
+    Der frühere Parameter `steady` (Ergebnis von
+    `metrics.steady_state.analyse_run`) ist entfallen. Er gehörte zur
+    verworfenen β-Stop-Regel, und die Felder, die der Export daraus las,
+    existierten im Kampagnenpfad gar nicht (Befund J-2).
     """
     config = engine.config
     zusammenfassung = engine.metrics.summary()
     alle = engine.metrics.retrievals
-    fenster = steady.get("measurement_window") or []
-    basis = fenster if fenster else alle
 
-    if fenster and len(fenster) > 1:
-        dauer = fenster[-1]["t_pickstation"] - fenster[0]["t_pickstation"]
-    else:
-        dauer = engine.state.t
-    dauer = max(dauer, 1)
+    # GEMEINSAMES ZEITFENSTER (2026-08-22, eine Quelle seit 2026-08-24)
+    #
+    # Die finale Kampagne laesst alle 50 Runs bis zur selben festen Zeit
+    # laufen und wertet nur [t_measure_start, t_final] aus. Nur so sind
+    # Durchsatz UND Verspaetung zwischen Policies vergleichbar: das System
+    # laeuft gesaettigt, die Tardiness misst das Alter des Rueckstands und
+    # waechst mit der Lauflaenge.
+    fenster_modus, t_start, t_ende = measurement_window(engine)
+    fenster = retrievals_in_window(alle, fenster_modus, t_start, t_ende)
+    basis = fenster
+    dauer = max((t_ende - t_start) if t_start is not None else engine.state.t, 1)
+
+    if rq4 is None:
+        rq4 = analyse_engine(engine)
 
     def anteil_oben(zeilen):
         if not zeilen:
@@ -117,20 +206,47 @@ def summarise_run(run_id, policy, seed, engine, steady, error=None,
         return treffer / len(zeilen)
 
     # Sekundäre Service-KPIs über alle bedienten Requests des Laufs.
+    # Requests fuer die Service-KPIs auf dasselbe Fenster beziehen wie die
+    # Retrievals. Sonst waeren `deadline_miss_rate` und `mean_tardiness` ueber
+    # den ganzen Lauf gemittelt, waehrend `bin_throughput` nur das Fenster
+    # misst - und die gepaarten Policy-Vergleiche waeren nicht mehr sauber.
+    _requests = [r for r in engine.metrics.completed_requests
+                 if is_in_measurement_window(r.get("time"), fenster_modus,
+                                             t_start, t_ende)]
+
     _tard = sorted(max(0, r["time"] - r["latest_time"])
-                   for r in engine.metrics.completed_requests
+                   for r in _requests
                    if "latest_time" in r)
     _flow = [r["time"] - r["arrival_time"]
-             for r in engine.metrics.completed_requests
+             for r in _requests
              if "arrival_time" in r]
 
+    # BEFUND 2026-08-22: Die Abfrage lautete `hasattr(station, "utilization")`,
+    # die Methode heisst aber `get_utilization`. Die Liste blieb deshalb IMMER
+    # leer und `pickstation_utilisation_mean` war in jedem Lauf `None` - eine
+    # still ausgefallene KPI.
     auslastungen = []
     for station in engine.state.pickstations:
-        if hasattr(station, "utilization"):
-            try:
-                auslastungen.append(station.utilization(engine.state.t))
-            except TypeError:
-                pass
+        try:
+            auslastungen.append(station.get_utilization(engine.state.t))
+        except (AttributeError, TypeError):
+            auslastungen.append(None)
+
+    # Lastverteilung je Station.
+    #
+    # Ein Mittelwert kann eine starke Asymmetrie vollstaendig verdecken
+    # (100 %/0 % und 50 %/50 % ergeben beide 50 %). Beobachtet wurde genau
+    # das: waehrend PS_0 blockiert war, lief PS_1 leer (Klasse C).
+    #
+    # Exportiert wird das Minimum: Auslastung und Zahl der physischen
+    # Retrievals JE Station. Anteile und eine etwaige Imbalance lassen sich
+    # daraus ableiten und brauchen keine eigene gespeicherte KPI. Die
+    # Stationszuordnung je Retrieval steht ohnehin schon in `retrievals.csv`.
+    je_station = {}
+    for zeile in basis:
+        station_id = zeile.get("pickstation")
+        je_station[station_id] = je_station.get(station_id, 0) + 1
+    stationen = [s.station_id for s in engine.state.pickstations]
 
     return {
         "run_id": run_id,
@@ -152,10 +268,8 @@ def summarise_run(run_id, policy, seed, engine, steady, error=None,
         "physical_retrievals": len(alle),
         # PRIMÄRE KPI: physische Bin-Retrievals je Zeiteinheit.
         "bin_throughput": (len(basis) / dauer) if basis else 0.0,
-        "requests_completed": zusammenfassung.get("requests_completed"),
-        "request_throughput": (
-            (zusammenfassung.get("requests_completed") or 0) / max(engine.state.t, 1)
-        ),
+        "requests_completed": len(_requests),
+        "request_throughput": len(_requests) / dauer,
         "mean_blocking_bins": _mittel([r["blocking_bins"] for r in basis]),
         "p_beta_zero": (
             sum(1 for r in basis if r["blocking_bins"] == 0) / len(basis)
@@ -175,11 +289,24 @@ def summarise_run(run_id, policy, seed, engine, steady, error=None,
         "p95_tardiness": _quantil(_tard, 0.95),
         "mean_flow_time": _mittel(_flow),
         "pickstation_utilisation_mean": _mittel(auslastungen),
-        "steady_state_status": steady.get("status"),
-        "convergence_time": steady.get("convergence_time"),
-        "convergence_retrievals": steady.get("convergence_retrievals"),
+        "pickstation_utilisation_ps0": (
+            auslastungen[0] if len(auslastungen) > 0 else None),
+        "pickstation_utilisation_ps1": (
+            auslastungen[1] if len(auslastungen) > 1 else None),
+        "retrievals_ps0": (
+            je_station.get(stationen[0], 0) if len(stationen) > 0 else None),
+        "retrievals_ps1": (
+            je_station.get(stationen[1], 0) if len(stationen) > 1 else None),
         "measurement_retrievals": len(fenster),
-        "measurement_complete": steady.get("measurement_complete"),
+        "measurement_mode": fenster_modus,
+        "t_measure_start": t_start,
+        "t_final": t_ende,
+        "rq4_status": rq4.get("status"),
+        "rq4_convergence_time_ZE": rq4.get("convergence_time"),
+        "rq4_convergence_retrievals": rq4.get("convergence_retrievals"),
+        "rq4_plateau_level": rq4.get("plateau_level"),
+        "rq4_redivergence": rq4.get("redivergence"),
+        "rq4_blocks": rq4.get("blocks"),
         "move_stall_recoveries": recoveries,
         "move_recovery_unresolved": unresolved,
         "error": error,
@@ -222,18 +349,112 @@ def request_rows(run_id, policy, seed, engine):
         }
 
 
-def retrieval_rows(run_id, policy, seed, engine, steady):
-    """Zeilen für `retrievals.csv`, inkl. Markierung des Measurement Windows."""
-    fenster = steady.get("measurement_window") or []
-    im_fenster = {id(r) for r in fenster}
+def retrieval_rows(run_id, policy, seed, engine):
+    """
+    Zeilen für `retrievals.csv`, inkl. Markierung des Measurement Windows.
+
+    `in_measurement_window` kommt aus derselben Quelle wie das Fenster in
+    `summarise_run`. Damit gilt für jeden einzelnen Run:
+
+        sum(retrievals.csv.in_measurement_window)
+        == runs.csv.measurement_retrievals
+
+    Bis 2026-08-24 markierte diese Funktion aus dem alten,
+    retrievalgezählten Steady-State-Fenster. Dessen Schlüssel existierte im
+    Kampagnenpfad nicht, die Spalte war deshalb durchgehend `False` —
+    während `runs.csv` korrekt zählte. Zwei Fensterbegriffe in einem Export
+    (Befund J-1).
+    """
+    modus, t_start, t_ende = measurement_window(engine)
 
     for row in engine.metrics.retrievals:
         eintrag = {"run_id": run_id, "policy": policy, "seed": seed}
         eintrag.update({k: row.get(k) for k in RETRIEVAL_FIELDS
                         if k not in ("run_id", "policy", "seed",
                                      "in_measurement_window")})
-        eintrag["in_measurement_window"] = id(row) in im_fenster
+        eintrag["in_measurement_window"] = is_in_measurement_window(
+            row.get("t_pickstation"), modus, t_start, t_ende)
         yield eintrag
+
+
+#: Die Dateien, die eine Zeile je Lauf oder je Ereignis eines Laufs tragen
+#: und deshalb beim Wiederholen eines Laufs bereinigt werden muessen.
+RUN_SCOPED_CSVS = ("runs.csv", "retrievals.csv", "requests.csv",
+                   "distribution.csv")
+
+
+def purge_runs(output_dir, run_ids):
+    """
+    Entfernt alle Zeilen der genannten Laeufe aus den Ausgabedateien.
+
+    Warum das noetig ist
+    --------------------
+    Ein wiederholter Lauf darf am Ende GENAU EINEN wissenschaftlichen
+    Datensatz haben. Ohne Bereinigung entsteht beim `--resume` nach einem
+    Fehlschlag eine zweite Zeile mit derselben `run_id`: der abgebrochene
+    Versuch und der geglueckte. Eine Auswertung, die nach `run_id`
+    gruppiert, saehe zwei Replikationen desselben Seeds — nachgewiesen am
+    2026-08-24 fuer `runs.csv` und `run_meta.json`.
+
+    Der abgebrochene Versuch geht nicht verloren: er bleibt in
+    `campaign_status.json` und in seiner Logdatei erhalten. Er ist
+    Betriebshistorie, keine Messreihe.
+
+    Die Bereinigung schreibt jede Datei ueber eine temporaere Datei und
+    `replace()`, ist also gegen einen Abbruch mitten im Schreiben robust.
+
+    Args:
+        output_dir: Kampagnenordner.
+        run_ids: Menge der zu entfernenden `run_id`s.
+
+    Returns:
+        dict `{dateiname: entfernte_zeilen}` — nur fuer Dateien, in denen
+        tatsaechlich etwas entfernt wurde.
+    """
+    ordner = Path(output_dir)
+    ids = set(run_ids)
+    entfernt = {}
+    if not ids:
+        return entfernt
+
+    for name in RUN_SCOPED_CSVS:
+        pfad = ordner / name
+        if not pfad.exists() or not pfad.stat().st_size:
+            continue
+        with open(pfad, newline="", encoding="utf-8") as fh:
+            leser = csv.DictReader(fh)
+            felder = leser.fieldnames
+            if not felder or "run_id" not in felder:
+                continue
+            alle = list(leser)
+        behalten = [z for z in alle if z.get("run_id") not in ids]
+        weg = len(alle) - len(behalten)
+        if not weg:
+            continue
+        tmp = pfad.with_suffix(pfad.suffix + ".tmp")
+        with open(tmp, "w", newline="", encoding="utf-8") as fh:
+            schreiber = csv.DictWriter(fh, fieldnames=felder)
+            schreiber.writeheader()
+            schreiber.writerows(behalten)
+        tmp.replace(pfad)
+        entfernt[name] = weg
+
+    meta_datei = ordner / "run_meta.json"
+    if meta_datei.exists():
+        try:
+            meta = json.loads(meta_datei.read_text())
+        except json.JSONDecodeError:
+            meta = None
+        if isinstance(meta, list):
+            behalten = [m for m in meta if m.get("run_id") not in ids]
+            if len(behalten) != len(meta):
+                tmp = meta_datei.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(behalten, indent=2,
+                                          ensure_ascii=False))
+                tmp.replace(meta_datei)
+                entfernt["run_meta.json"] = len(meta) - len(behalten)
+
+    return entfernt
 
 
 class ExperimentWriter:
@@ -244,30 +465,62 @@ class ExperimentWriter:
     bereits gerechneten Läufe verliert.
     """
 
-    def __init__(self, output_dir):
+    def __init__(self, output_dir, mode="w"):
+        """
+        Args:
+            mode: `"w"` schreibt die Dateien neu, `"a"` haengt an bereits
+                vorhandene an. Das Anhaengen braucht der Run-Level-Restart
+                der Kampagne (`--resume`): schon gerechnete Laeufe duerfen
+                nicht verloren gehen und auch nicht doppelt erscheinen.
+                Kopfzeilen werden im Anhaengemodus nicht wiederholt.
+        """
+        if mode not in ("w", "a"):
+            raise ValueError(f"mode muss 'w' oder 'a' sein, nicht {mode!r}")
         self.dir = Path(output_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
-        self._runs = open(self.dir / "runs.csv", "w", newline="", encoding="utf-8")
-        self._retr = open(self.dir / "retrievals.csv", "w", newline="", encoding="utf-8")
-        self._req = open(self.dir / "requests.csv", "w", newline="", encoding="utf-8")
-        self._dist = open(self.dir / "distribution.csv", "w", newline="", encoding="utf-8")
+        self.mode = mode
+
+        def oeffne(name):
+            pfad = self.dir / name
+            vorhanden = mode == "a" and pfad.exists() and pfad.stat().st_size
+            return open(pfad, mode, newline="", encoding="utf-8"), bool(vorhanden)
+
+        self._runs, runs_da = oeffne("runs.csv")
+        self._retr, retr_da = oeffne("retrievals.csv")
+        self._req, req_da = oeffne("requests.csv")
+        self._dist, dist_da = oeffne("distribution.csv")
         self._run_writer = csv.DictWriter(self._runs, fieldnames=RUN_FIELDS)
         self._retr_writer = csv.DictWriter(self._retr, fieldnames=RETRIEVAL_FIELDS)
         self._req_writer = csv.DictWriter(self._req, fieldnames=REQUEST_FIELDS)
-        self._run_writer.writeheader()
-        self._retr_writer.writeheader()
-        self._req_writer.writeheader()
+        if not runs_da:
+            self._run_writer.writeheader()
+        if not retr_da:
+            self._retr_writer.writeheader()
+        if not req_da:
+            self._req_writer.writeheader()
         self._dist_writer = None
-        self._meta = []
+        self._dist_header_geschrieben = dist_da
 
-    def add_run(self, run_id, policy, seed, engine, steady, error=None,
+        # Beim Anhaengen die bereits geschriebenen Metadaten uebernehmen,
+        # sonst wuerde `close()` sie beim naechsten Lauf ueberschreiben.
+        self._meta = []
+        meta_datei = self.dir / "run_meta.json"
+        if mode == "a" and meta_datei.exists():
+            try:
+                self._meta = json.loads(meta_datei.read_text())
+            except json.JSONDecodeError:
+                self._meta = []
+
+    def add_run(self, run_id, policy, seed, engine, rq4=None, error=None,
                 recoveries=0, unresolved=0):
+        if rq4 is None:
+            rq4 = analyse_engine(engine)
         self._run_writer.writerow(
-            summarise_run(run_id, policy, seed, engine, steady, error,
+            summarise_run(run_id, policy, seed, engine, rq4, error,
                           recoveries, unresolved))
         self._runs.flush()
 
-        for zeile in retrieval_rows(run_id, policy, seed, engine, steady):
+        for zeile in retrieval_rows(run_id, policy, seed, engine):
             self._retr_writer.writerow(zeile)
         self._retr.flush()
 
@@ -284,7 +537,9 @@ class ExperimentWriter:
             if self._dist_writer is None:
                 self._dist_writer = csv.DictWriter(
                     self._dist, fieldnames=list(flach.keys()))
-                self._dist_writer.writeheader()
+                if not self._dist_header_geschrieben:
+                    self._dist_writer.writeheader()
+                    self._dist_header_geschrieben = True
             self._dist_writer.writerow(
                 {k: flach.get(k) for k in self._dist_writer.fieldnames})
         self._dist.flush()
@@ -298,18 +553,35 @@ class ExperimentWriter:
                 if isinstance(v, (int, float, str, bool)) or v is None
             },
             "rng_streams": list(engine.rng_streams._streams.keys()),
-            "steady_state": {
-                k: v for k, v in steady.items() if k != "measurement_window"
-            },
+            # Vollstaendige RQ4-Auswertung inklusive der TVD-Folge. Damit ist
+            # jede Statuszuweisung im Nachhinein nachrechenbar, ohne den Lauf
+            # zu wiederholen.
+            "rq4": rq4,
+            "measurement_window": dict(zip(
+                ("mode", "t_measure_start", "t_final"),
+                measurement_window(engine))),
         })
+        # Nach JEDEM Lauf schreiben, nicht erst beim Schliessen.
+        #
+        # Die CSVs werden je Lauf geflusht, `run_meta.json` wurde dagegen nur
+        # in `close()` erzeugt. Ein abgebrochener Prozess (OOM, Neustart,
+        # SIGKILL) haette nach 30 gerechneten Laeufen vier gefuellte CSVs und
+        # GAR KEINE Metadaten hinterlassen — und beim Fortsetzen waeren die
+        # fehlenden 30 Eintraege stillschweigend nicht mehr aufgetaucht.
+        self._schreibe_meta()
+
+    def _schreibe_meta(self):
+        tmp = self.dir / "run_meta.json.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(self._meta, fh, indent=2, ensure_ascii=False)
+        tmp.replace(self.dir / "run_meta.json")
 
     def close(self):
         self._runs.close()
         self._retr.close()
         self._req.close()
         self._dist.close()
-        with open(self.dir / "run_meta.json", "w", encoding="utf-8") as fh:
-            json.dump(self._meta, fh, indent=2, ensure_ascii=False)
+        self._schreibe_meta()
 
     def __enter__(self):
         return self

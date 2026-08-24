@@ -56,6 +56,33 @@ class SimulationConfig:
         self.deadline_slack = 240
 
         """
+        Gemeinsames Auswertungsfenster der finalen Kampagne (2026-08-22).
+
+        Alle 50 finalen Runs laufen von 0 bis `t_final`. Ausgewertet wird
+        ausschliesslich das Intervall [`t_measure_start`, `t_final`] - fuer
+        jede Policy und jeden Seed identisch.
+
+        Warum ueberhaupt in der Config: der Export braucht die Grenzen, um
+        Durchsatz, Verspaetung und Verteilungen auf dasselbe Zeitfenster zu
+        beziehen. Ohne sie fiele er auf die alte, policyabhaengige
+        Steady-State-Regel zurueck, und Tardiness waere zwischen Policies
+        nicht mehr vergleichbar.
+
+        `None` bedeutet: kein Fenster gesetzt (Tests, Diagnoselaeufe).
+
+        Eingefrorene Werte (Stand 2026-08-24, hergeleitet in
+        `experiments/experiment_setup.md`):
+
+            t_measure_start = 20_000
+            t_final         = 30_000     Fenster also 10.000 ZE
+
+        Die frueheren Werte 30.000 / 42.000 stammen aus einer Kalibration mit
+        invertiertem Ordered Return und sind ungueltig.
+        """
+        self.t_measure_start = None
+        self.t_final = None
+
+        """
         Request Generierung:
         """
         self.request_utilization = 0.6

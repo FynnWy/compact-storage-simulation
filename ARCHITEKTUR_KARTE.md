@@ -860,15 +860,57 @@ Requests – davor wäre `batch_size` konstant 1.
   blockierte die Portzelle, oder das Event lief bis `max_retries` und brach
   den Lauf ab. `_handle_robot_pickup` verwirft solche Events jetzt
   (`[STALE][PICKUP_NO_TASK]`).
-- **Portstau (offener Blocker).** Bis zu acht Roboter sammeln sich in den
-  sieben Zellen um eine Pickstation und blockieren sich gegenseitig, während
-  die zweite Station leer läuft. Der Zustand ist invariantenrein, es fehlt
-  ausschließlich der Fortschritt. Die vorhandene Auflösung erkennt nur
-  Zyklen zwischen ZWEI Robotern (`[DEADLOCK] Detected cycle ... robots [a, b]`);
-  `[DEADLOCK][REQUEUE] robot cannot evade` feuert wirkungslos. Vorbestehend,
-  bisher durch die beiden oben genannten Fehler verdeckt. Reproduktion mit
-  festem Seed: ABC+ABC/Seed 42 (ab t≈2973), POPULARITY/Seed 1 (ab t≈1992).
-  Details: FINAL_EXPERIMENT_FREEZE_2026-08-21.md, Abschnitt D.2 (Klasse C).
+- **Portstau — BEHOBEN (2026-08-22).** Der Roboter auf einer Portzelle hat
+  nur drei Nachbarn; wurden alle belegt, war er eingeschlossen, konnte die
+  Station nicht räumen, und alle nachfolgenden Roboter warteten auf genau
+  diese Zelle. `PortExitGuard` existierte und war in
+  `TrafficManager.request_path` verdrahtet, wertete aber nur die
+  Reservierungstabelle aus — ein STEHENDER Roboter (leerer Pfad) taucht dort
+  nicht auf, `get_robot_on_port` lieferte False und die Prüfung brach ab.
+  Zusätzlich umging der Manhattan-Fallback in `ActionCostModel.build_path`
+  jede Verkehrsprüfung.
+  Behoben über `TrafficManager.get_port_exit_cells_to_keep_free(robot_id)`:
+  fragt `Pickstation.robot_on_port` und die aktuellen Roboterpositionen ab
+  und sperrt die letzte freie Ausfahrt eines besetzten Ports für alle
+  anderen — in der Pfadplanung und im Fallback. Der Rückverweis
+  `traffic_manager.state` wird in `SimulationEngine._initialize_state`
+  gesetzt. Die Regel folgt aus der Geometrie, ist deterministisch,
+  verbraucht keinen Zufall und ändert keine Pickstation-Zuordnung.
+  Details: FINAL_EXPERIMENT_FREEZE_2026-08-21.md, Abschnitt E.
+- **Stationslast ist nicht ausgeglichen (bewusst).** Die Zuordnung bleibt
+  distanzbasiert; eine policyinduzierte Asymmetrie ist ein zulässiges
+  Ergebnis. Sichtbar über `retrievals_ps0/ps1` und
+  `pickstation_utilisation_ps0/ps1` in `runs.csv`. Achtung:
+  `pickstation_utilisation_mean` war bis 2026-08-22 immer `None` (der Export
+  prüfte `utilization`, die Methode heißt `get_utilization`). Und:
+  `get_utilization` ist KUMULATIV über den ganzen Lauf, also **nicht**
+  fensterbezogen — nur diagnostisch verwenden.
+- **Gemeinsames Auswertungsfenster.** `SimulationConfig.t_measure_start` und
+  `.t_final` steuern `experiments/run_export.summarise_run`: sind beide
+  gesetzt, werden Durchsatz, Requests, Verspätung und die Retrievals je
+  Station ausschließlich auf `[t_measure_start, t_final]` bezogen
+  (`measurement_mode = "time_window"`). Ohne sie greift das alte Verhalten
+  (Steady-State-Fenster, sonst ganzer Lauf). Final: 30.000 / 42.000 ZE.
+- **Fremder Target-Return — BEHOBEN (2026-08-22).** Der Stale-Schutz im
+  Drop-Pfad erkannte eine fremde Target-Rücklagerung an der BIN
+  (`current_task.target_bin_id != bin_id`). Zielen zwei Requests auf dieselbe
+  Bin — bei A-Klasse der Normalfall, für Bin 0 standen 22 Requests in der
+  Batch-Warteliste — griff der Guard nicht, und
+  `_update_task_after_successful_return` schrieb `mark_target_returned()` auf
+  den falschen Task. Der stand dann mit `target_returned=True` bei
+  `target_removed=False` da und brach rund 21.000 ZE später am Abschluss ab
+  (`Cannot complete request 394: target was not removed`, ABC+ABC/Seed 7,
+  t = 21.869). Behoben: die Buchhaltung läuft jetzt über die `request_id`,
+  wie im Pickup-Pfad; die physische Ablage bleibt unverändert. Zusätzlich
+  setzt `TopAccessStrategy` im Zweig „Bin liegt schon an der Pickstation"
+  beide Flags (`mark_target_at_pickstation()`), und
+  `RobotTask.mark_target_returned()` prüft `target_removed` als Fail-Fast.
+- **Durchsatzzerfall bei langem Horizont (offener Blocker).** `ABC+ABC`,
+  Seed 7 verliert über 42.000 ZE fortschreitend Durchsatz (151 → 6
+  Retrievals je 5.000 ZE, größte Lücke 3.323 ZE) und liefert im Messfenster
+  [30.000, 42.000] nur 39 statt ~174 Retrievals. Kein Abbruch, kein
+  dauerhafter Stillstand, alle Invarianten erfüllt. Ursache ungeklärt.
+  Details: FINAL_EXPERIMENT_FREEZE_2026-08-21.md, Abschnitt G.6.
 - Steady-State-Regel: real durchlaufen und in der bisherigen Parametrierung
   widerlegt. β je Retrieval hat CV ≈ 1; bei Blöcken à 50 Retrievals liegt
   die erwartete relative Änderung bei 0,197, also doppelt so hoch wie die

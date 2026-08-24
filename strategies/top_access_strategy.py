@@ -92,7 +92,21 @@ class TopAccessStrategy(BaseStrategy):
             target_bin = state.get_bin_by_id(target_bin_id)
 
             if target_bin is not None and target_bin.get_status() == "at_pickstation":
-                task.target_at_pickstation = True
+                # LIFECYCLE (2026-08-22): beide Flags setzen, nicht nur eines.
+                #
+                # Vorher wurde hier ausschliesslich `target_at_pickstation`
+                # gesetzt. `target_removed` blieb False - obwohl die Bin
+                # nachweislich nicht mehr im Lager liegt, sondern an der
+                # Pickstation. Ein Task, der diesen Zweig nimmt und spaeter
+                # abschliesst, scheitert deshalb an der eigenen
+                # Abschlussinvariante (`can_complete_consistently`:
+                # "target was not removed").
+                #
+                # `mark_target_at_pickstation()` setzt beide Flags und ist
+                # genau dafuer da. Der Zustand "Bin ist an der Pickstation"
+                # impliziert "Bin wurde aus dem Lager entnommen" - unabhaengig
+                # davon, welcher Vorgang sie entnommen hat.
+                task.mark_target_at_pickstation()
                 task.phase = RobotTask.PHASE_RESTORE_BLOCKERS
                 return self.next_action(state, task)
 

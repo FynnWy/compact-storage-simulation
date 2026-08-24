@@ -1718,6 +1718,40 @@ class EventHandler:
                     self._schedule_next_action_for_same_task_new(event)
                 return
 
+        # LIFECYCLE (2026-08-22): Veraltetes Ziel einer Blocker-Rücklagerung.
+        #
+        # Das Rückgabeziel eines Blockers wird umgeplant, wenn der
+        # Ursprungsstack gerade nicht aufnahmefähig ist
+        # (`_next_restore_blockers_action` bzw. `_redirect_blocked_drop`
+        # rufen `update_return_stack_for_blocker`). Beides ändert den Eintrag
+        # in `temp_storage` — ein bereits eingeplantes Drop-Event trägt dann
+        # noch das ALTE Ziel.
+        #
+        # Beobachtet in ABC+ABC/Seed 42: Bin 2154 wurde zwischen t=1275 und
+        # t=1796 fünfmal umgeplant; ein bei t=1716 auf `S_0_9` geplanter Drop
+        # lief bei t=1797 durch, während der Eintrag längst auf `S_1_9` zeigte.
+        # Die Prüfung in `mark_last_relocation_restored` schlug danach zu
+        # Recht an und brach den Lauf ab.
+        #
+        # Der Drop wird deshalb VOR der Ausführung verworfen und der Task neu
+        # geplant — er legt die Bin dann auf das aktuell gültige Ziel. Die
+        # Konsistenzprüfung bleibt unangetastet; sie soll genau solche
+        # Abweichungen melden.
+        if (action_type == "return"
+                and action.get("return_kind") == "blocker"
+                and robot.current_task is not None):
+            eintrag = next(
+                (r for r in robot.current_task.temp_storage
+                 if r["bin_id"] == bin_id), None)
+            if eintrag is not None and eintrag["from_stack"] != action.get("to_stack"):
+                print(
+                    f"[STALE][DROP_BLOCKER] t={self.state.t} robot={robot.robot_id} "
+                    f"bin={bin_id} Ziel veraltet: Aktion {action.get('to_stack')}, "
+                    f"Eintrag {eintrag['from_stack']} -> neu planen"
+                )
+                self._schedule_next_action_for_same_task_new(event)
+                return
+
         # LIVENESS (2026-08-22): Ablageziel kurz vor dem Absetzen erneut
         # prüfen.
         #
@@ -2512,7 +2546,8 @@ class EventHandler:
             task.target_removed = True
 
         elif action_type == "return":
-            self._update_task_after_successful_return(task, action, robot)
+            self._update_task_after_successful_return(
+                task, action, robot, request=event.payload.get("request"))
 
     def _update_task_after_successful_action_new(self, event):
         """Task-Update nach erfolgreichem Drop."""
@@ -2556,7 +2591,8 @@ class EventHandler:
             task.target_removed = True
 
         elif action_type == "return":
-            self._update_task_after_successful_return(task, action, robot)
+            self._update_task_after_successful_return(
+                task, action, robot, request=event.payload.get("request"))
 
     def _schedule_next_action_for_same_task_new(self, event):
         """Plant nächste Aktion als Zwei-Phasen-Aktion (event-basierter Entry-Point)."""
@@ -3296,11 +3332,50 @@ class EventHandler:
         if action_type == "return":
             # NEU: Robot an Return-Update übergeben, damit dort direkt
             # ein REQUEST_COMPLETE-Event eingeplant werden kann.
-            self._update_task_after_successful_return(task, action, robot)
+            self._update_task_after_successful_return(
+                task, action, robot, request=event.payload.get("request"))
             return
 
-    def _update_task_after_successful_return(self, task, action, robot):
+    def _update_task_after_successful_return(self, task, action, robot,
+                                             request=None):
         return_kind = action.get("return_kind")
+
+        # LIFECYCLE (2026-08-22): Buchhaltung nur fuer den EIGENEN Request.
+        #
+        # Der Stale-Schutz im Drop-Pfad erkennt eine fremde Target-Ruecklagerung
+        # bisher an der BIN (`current_task.target_bin_id != bin_id`). Zielen
+        # zwei Requests auf dieselbe Bin - bei einer A-Klasse-Bin der Normalfall,
+        # fuer Bin 0 standen zuletzt 22 Requests in der Batch-Warteliste -, dann
+        # stimmt die Bin ueberein, obwohl die Aktion zu einem ANDEREN Task
+        # gehoert. Der Guard griff nicht, und die Ruecklagerung schrieb
+        # `mark_target_returned()` auf den falschen Task.
+        #
+        # Folge: ein Task mit `target_returned=True`, aber `target_removed=False`
+        # - er hatte nie etwas ausgelagert. Beim Abschluss schlug
+        # `can_complete_consistently` zu Recht an:
+        #   `Cannot complete request 394: target was not removed`
+        #   (ABC+ABC, Seed 7, t=21869, Bin 0)
+        #
+        # Der Pickup-Pfad prueft an derselben Stelle ueber die `request_id`
+        # und war nie betroffen. Hier gilt jetzt dasselbe Kriterium.
+        #
+        # Die Bin ist zu diesem Zeitpunkt bereits physisch abgelegt - das ist
+        # richtig und bleibt so. Uebersprungen wird ausschliesslich die
+        # Task-Buchhaltung; der urspruengliche Task findet seine Bin ueber den
+        # vorhandenen Pfad `[REPLAN][PICKUP_RETURN] ... already stored` wieder.
+        if (
+                return_kind == "target"
+                and request is not None
+                and task is not None
+                and getattr(request, "request_id", None) != task.request_id
+        ):
+            print(
+                f"[STALE][RETURN_TASK] t={self.state.t} robot={robot.robot_id} "
+                f"bin={action.get('bin_id')} return gehoert zu Request "
+                f"{getattr(request, 'request_id', None)}, Roboter haelt Task "
+                f"{task.request_id} -> Buchhaltung uebersprungen"
+            )
+            return
 
         if return_kind == "blocker":
             task.mark_last_relocation_restored(
@@ -4025,6 +4100,43 @@ class EventHandler:
             action = scheduling_result["action"]
 
             if action is None:
+                # LIVENESS (2026-08-22): Task wieder freigeben, nicht einfach
+                # zurückkehren.
+                #
+                # `try_schedule` hat dem Roboter den Task bereits zugewiesen
+                # (`robot.assign_task`). Liefert die Strategie danach keine
+                # Aktion — etwa weil die Target-Bin gerade `in_transit` ist,
+                # ein dokumentiert unkritischer Zustand mit der Absicht „Task
+                # kurz warten lassen und später neu versuchen" —, dann wurde
+                # hier bisher ohne jede Einplanung zurückgekehrt. Der Roboter
+                # behielt den Task, bekam nie ein Event und stand dauerhaft
+                # still; als unbewegliches Hindernis blockierte er zusätzlich
+                # die übrigen Roboter.
+                #
+                # Belegt in ABC+ABC/Seed 7 bei t=20.828: die Roboter 0, 1 und 4
+                # hielten einen Task, hatten aber kein einziges Event in der
+                # Queue; Roboter 4 blockierte (17,17), drei weitere warteten
+                # auf genau diese Zelle.
+                #
+                # `_schedule_next_action_for_task_new` behandelt denselben Fall
+                # bereits korrekt: Task zurück in `waiting_tasks`, Roboter
+                # freigeben. Genau dieses Muster wird hier übernommen — der
+                # Task bleibt fachlich erhalten und wird beim nächsten
+                # Scheduling-Zeitpunkt regulär neu vergeben.
+                robot = scheduling_result.get("robot")
+                task = scheduling_result.get("task")
+                if task is None and robot is not None:
+                    task = robot.current_task
+                if task is not None:
+                    self.active_queue.add_waiting_task(task)
+                if robot is not None and robot.current_task is not None:
+                    robot.clear_task()
+                    print(
+                        f"[RELEASE][NO_ACTION] t={self.state.t} "
+                        f"robot={robot.robot_id} task="
+                        f"{getattr(task, 'request_id', None)} ohne Aktion -> "
+                        f"zurück in waiting_tasks"
+                    )
                 return
 
             robot = scheduling_result["robot"]

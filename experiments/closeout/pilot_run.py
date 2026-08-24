@@ -22,44 +22,36 @@ import sys
 import time
 from pathlib import Path
 
-REPO = "/sessions/youthful-busy-noether/mnt/compact-storage-simulation"
-sys.path.insert(0, REPO)
+REPO = str(Path(__file__).resolve().parents[2])
+if REPO not in sys.path:
+    sys.path.insert(0, REPO)
 
-from config.simulation_config import SimulationConfig  # noqa: E402
+from experiments.campaign_matrix import (  # noqa: E402
+    FINAL_POLICIES, build_run_config)
 from simulation.simulation_engine import SimulationEngine  # noqa: E402
 
 
-POLICIES = {
-    "baseline_reference": ("LOFI", "RANDOM", True),
-    "RR+RR": ("LOFI", "RANDOM", False),
-    "LR+NR": ("LOFI", "NEAREST", False),
-    "ABC+ABC": ("ABC", "ABC", True),
-    "POPULARITY+POPULARITY": ("POPULARITY", "POPULARITY", True),
-}
+#: Eine Quelle fuer die Policy-Definition (`experiments/campaign_matrix.py`).
+#: Der Name bleibt, weil mehrere Closeout-Skripte ihn importieren.
+POLICIES = FINAL_POLICIES
 
 
 def build_config(policy, seed, sim_time):
-    reordering, placement, rbb = POLICIES[policy]
-    c = SimulationConfig()
-    c.grid_width = 20
-    c.grid_depth = 30
-    c.max_stack_height = 8
-    c.bin_num = 4320
-    c.num_robots = 8
-    c.num_pickstations = 2
-    c.pickstation_capacity = 1
-    c.simulation_time = sim_time
-    c.random_seed = seed
-    c.request_arrival_strategy = "Poisson"
-    c.request_utilization = 0.6
-    c.bin_request_prob_strategy = "zipf"
-    c.zipf_parameter = 1.0
-    c.enable_visualization = False
-    c.distribution_snapshot_interval = 100
-    c.reordering_strategy = reordering
-    c.placement_strategy = placement
-    c.return_blocking_bins = rbb
-    return c
+    """
+    Kalibrations-/Pilotkonfiguration.
+
+    Identisch zur finalen Kampagnenkonfiguration, nur mit frei waehlbarem
+    Horizont und OHNE gesetztes Auswertungsfenster: die Piloten exportieren
+    die vollstaendige Spur, das Fenster wird offline gelegt.
+
+    Seit 2026-08-24 delegiert die Funktion an
+    `experiments.campaign_matrix.build_run_config`. Die erzeugte
+    Konfiguration ist feldweise unveraendert — nachgewiesen in
+    `tests/test_campaign_matrix.py`; die vorhandene Kalibration bleibt
+    dadurch gueltig.
+    """
+    return build_run_config(policy, seed, sim_time=sim_time,
+                            t_measure_start=None, t_final=None)
 
 
 def retrieval_rows(engine):

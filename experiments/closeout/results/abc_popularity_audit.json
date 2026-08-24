@@ -1,0 +1,342 @@
+{
+  "reorder_fix_effect": [
+    {
+      "policy": "ABC_ABC",
+      "seed": 1,
+      "t_compare": 18000,
+      "retrievals_before": 436,
+      "retrievals_after": 466,
+      "mean_A_depth_before": 3.2172,
+      "mean_A_depth_after": 2.7576
+    },
+    {
+      "policy": "ABC_ABC",
+      "seed": 7,
+      "t_compare": 18000,
+      "retrievals_before": 395,
+      "retrievals_after": 314,
+      "mean_A_depth_before": 3.3714,
+      "mean_A_depth_after": 2.9605
+    },
+    {
+      "policy": "ABC_ABC",
+      "seed": 42,
+      "t_compare": 18000,
+      "retrievals_before": 289,
+      "retrievals_after": 243,
+      "mean_A_depth_before": 3.2765,
+      "mean_A_depth_after": 2.8517
+    },
+    {
+      "policy": "POPULARITY_POPULARITY",
+      "seed": 1,
+      "t_compare": 18000,
+      "retrievals_before": 483,
+      "retrievals_after": 590,
+      "mean_A_depth_before": 2.8174,
+      "mean_A_depth_after": 2.7048
+    },
+    {
+      "policy": "POPULARITY_POPULARITY",
+      "seed": 7,
+      "t_compare": 18000,
+      "retrievals_before": 506,
+      "retrievals_after": 514,
+      "mean_A_depth_before": 2.9128,
+      "mean_A_depth_after": 2.8448
+    },
+    {
+      "policy": "POPULARITY_POPULARITY",
+      "seed": 42,
+      "t_compare": 18000,
+      "retrievals_before": 396,
+      "retrievals_after": 471,
+      "mean_A_depth_before": 2.8616,
+      "mean_A_depth_after": 2.8712
+    },
+    {
+      "policy": "baseline_reference",
+      "seed": 1,
+      "t_compare": 18000,
+      "retrievals_before": 659,
+      "retrievals_after": 539,
+      "mean_A_depth_before": 2.6931,
+      "mean_A_depth_after": 2.6953
+    },
+    {
+      "policy": "baseline_reference",
+      "seed": 7,
+      "t_compare": 18000,
+      "retrievals_before": 757,
+      "retrievals_after": 649,
+      "mean_A_depth_before": 2.7756,
+      "mean_A_depth_after": 2.7974
+    },
+    {
+      "policy": "baseline_reference",
+      "seed": 42,
+      "t_compare": 18000,
+      "retrievals_before": 579,
+      "retrievals_after": 694,
+      "mean_A_depth_before": 2.7771,
+      "mean_A_depth_after": 2.61
+    }
+  ],
+  "post_fix_runs": [
+    {
+      "policy": "ABC+ABC",
+      "seed": 1,
+      "t_end": 19108,
+      "retrievals": 492,
+      "last_retrieval_t": 19078,
+      "idle_tail_ze": 30,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 265,
+        "unbury": 1,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 9,
+        "drop_bury_redirect": 58
+      }
+    },
+    {
+      "policy": "ABC+ABC",
+      "seed": 42,
+      "t_end": 18517,
+      "retrievals": 243,
+      "last_retrieval_t": 12761,
+      "idle_tail_ze": 5756,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 86,
+        "unbury": 3,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 14,
+        "drop_bury_redirect": 56
+      }
+    },
+    {
+      "policy": "ABC+ABC",
+      "seed": 7,
+      "t_end": 20828,
+      "retrievals": 314,
+      "last_retrieval_t": 14176,
+      "idle_tail_ze": 6652,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 183,
+        "unbury": 0,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 8,
+        "drop_bury_redirect": 48
+      }
+    },
+    {
+      "policy": "LR+NR",
+      "seed": 1,
+      "t_end": 30000,
+      "retrievals": 842,
+      "last_retrieval_t": 29922,
+      "idle_tail_ze": 78,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 196,
+        "unbury": 0,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 1,
+        "drop_bury_redirect": 102
+      }
+    },
+    {
+      "policy": "LR+NR",
+      "seed": 42,
+      "t_end": 30000,
+      "retrievals": 1301,
+      "last_retrieval_t": 29997,
+      "idle_tail_ze": 3,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 347,
+        "unbury": 0,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 14,
+        "drop_bury_redirect": 159
+      }
+    },
+    {
+      "policy": "LR+NR",
+      "seed": 7,
+      "t_end": 30000,
+      "retrievals": 1778,
+      "last_retrieval_t": 29997,
+      "idle_tail_ze": 3,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 237,
+        "unbury": 0,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 1,
+        "drop_bury_redirect": 270
+      }
+    },
+    {
+      "policy": "POPULARITY+POPULARITY",
+      "seed": 1,
+      "t_end": 19882,
+      "retrievals": 629,
+      "last_retrieval_t": 19809,
+      "idle_tail_ze": 73,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 87,
+        "unbury": 1,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 1,
+        "drop_bury_redirect": 69
+      }
+    },
+    {
+      "policy": "POPULARITY+POPULARITY",
+      "seed": 42,
+      "t_end": 20046,
+      "retrievals": 513,
+      "last_retrieval_t": 20005,
+      "idle_tail_ze": 41,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 163,
+        "unbury": 1,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 4,
+        "drop_bury_redirect": 58
+      }
+    },
+    {
+      "policy": "POPULARITY+POPULARITY",
+      "seed": 7,
+      "t_end": 20270,
+      "retrievals": 535,
+      "last_retrieval_t": 19456,
+      "idle_tail_ze": 814,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 237,
+        "unbury": 0,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 17,
+        "drop_bury_redirect": 40
+      }
+    },
+    {
+      "policy": "RR+RR",
+      "seed": 1,
+      "t_end": 30000,
+      "retrievals": 1027,
+      "last_retrieval_t": 29998,
+      "idle_tail_ze": 2,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 71,
+        "unbury": 0,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 2,
+        "drop_bury_redirect": 70
+      }
+    },
+    {
+      "policy": "RR+RR",
+      "seed": 42,
+      "t_end": 30000,
+      "retrievals": 741,
+      "last_retrieval_t": 29240,
+      "idle_tail_ze": 760,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 54,
+        "unbury": 0,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 0,
+        "drop_bury_redirect": 73
+      }
+    },
+    {
+      "policy": "RR+RR",
+      "seed": 7,
+      "t_end": 30000,
+      "retrievals": 1221,
+      "last_retrieval_t": 29958,
+      "idle_tail_ze": 42,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 114,
+        "unbury": 0,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 0,
+        "drop_bury_redirect": 101
+      }
+    },
+    {
+      "policy": "baseline_reference",
+      "seed": 1,
+      "t_end": 20293,
+      "retrievals": 617,
+      "last_retrieval_t": 20222,
+      "idle_tail_ze": 71,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 144,
+        "unbury": 0,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 14,
+        "drop_bury_redirect": 24
+      }
+    },
+    {
+      "policy": "baseline_reference",
+      "seed": 42,
+      "t_end": 19379,
+      "retrievals": 736,
+      "last_retrieval_t": 19369,
+      "idle_tail_ze": 10,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 110,
+        "unbury": 0,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 6,
+        "drop_bury_redirect": 23
+      }
+    },
+    {
+      "policy": "baseline_reference",
+      "seed": 7,
+      "t_end": 19576,
+      "retrievals": 694,
+      "last_retrieval_t": 19392,
+      "idle_tail_ze": 184,
+      "error": null,
+      "counters": {
+        "move_recovery_unresolved": 0,
+        "deadlock_detected": 175,
+        "unbury": 0,
+        "task_deadlock": 0,
+        "stale_pickup_no_task": 10,
+        "drop_bury_redirect": 23
+      }
+    }
+  ]
+}

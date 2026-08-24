@@ -168,6 +168,10 @@ class SimulationEngine:
             traffic_manager=traffic_manager
         )
         self.state.config = self.config
+        # Klasse C (2026-08-22): Der TrafficManager wird vor dem State gebaut,
+        # braucht für die Ausfahrtgarantie aber die physische Wahrheit über
+        # Roboterpositionen und Portbelegung. Rückverweis deshalb hier setzen.
+        traffic_manager.state = self.state
         # Port-Pufferzonen initialisieren (einmalig beim Start)
         self.state.initialize_port_zones(pickstations)
         self.state.mark_initialized()

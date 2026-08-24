@@ -223,6 +223,25 @@ class ActionCostModel:
             # Fallback auf einfachen Pfad falls TrafficManager fehlschlägt
             print(f"[WARNING] TrafficManager failed for robot {robot.robot_id}, using simple path")
 
+            # Klasse C (2026-08-22): Der Fallback umging bisher JEDE
+            # Verkehrsprüfung – auch die Ausfahrtgarantie für besetzte Ports.
+            # Genau in der Stausituation, in der der TrafficManager scheitert,
+            # lief hier ein naiver Manhattan-Pfad quer durch die Portzone und
+            # nahm einem dort stehenden Roboter die letzte Ausfahrt.
+            #
+            # Der Fallback bleibt erhalten (er verhindert Totalblockaden), wird
+            # aber vor der ersten verbotenen Zelle abgeschnitten: der Roboter
+            # fährt ein Stück und plant später neu, statt einen Port
+            # einzuschließen.
+            # Keine Ausnahme für das eigene Ziel: die Pufferzone enthält keine
+            # gültigen Storage-Positionen, ein Ziel dort gibt es im regulären
+            # Ablauf nicht. Siehe `TrafficManager.request_path`.
+            port_sperre = state.traffic_manager.get_port_exit_cells_to_keep_free(
+                robot.robot_id
+            )
+            if port_sperre:
+                blocked_cells = set(blocked_cells or set()) | port_sperre
+
         # Fallback: Einfacher Manhattan-Pfad
         path = [from_position]
         current_x, current_y = from_position

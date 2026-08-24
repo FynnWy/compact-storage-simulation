@@ -416,13 +416,11 @@ def test_request_export_contains_the_deadline_fields():
 
 def test_run_export_contains_the_secondary_service_kpis():
     from experiments.run_export import RUN_FIELDS, summarise_run
-    from metrics.steady_state import analyse_run
 
     engine = build_engine(sim_time=300, slack=240)
     run(engine)
-    steady = analyse_run(engine.metrics.retrievals, block_size=10)
 
-    zeile = summarise_run("r1", "baseline_reference", 42, engine, steady)
+    zeile = summarise_run("r1", "baseline_reference", 42, engine)
 
     assert set(zeile.keys()) == set(RUN_FIELDS)
     assert zeile["deadline_slack"] == 240
@@ -433,9 +431,16 @@ def test_run_export_contains_the_secondary_service_kpis():
 
 
 def test_export_consumes_no_randomness():
-    """Die Exportschicht darf die CRN-Eigenschaft nicht zerstören."""
-    from experiments.run_export import request_rows, summarise_run
-    from metrics.steady_state import analyse_run
+    """
+    Die Exportschicht darf die CRN-Eigenschaft nicht zerstören.
+
+    Seit 2026-08-24 rechnet der Export zusätzlich die Offline-RQ4-Regel
+    (`metrics.rq4_plateau`). Auch sie ist reines Postprocessing und darf
+    keine Zufallszahl ziehen — deshalb läuft sie hier mit im Prüfblock.
+    """
+    from experiments.run_export import (
+        request_rows, retrieval_rows, summarise_run,
+    )
 
     engine = build_engine(sim_time=300)
     run(engine)
@@ -445,9 +450,9 @@ def test_export_consumes_no_randomness():
         for name in ("requests", "service", "placement")
     }
 
-    steady = analyse_run(engine.metrics.retrievals, block_size=10)
-    summarise_run("r1", "baseline_reference", 42, engine, steady)
+    summarise_run("r1", "baseline_reference", 42, engine)
     list(request_rows("r1", "baseline_reference", 42, engine))
+    list(retrieval_rows("r1", "baseline_reference", 42, engine))
 
     for name, zustand in vorher.items():
         assert engine.rng_streams.get(name).bit_generator.state == zustand

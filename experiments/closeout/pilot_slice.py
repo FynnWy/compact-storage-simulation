@@ -75,8 +75,15 @@ def main():
         engine = SimulationEngine(build_config(policy, seed, sim_time))
 
     if getattr(engine, "_pilot_finished", False):
-        print(f"skip {policy} seed={seed} already finished t_end={engine.state.t}")
-        return
+        # `_pilot_finished` wird mitgepickelt. Wird der Horizont SPAETER
+        # angehoben (Kalibration 30.000 -> gemeinsames Fenster 32.000), darf
+        # der alte Merker den Lauf nicht dauerhaft blockieren: fertig ist er
+        # nur, wenn er den JETZT angeforderten Horizont bereits erreicht hat.
+        if engine.state.t >= sim_time:
+            print(f"skip {policy} seed={seed} already finished "
+                  f"t_end={engine.state.t}")
+            return
+        engine._pilot_finished = False
 
     started = time.time()
     error = None
