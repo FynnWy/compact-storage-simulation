@@ -4207,3 +4207,843 @@ python3 -m experiments.run_final_campaign --output-dir results/final
 Er wurde **nicht** ausgeführt. Die 50 finalen Runs sind nicht gestartet.
 
 Es wurden **keine Git-Commits oder Pushes** ausgeführt.
+
+---
+
+# Campaign Runner Audit, Failure-Resume Hardening & Runtime Preflight (2026-08-24)
+
+Simulation, Methodik, Horizonte und Exportpipeline waren zu Beginn dieser
+Phase eingefroren. Geprüft wurde diesmal **nicht** die Wissenschaft, sondern
+der Betrieb: Was passiert, wenn dieser Befehl 30 Stunden unbeaufsichtigt
+läuft und dabei etwas schiefgeht?
+
+Die Antwort war unbequem. Der Runner enthielt **drei Pfade zu stillem
+Datenverlust**, alle drei mit Exitcode 0. Sie sind behoben und durch Tests
+abgesichert. Dazu kommt ein Integritätscheck am Ende und eine
+Laufzeitprognose vor dem Start.
+
+In dieser Phase wurde **keine Zeile Simulationslogik** angefasst.
+
+---
+
+## L.1 Ausgangszustand
+
+```text
+git rev-parse HEAD     1c127bec17ac7f8dcc56e37be46edc417a3f0c1a
+git branch             working_sim
+Python                 3.10.12
+pytest                 9.1.1
+Testsuite vorher       503 passed, 0 failed
+```
+
+---
+
+## L.2 Der Audit: drei stille Datenverlustpfade
+
+### Risiko 1 — der gezielte Retry löschte die ganze Kampagne
+
+Der Schreibmodus hing an der Zahl übersprungener Läufe:
+
+```python
+modus = "a" if (resume and uebersprungen) else "w"
+```
+
+Beim gezielten Wiederholen eines einzelnen fehlgeschlagenen Laufs besteht
+der Plan aber nur aus genau diesem Lauf. `uebersprungen` ist dann **0**, der
+Modus wird `"w"` — und der Writer schneidet alle vier CSV-Dateien ab.
+
+Genau der Befehl aus dem Arbeitsauftrag, deterministisch nachgestellt mit 49
+fertigen Läufen:
+
+```text
+python3 -m experiments.run_final_campaign \
+    --output-dir <final> --policy "ABC+ABC" --seed 7 --resume
+
+VORHER : runs.csv 51  retrievals.csv 51  requests.csv 51  distribution.csv 51  meta 50
+NACHHER: runs.csv  2  retrievals.csv  1  requests.csv  1  distribution.csv  0  meta  1
+exit = 0
+```
+
+**49 abgeschlossene Läufe — rund 24 Stunden Rechenzeit — vernichtet, und der
+Runner meldete Erfolg.**
+
+### Risiko 2 — der Fehlversuch blieb als zweite Replikation stehen
+
+Ein fehlgeschlagener Lauf wurde exportiert *und* als `failed` vermerkt. Beim
+`--resume` kam die geglückte Zeile dazu:
+
+```text
+runs.csv je run_id: {baseline: 1, RR+RR: 1, LR+NR: 2}
+run_meta.json     : {baseline: 1, RR+RR: 1, LR+NR: 2}
+```
+
+Eine Auswertung, die nach `run_id` gruppiert, hätte für diesen Seed zwei
+Replikationen gesehen — eine davon mit abgebrochenem, also unvollständigem
+Horizont.
+
+### Risiko 3 — eine beschädigte Statusdatei führte ebenfalls zum Abschneiden
+
+`lade_status` fing den `JSONDecodeError` und lieferte `{}`. Damit galten alle
+Läufe als offen, der Modus wurde `"w"`:
+
+```text
+runs.csv Zeilen vorher=11 nachher=2 exit=0   -> DATENVERLUST: JA
+```
+
+### Weitere Befunde aus demselben Audit
+
+| # | Befund |
+|---|---|
+| R4 | `run_meta.json` wurde **nur** in `close()` geschrieben. Ein abgebrochener Prozess hätte nach 30 Läufen vier gefüllte CSVs und gar keine Metadaten hinterlassen. |
+| R5 | Ein Prozessabbruch zwischen Export und Statusschreiben hätte beim Fortsetzen eine Dublette erzeugt (Folge von Risiko 2). |
+| R6 | `--seed` akzeptierte jede Zahl. `--seed 5` plante klaglos einen Lauf, den der Versuchsplan nicht kennt. |
+| R7 | Es gab keinen Abschlusscheck: „50 Runs abgeschlossen" war die einzige Aussage. |
+| R8 | Es gab keine Laufzeit- und keine Platzprognose vor einem 30-Stunden-Lauf. |
+
+---
+
+## L.3 Behebung
+
+### Schreibmodus am Bestand statt an der Planlänge
+
+```python
+bestand = hat_bestand(ordner)          # liegen schon Kampagnendaten da?
+modus = "a" if bestand else "w"
+```
+
+Damit ist es unmöglich, in einen belegten Ordner hinein zu truncaten —
+unabhängig davon, wie groß die aufgerufene Teilmenge ist.
+
+### Genau ein wissenschaftlicher Datensatz je `run_id`
+
+Neu in `experiments/run_export.py`:
+
+```python
+purge_runs(output_dir, run_ids) -> {datei: entfernte_zeilen}
+```
+
+Vor dem Wiederholen werden die Zeilen der betroffenen Läufe aus allen vier
+CSVs **und** aus `run_meta.json` entfernt — atomar über temporäre Dateien.
+Der Runner meldet das sichtbar:
+
+```text
+[PURGE] fruehere Zeilen wiederholter Laeufe entfernt:
+        {'runs.csv': 1, 'retrievals.csv': 1, 'requests.csv': 1,
+         'distribution.csv': 1, 'run_meta.json': 1}
+```
+
+### Fehlgeschlagene Läufe kommen gar nicht erst in die Daten
+
+Ein abgebrochener Lauf hat einen unvollständigen Horizont und ist damit kein
+gültiger Messwert. Er wird **nicht exportiert**. Erhalten bleibt er als
+Betriebshistorie:
+
+* `campaign_status.json`: `state=failed`, `error`, `t_end`, `versuche`,
+* `logs/<run_id>.failed-<n>.log` — das Log des Fehlversuchs wird beim Retry
+  umbenannt statt überschrieben, die Ursache bleibt nachlesbar.
+
+### Export vor Status, und ein Exportfehler ist kein Erfolg
+
+Reihenfolge: Simulation → Export → `completed`. Schlägt `add_run` fehl (etwa
+weil die Platte voll ist), wird der Lauf als `export_failed` vermerkt, die
+Kampagne bricht mit Exit 1 ab, und der Lauf bleibt offen. Er wird beim
+nächsten `--resume` wiederholt statt stillschweigend zu fehlen.
+
+`run_meta.json` wird jetzt nach **jedem** Lauf atomar geschrieben.
+
+### Beschädigte Statusdatei: Fail-Fast
+
+```text
+FEHLER: campaign_status.json ist unlesbar (...).
+Die Datei sagt, welche Laeufe fertig sind. Sie zu ignorieren wuerde bereits
+gerechnete Ergebnisse ueberschreiben.
+Bitte pruefen und ggf. aus campaign_status.json.bak wiederherstellen.
+```
+
+Exit 2, kein Schreibzugriff. Zusätzlich wird bei jedem Statuswechsel eine
+`.bak`-Kopie der vorherigen Fassung abgelegt.
+
+### `--seed` gegen die eingefrorene Menge
+
+`choices=list(FINAL_SEEDS)` — ein Seed außerhalb des Versuchsplans wird von
+der CLI abgelehnt, nicht erst vom Abschlusscheck.
+
+---
+
+## L.4 Nachweis: Test A (Fehlschlag, dann voller Resume)
+
+Echter Durchlauf über den Kampagnenpfad, `LR+NR` künstlich zum Scheitern
+gebracht:
+
+```text
+Durchgang 1  LR+NR faellt  ->  exit 1
+             runs.csv: baseline, RR+RR, ABC+ABC, POPULARITY   (LR+NR NICHT enthalten)
+
+Durchgang 2  --resume      ->  exit 0
+runs.csv       je run_id: alle 5 genau 1
+retrievals.csv je run_id: 18 / 15 / 18 / 18 / 30   (je genau ein Lauf)
+requests.csv   je run_id: 33 / 30 / 34 / 34 / 56
+run_meta.json : 5 Eintraege, eindeutig
+Logs          : LR+NR__seed42.log UND LR+NR__seed42.failed-1.log
+Status LR+NR  : state=completed, versuche=2, error=None
+
+FINAL CAMPAIGN INTEGRITY CHECK: PASS
+```
+
+---
+
+## L.5 Nachweis: Test B (gezielter Retry im vollen Bestand)
+
+49 Läufe fertig, `ABC+ABC__seed7` fehlgeschlagen, gezielter Retry:
+
+```text
+[PURGE] fruehere Zeilen wiederholter Laeufe entfernt: {...}
+[START] 1/1 ABC+ABC__seed7
+[DONE ] ABC+ABC__seed7
+
+50 Laeufe, je genau ein Datensatz
+FINAL CAMPAIGN INTEGRITY CHECK: PASS
+```
+
+Testgesichert wird zusätzlich:
+
+* die 49 bestehenden Zeilen sind **feldweise unverändert**,
+* es wurde ausschließlich der eine Retry gerechnet,
+* keine Datei wurde im Schreibmodus neu angelegt,
+* keine Kopfzeile doppelt,
+* keine `run_id` doppelt.
+
+---
+
+## L.6 Final Campaign Integrity Check
+
+Nach dem letzten Lauf prüft der Runner den Bestand automatisch gegen den
+**vollen** Versuchsplan — nicht gegen die gerade aufgerufene Teilmenge.
+Solange Kombinationen fehlen, meldet er den Stand und ausdrücklich **kein**
+„PASS":
+
+```text
+[TEILMENGE] 12/50 Laeufe abgeschlossen, 38 fehlen noch.
+Der FINAL CAMPAIGN INTEGRITY CHECK laeuft erst, wenn die Matrix vollstaendig ist.
+```
+
+Ist die Matrix vollständig, wird geprüft:
+
+| Prüfung | |
+|---|---|
+| 50 eindeutige `run_id`, jede Kombination genau einmal | 5 Policies × 10 Seeds |
+| keine fehlenden, doppelten, unerwarteten Läufe | |
+| kein Lauf ohne `state=completed` | |
+| `measurement_mode = time_window` überall | |
+| `t_measure_start = 20000`, `t_final = 30000` überall | |
+| `measurement_retrievals` == markierte Zeilen in `retrievals.csv` | **je Lauf** |
+| `rq4_status` nie leer | |
+| `error` überall leer | |
+| `retrievals/requests/distribution.csv` verweisen nur auf bekannte `run_id` und lassen keinen aus | |
+| `run_meta.json` deckt sich mit `runs.csv`, ohne Dubletten | |
+
+Schlägt eine Prüfung fehl: Ausgabe jedes Befunds, `FINAL CAMPAIGN INTEGRITY
+CHECK: FAIL`, **Exit 1**. Die Kampagne wird dann nicht als erfolgreich
+gemeldet.
+
+Eine Statusdatei allein genügt nicht: Behauptet sie, alles sei fertig,
+während die Ausgabedateien fehlen, schlägt der Check an (eigener Test).
+
+---
+
+## L.7 Runtime Preflight
+
+Neu: **`experiments/runtime_preflight.py`**. Rein operativ — es verändert
+weder `T_measure_start`, `T_final`, Seeds, Policies, das Messfenster, die
+RQ4-Regel noch eine KPI.
+
+### Warum Hardwaredaten allein nicht reichen
+
+Die Simulation ist ereignisdiskret, in Python geschrieben und läuft bewusst
+sequentiell. Kernzahl und Takt sagen darüber wenig; entscheidend ist die
+Ereignisdichte je Policy. In der Kalibration brauchte `RR+RR` rund 10.993
+Simulationsschritte je 1.000 ZE, `ABC+ABC` nur 6.891 — bei gleichem Horizont
+rund 60 % Unterschied. Deshalb wird **je Policy** gemessen und **je Policy**
+extrapoliert, nicht ein Messwert mal 50.
+
+### Aufbau vom Rechnen getrennt
+
+Der Aufbau der finalen Geometrie fällt je Lauf genau einmal an, unabhängig
+vom Horizont. Er wird separat gemessen und separat eingerechnet; die Rate je
+1.000 ZE ist die **Grenzrate**. Andernfalls wäre die Hochrechnung von 600 auf
+30.000 ZE systematisch zu hoch.
+
+### Gemessen auf dieser Maschine
+
+```text
+Hardware:
+  Platform  : Linux-6.8.0-136-generic-x86_64-with-glibc2.35
+  CPU       : Intel(R) Core(TM) i5-8257U CPU @ 1.40GHz
+  Cores     : 4 logisch, 4 physisch
+  RAM       : 3.8 GB gesamt, 3.4 GB frei
+  Python    : 3.10.12
+  Disk free : 13.5 GB
+  Disk need : 1.4 GB (mit 50 % Reserve)
+
+Benchmark (600 ZE je Policy, Seed 999001, Dauer 2m 02s):
+  baseline_reference          35.12 sec / 1000 ZE  ->  2h 55m   (historisch 11h 03m)
+  RR+RR                       57.63 sec / 1000 ZE  ->  4h 48m   (historisch 10h 14m)
+  LR+NR                       41.67 sec / 1000 ZE  ->  3h 28m   (historisch  6h 34m)
+  ABC+ABC                     33.86 sec / 1000 ZE  ->  2h 49m   (historisch  4h 31m)
+  POPULARITY+POPULARITY       34.84 sec / 1000 ZE  ->  2h 54m   (historisch  5h 49m)
+
+Estimated 50-run campaign:
+  central estimate : 24h 01m
+  plausible range  : 19h 13m – 32h 26m
+  finish if started now: 2026-08-25 20:13
+
+Execution : SEQUENTIAL
+```
+
+Die historischen Werte stammen aus `results/rq4_calibration_final.json` und
+liegen durchweg rund doppelt so hoch. Der Grund ist bekannt und kein
+Widerspruch: die Kalibration lief mit **vier parallelen Prozessen auf vier
+Kernen**, die Wanduhrzeiten enthalten also die Konkurrenz um die Kerne. Die
+finale Kampagne läuft sequentiell. Deshalb wiegt der aktuelle Benchmark im
+kombinierten Wert doppelt (2 : 1) — dokumentiert und getestet.
+
+Die Bandbreite (0,8× bis 1,35×) folgt der in der Kalibration beobachteten
+Streuung der Wanduhrzeiten. Sie ist eine Betriebsspanne, keine Statistik.
+
+### Platzprüfung
+
+Geschätzt aus den gemessenen Größenordnungen — Logs dominieren mit rund
+18 MB je Lauf, CSV und Metadaten sind Rauschen daneben — plus 50 % Reserve.
+Reicht der Platz offensichtlich nicht, startet die Kampagne nicht (Exit 2).
+Ist die Schätzung knapp, gibt es eine Warnung.
+
+### Laufende ETA
+
+Nach jedem abgeschlossenen Lauf wird aus den **realen** bisherigen
+Wanduhrzeiten neu geschätzt, policygewichtet; für noch nicht beobachtete
+Policies dient die Preflight-Schätzung als Rückfall:
+
+```text
+[DONE ] LR+NR__seed42 t_end=600 retr=30 rq4=not_converged 25.2s
+         elapsed 1m 21s | 3/5 | avg 27s/run | rest 54s | fertig ~2026-08-24 20:13
+```
+
+Ohne Policygewichtung würde eine Kampagne, die mit der günstigsten Policy
+beginnt, systematisch zu optimistisch schätzen — eigener Test.
+
+### Betriebsarten
+
+```bash
+--estimate-runtime        nur schaetzen; rechnet keine finalen Runs,
+                          schreibt nichts, fasst campaign_status.json nicht an
+--skip-runtime-estimate   Benchmark vor dem Start ueberspringen
+```
+
+Beim normalen Start läuft der Preflight automatisch und **nicht interaktiv**,
+damit ein unbeaufsichtigter Start möglich bleibt. Der Dry-Run rechnet
+weiterhin keine Simulationen.
+
+---
+
+## L.8 Die Prognose berührt das Experiment nicht
+
+Testgesichert:
+
+| Zusicherung | |
+|---|---|
+| Benchmark-Seed `999001` liegt außerhalb `FINAL_SEEDS` | keine Kollision mit einer finalen `run_id` |
+| Benchmark benutzt einen eigenen kurzen Horizont und **kein** Messfenster | |
+| eine finale Konfiguration ist nach dem Benchmark feldweise unverändert | Horizont, Fenster, Seed |
+| ein danach gebauter finaler Engine hat denselben RNG-Zustand wie einer davor | CRN unberührt |
+| `--estimate-runtime` schreibt nichts und fasst die Statusdatei nicht an | |
+
+---
+
+## L.9 Validierung
+
+| Prüfung | Ergebnis |
+|---|---|
+| Failure-Resume Test A (echt, über den Kampagnenpfad) | **PASS** |
+| Targeted-Resume Test B (49 + gezielter Retry) | **PASS** |
+| Beschädigte Statusdatei | **Exit 2**, Bestand unverändert |
+| Exportfehler | `export_failed`, Exit 1, Lauf bleibt offen |
+| End-to-End-Smoke, alle fünf Policies | **PASS**, Exit 0, Integritätscheck PASS |
+| Campaign Dry-Run | **CAMPAIGN DRY RUN PASS** |
+| Runtime Estimate real ausgeführt | 24h 01m zentral, 19h 13m – 32h 26m |
+| Volle Testsuite | **543 passed, 0 failed** (vorher 503) |
+| CRN | **INTAKT**, Hashes byteidentisch zu den Vorphasen |
+
+Neue Tests: 12 (`test_campaign_resume.py`), 27
+(`test_campaign_integrity_and_preflight.py`), 1 zusätzlicher in
+`test_campaign_matrix.py`.
+
+`test_simulation_visual.py` bleibt nicht ausführbar — `flask` fehlt in der
+Sandbox. Umgebungsgrenze, keine Regression.
+
+### Eine Zusicherung wurde verschärft, keine abgeschwächt
+
+`test_resume_skips_completed_runs` prüfte, dass bei vollständigem Status
+nichts gerechnet wird — legte dafür aber gar keine Ausgabedateien an. Mit dem
+neuen Abschlusscheck fällt genau das auf. Der Test heißt jetzt
+`test_resume_recomputes_nothing_when_everything_is_done`, legt einen echten
+Bestand an und verlangt zusätzlich `INTEGRITY CHECK: PASS`. Der frühere
+Zustand — Status behauptet Erfolg, Daten fehlen — ist als eigener Test
+hinzugekommen und muss **fehlschlagen**.
+
+---
+
+## L.10 Wurde Simulationscode verändert?
+
+**Nein.** Geändert wurden ausschliesslich:
+
+```text
+experiments/runtime_preflight.py             NEU  Hardware, Platz, Benchmark, ETA
+experiments/run_final_campaign.py                 Resume, Integritaet, Preflight
+experiments/run_export.py                         purge_runs, Meta je Lauf
+tests/test_campaign_resume.py                NEU
+tests/test_campaign_integrity_and_preflight.py NEU
+tests/test_campaign_matrix.py                     eine Zusicherung verschaerft
+```
+
+Kein Scheduler, kein RobotTask, keine Strategie, kein Selector, kein
+TrafficManager, kein PortExitGuard, kein RequestGenerator, keine RNG-Streams,
+keine Policy-Scores, keine Deadline-Semantik, keine Horizonte, keine
+RQ4-Regel.
+
+Belege: die Zeitstempel im Arbeitsbaum und die byteidentischen CRN-Hashes.
+**Die 15×30k-Kalibration bleibt gültig und wurde nicht wiederholt.**
+
+---
+
+## L.11 Aktualisierte Limitationen
+
+| # | Limitation |
+|---|---|
+| L-36 (**präzisiert**) | Der Treiber ist sequentiell. `ExperimentWriter` schreibt gemeinsame CSVs und ist nicht nebenläufigkeitssicher. Parallelität nur über getrennte `--output-dir` je Teilmenge mit anschliessendem Zusammenführen. Gemessene Prognose sequentiell: rund 24 Stunden. |
+| L-38 (**neu**) | Die Laufzeitprognose ist eine Betriebsgröße, kein wissenschaftliches Ergebnis. Sie gehört nicht in die Arbeit. |
+| L-39 (**neu**) | Der Fehlversuch eines Laufs wird bewusst **nicht** exportiert. Wer die Daten eines Abbruchs untersuchen will, findet sie in `logs/<run_id>.failed-<n>.log` und in `campaign_status.json`, nicht in den CSVs. |
+| L-40 (**neu**) | Der Integritätscheck prüft Struktur und Konsistenz, keine inhaltliche Plausibilität. Ein Lauf mit auffälligen, aber formal korrekten Werten fällt ihm nicht auf. |
+| L-31, L-35, L-37, L-30, L-27, L-28, L-14 bis L-26 | unverändert. |
+
+---
+
+## L.12 Freeze-Gate
+
+| Kriterium | Status |
+|---|---|
+| Failed-Run-Resume sicher | **erfüllt** — Test A, echt und als Unittest |
+| Targeted-Resume sicher | **erfüllt** — Test B, 49 Läufe unverändert |
+| kein Truncate | **erfüllt** — Modus hängt am Bestand, nicht an der Planlänge |
+| keine wissenschaftlichen Doppelzeilen | **erfüllt** — `purge_runs`, Fehlversuche nicht exportiert |
+| abgeschlossene Läufe unverändert | **erfüllt** — feldweise geprüft |
+| Export/Status konsistent | **erfüllt** — Export vor Status, `export_failed` bricht ab |
+| Final Integrity Check vorhanden und grün | **erfüllt** |
+| Hardware-Preflight | **erfüllt** |
+| Disk-Check | **erfüllt** — Fail-Fast getestet |
+| Runtime-Benchmark | **erfüllt** — je Policy, Aufbau separat |
+| ETA beeinflusst RNG/Configs nicht | **erfüllt** — fünf Zusicherungen |
+| laufende ETA | **erfüllt** — policygewichtet |
+| Campaign Dry-Run | **PASS** |
+| Smoke | **PASS** |
+| Failure-Resume-Smoke | **PASS** |
+| volle Testsuite | **543 passed, 0 failed** |
+| CRN intakt | **erfüllt** |
+| keine Simulationslogik geändert | **erfüllt** |
+
+### Urteil
+
+```text
+SIMULATION_VALIDATED        = JA
+EXPERIMENT_HORIZON_FROZEN   = JA
+EXPORT_PIPELINE_VALIDATED   = JA
+CAMPAIGN_DRIVER_VALIDATED   = JA
+FINAL_EXPERIMENT_FROZEN     = JA
+```
+
+Die Kampagne ist technisch und methodisch freigegeben. Der Startbefehl:
+
+```bash
+python3 -m experiments.run_final_campaign --output-dir results/final
+```
+
+Er wurde **nicht** ausgeführt. Die 50 finalen Runs sind nicht gestartet.
+
+Es wurden **keine Git-Commits oder Pushes** ausgeführt.
+
+Damit endet die Auditphase. Der nächste Schritt ist ausschliesslich der Start
+und die Überwachung der 50 finalen Runs.
+
+---
+
+# Final Run-Health Gate (2026-08-24)
+
+Der letzte offene Punkt vor der Kampagne: Ein Lauf, der technisch bis
+`T_final` durchläuft, ist noch kein gültiger wissenschaftlicher Datensatz.
+Hatte er unterwegs eine der eingefrorenen harten Correctness-/Liveness-
+Verletzungen, darf er nicht stillschweigend als Replikation in den Daten
+landen.
+
+In dieser Phase wurde **keine Zeile Simulationslogik** angefasst.
+
+---
+
+## M.1 Ausgangszustand
+
+```text
+git rev-parse HEAD     c0def4dbef738913162a1dcfbe201a91ab33ffc6
+git branch             working_sim
+Python                 3.10.12
+pytest                 9.1.1
+Testsuite vorher       543 passed, 0 failed
+```
+
+Der Stand aus Abschnitt L ist inzwischen committet; `HEAD` hat sich
+gegenüber `1c127bec` entsprechend bewegt.
+
+---
+
+## M.2 Warum die Strukturprüfung allein nicht reichte
+
+Der Abschlusscheck aus L.6 prüft Vollständigkeit, Eindeutigkeit,
+Fensterkonsistenz und Querverweise. Alles davon kann stimmen, während der
+Lauf inhaltlich ungültig ist: Ein Task-Deadlock oder eine gescheiterte
+Bewegungs-Recovery bei t = 12.000 hinterlässt keine strukturelle Spur, wenn
+sich die Simulation danach wieder fängt und bis 30.000 weiterläuft. Formal
+vollständig, wissenschaftlich unbrauchbar.
+
+---
+
+## M.3 Befund: die Zähler zählten Zeichenketten, die es nicht gibt
+
+Beim Prüfen der bestehenden Signale (Auftrag §4) stellte sich heraus, dass
+die beiden gezählten Marker im Produktionscode **nicht existieren**:
+
+```python
+recoveries = zaehle(log, "[MOVE_RECOVERY]")            # nie erzeugt
+unresolved = zaehle(log, "MOVE_RECOVERY_UNRESOLVED")   # nie erzeugt
+```
+
+Beleg, doppelt geführt:
+
+* Suche über den gesamten Produktionscode: **kein Erzeuger** dieser Strings.
+  Die einzigen Fundstellen sind die Zähler selbst in
+  `run_final_campaign.py`, `pilot_slice.py` und `pilot_run.py`.
+* Empirisch über alle fünf Policies auf der finalen Geometrie:
+
+```text
+policy                    retr   [RECOVERY][MOVE_STALL]   keine Aufloesung   [TASK_DEADLOCK]   [DEADLOCK]
+baseline_reference          18                        0                  0                 0            9
+RR+RR                       15                        0                  0                 0            0
+LR+NR                       30                        0                  0                 0            9
+ABC+ABC                     18                        0                  0                 0            6
+POPULARITY+POPULARITY       18                        0                  0                 0            9
+
+Vorkommen von "MOVE_RECOVERY_UNRESOLVED": 0
+Vorkommen von "[MOVE_RECOVERY]"         : 0
+```
+
+**Konsequenz:** `move_recovery_unresolved` war strukturell immer 0 und
+konnte gar nicht anschlagen. Das in früheren Abschnitten berichtete
+`move_recovery_unresolved = 0` war damit **keine Evidenz**, sondern eine
+Tautologie. Dasselbe gilt für `move_stall_recoveries`.
+
+Die Marker, die die Simulation wirklich schreibt, stehen in
+`simulation/event_handler.py`:
+
+| Marker | Zeile | Bedeutung |
+|---|---|---|
+| `[RECOVERY][MOVE_STALL] …` | 841 | ein Recovery-Versuch beginnt |
+| `[RECOVERY][MOVE_STALL] … keine Auflösung möglich …` | 886 | der Versuch ist gescheitert |
+| `[TASK_DEADLOCK][RESTORE_BURIED] …` | 1362 | Task-Deadlock erkannt |
+
+`task_deadlock` existierte also als Signal, wurde vom Kampagnentreiber aber
+**gar nicht** gezählt — nur vom Kalibrationsskript.
+
+### Warum das Umstellen kein neues Kriterium ist
+
+Der Verdacht liegt nahe, hier werde ein strengerer Filter eingeführt. Er ist
+ausgeräumt: In gesunden Läufen aller fünf Policies kommt der reale Marker
+**null Mal** vor, während die legitimen `[DEADLOCK]`-Detektionen dort 0 bis 9
+Mal auftreten und bewusst nicht gewertet werden. Gezählt wird jetzt der
+Marker, den die Simulation für genau den gemeinten Zustand schreibt — die
+Reparatur einer Messgröße, nicht ihre Verschärfung.
+
+Ein Nebenbefund zur Einordnung: Bleibt ein Move-Stall dauerhaft unauflösbar,
+läuft die Retry-Leiter leer und der EventHandler wirft. Diesen Fall behandelt
+der Treiber bereits als `failed`. Das Gate greift eine Stufe früher — beim
+Lauf, der die Verletzung hatte und sich danach wieder gefangen hat.
+
+---
+
+## M.4 Geprüfte Signale
+
+`experiments/run_health.py` ist die einzige Quelle:
+
+```python
+zaehle_health_signale(log) -> {move_stall_recoveries,
+                               move_recovery_unresolved,
+                               task_deadlock}
+evaluate_run_health(zaehler) -> {healthy, violations, ...}
+```
+
+| Größe | Rolle |
+|---|---|
+| `move_recovery_unresolved` | **HART** — Verletzung |
+| `task_deadlock` | **HART** — Verletzung |
+| `move_stall_recoveries` | reine Diagnose, darf > 0 sein |
+
+`HARTE_SIGNALE` ist bewusst zweielementig. Wer sie erweitert, ändert den
+Freeze.
+
+---
+
+## M.5 Was ausdrücklich NICHT gatet
+
+```text
+niedriger Durchsatz              wenige Retrievals
+grosse, endliche Retrieval-Luecke  not_converged
+converged_then_rediverged        hohe Deadline-Miss-Rate
+viele NORMALE [DEADLOCK]-Detektionen
+viele ERFOLGREICHE Move Recoveries
+unbury, drop_bury_redirect, stale_pickup_no_task
+```
+
+Dies ist ein Correctness-Gate, **kein** Performancefilter. Es wurde
+insbesondere **keine** Mindest-Retrievalzahl, kein Mindestdurchsatz, keine
+maximale Retrieval-Lücke, keine RQ4-Konvergenzpflicht und keine
+policyspezifische Schwelle eingeführt. Eine korrekt implementierte Policy
+darf schlecht abschneiden — das ist ein Ergebnis, kein Fehler.
+
+Zwei Tests halten diese Richtung ausdrücklich fest
+(`test_poor_performance_alone_never_blocks_a_run`,
+`test_successful_recoveries_do_not_block_a_run`).
+
+---
+
+## M.6 Verhalten bei einer Verletzung
+
+```text
+Simulation beendet
+  -> Health-Signale aus dem Lauflog bestimmen
+     -> Verletzung?  ja  -> state = health_failed, KEIN Export
+                     nein -> RQ4, Export, dann state = completed
+```
+
+Ein `health_failed`-Lauf:
+
+* erscheint **nicht** in `runs.csv`, `retrievals.csv`, `requests.csv`,
+  `distribution.csv` oder `run_meta.json`,
+* wird in `campaign_status.json` mit `health_violations`, den drei Zahlen und
+  dem Versuchszähler dokumentiert,
+* behält sein Log als `logs/<run_id>.failed-<n>.log`,
+* löst **keinen** Seed-Austausch aus und überspringt keine Kombination,
+* führt zu **Exit ≠ 0**.
+
+Es entstehen also gar keine halbfertigen wissenschaftlichen Daten — die
+`purge_runs()`-Variante wird nicht gebraucht.
+
+Ausgabe im Betrieb:
+
+```text
+[HEALTH] LR+NR__seed42: harte Verletzung ['task_deadlock=1']
+         Lauf gilt NICHT als wissenschaftlich abgeschlossen und wird nicht exportiert.
+         Log unter logs/LR+NR__seed42.failed-1.log
+
+[FAIL] 1 Run(s) nicht abgeschlossen: ['LR+NR__seed42']
+       LR+NR__seed42: health_failed — ['task_deadlock=1']
+Seeds werden NICHT ersetzt und Kombinationen NICHT uebersprungen. Ursache klaeren, dann --resume.
+Ein wiederholt scheiternder Lauf wird NICHT automatisch erneut versucht.
+```
+
+---
+
+## M.7 Resume-Semantik
+
+`health_failed` steht gleichberechtigt neben `failed` und `export_failed`:
+
+```python
+FERTIG      = "completed"
+GESCHEITERT = ("failed", "export_failed", "health_failed")
+```
+
+Beim `--resume` gilt der Lauf als offen, sein altes Log wird zu
+`.failed-<n>.log`, der Versuchszähler steigt, und die bestehenden
+Bereinigungsregeln aus L.3 greifen unverändert: kein Truncate, keine
+Dublette, abgeschlossene Läufe unverändert.
+
+Ein deterministisch wiederholt scheiternder Lauf wird **nicht** automatisch
+weiter wiederholt. Der Treiber endet mit Exit ≠ 0 und benennt ihn; die
+Ursache wird danach separat untersucht.
+
+---
+
+## M.8 Nachweise
+
+### Regressionstests (`tests/test_run_health_gate.py`, 21 Tests)
+
+| Test | Erwartung |
+|---|---|
+| `move_recovery_unresolved = 1` | `health_failed`, Exit ≠ 0, kein Datensatz |
+| `task_deadlock = 1` | `health_failed`, Exit ≠ 0, kein Datensatz |
+| gesunder Lauf | `completed`, Export wie bisher |
+| `move_stall_recoveries = 25`, unresolved = 0 | `completed` |
+| wenige Retrievals + `not_converged` | `completed` |
+| 200 × `[DEADLOCK] Detected` | `completed` |
+| Resume nach Health-Failure | 1 Zeile je `run_id`, `versuche = 2`, Failure-Log erhalten |
+| gezielter Resume im 50er-Bestand | 49 Läufe feldweise unverändert, danach 50/50 |
+| deterministisch wiederholter Failure | Exit ≠ 0, kein Seed-Ersatz, genau ein Retry je Aufruf |
+| Integritätscheck | erkennt `health_failed` und `task_deadlock > 0` in `runs.csv` |
+| **Markerkopplung** | die drei Marker existieren im Produktionscode |
+| **tote Strings** | die alten Zeichenketten werden nirgends mehr benutzt |
+
+Die letzten beiden verhindern eine Wiederholung genau dieses Fehlers: Wird
+ein Marker umbenannt oder ein nicht existierender String wieder gezählt,
+schlägt der Test an, statt dass die Messgröße still stirbt. Der Test
+unterscheidet dabei zwischen Benutzung und Erwähnung — die Vorgeschichte darf
+im Docstring stehen bleiben.
+
+### Echte Smokes
+
+```text
+gesunder Smoke, alle fuenf Policies      -> Exit 0, INTEGRITY CHECK: PASS
+                                            recov/unres/tdl = 0/0/0 in allen fuenf
+
+Health-Failure-Smoke (task_deadlock injiziert)
+  Durchgang 1  -> Exit 1, LR+NR nicht in runs.csv,
+                  state=health_failed, health_violations=['task_deadlock=1']
+  Durchgang 2  -> Exit 0, je run_id genau 1 Zeile,
+                  versuche=2, LR+NR__seed42.failed-1.log erhalten,
+                  INTEGRITY CHECK: PASS
+```
+
+---
+
+## M.9 Erweiterter Final Integrity Check
+
+Zusätzlich zu den Prüfungen aus L.6 gilt für alle 50 Läufe:
+
+```text
+state == completed
+move_recovery_unresolved == 0
+task_deadlock == 0
+```
+
+Geprüft wird beides — der Status **und** die Spalten in `runs.csv`. Letzteres
+fängt auch einen von Hand zusammengeführten Bestand ab. Schlägt eine Prüfung
+an: `FINAL CAMPAIGN INTEGRITY CHECK: FAIL`, Exit ≠ 0.
+
+```text
+FINAL CAMPAIGN INTEGRITY CHECK
+  50 Laeufe, je genau ein Datensatz
+  Fenster, RQ4-Status und Querverweise konsistent
+  harte Correctness-/Liveness-Signale null: move_recovery_unresolved, task_deadlock
+
+FINAL CAMPAIGN INTEGRITY CHECK: PASS
+```
+
+`task_deadlock` ist neu in `RUN_FIELDS`. Wie `error` ist die Spalte in den
+finalen Daten immer 0 — nicht, weil sie nichts messen könnte, sondern weil
+ein verletzender Lauf gar nicht erst exportiert wird. Der Abschlusscheck
+prüft das nach; die Spalte ist damit eine maschinell nachprüfbare
+Zusicherung, kein leeres Versprechen.
+
+---
+
+## M.10 Validierung
+
+| Prüfung | Ergebnis |
+|---|---|
+| Volle Testsuite | **564 passed, 0 failed** (vorher 543) |
+| Gesunder Smoke | **PASS**, Exit 0 |
+| Health-Failure-Smoke | **PASS** — kein `completed`, kein Export |
+| Health-Failure-Resume | **PASS** — keine Dublette, kein Truncate |
+| Campaign Dry-Run | **CAMPAIGN DRY RUN PASS** |
+| CRN | **INTAKT**, Hashes byteidentisch zu den Vorphasen |
+| Simulationslogik verändert | **nein** |
+
+Keine bestehende Assertion wurde abgeschwächt. `test_simulation_visual.py`
+bleibt wegen fehlendem `flask` nicht ausführbar — Umgebungsgrenze.
+
+---
+
+## M.11 Geänderte Dateien
+
+```text
+experiments/run_health.py             NEU  die einzige Health-Quelle
+experiments/run_final_campaign.py          Gate, health_failed, Integritaet
+experiments/run_export.py                  task_deadlock im Schema, health-Parameter
+tests/test_run_health_gate.py         NEU  21 Tests
+```
+
+Kein Scheduler, kein EventHandler, kein RobotTask, kein TrafficManager, kein
+Placement, kein Reordering, kein RequestGenerator, keine RNG-Streams, keine
+Policies, keine Config, keine Horizonte, keine RQ4-Regel.
+
+**Die Kalibration bleibt gültig und wurde nicht wiederholt.**
+
+---
+
+## M.12 Aktualisierte Limitationen
+
+**L-40 (präzisiert).** Der Integritätscheck prüft Struktur, Konsistenz und
+zusätzlich die explizit eingefrorenen harten Correctness-/Liveness-Signale
+(`move_recovery_unresolved`, `task_deadlock`). Er prüft weiterhin **nicht**
+allgemeine inhaltliche Plausibilität oder Performance. Ungewöhnlich niedriger
+Durchsatz, eine unerwartete Policy-Rangfolge, `not_converged`, große
+Tardiness oder eine auffällige räumliche Verteilung werden **nicht**
+beanstandet — das gehört in die wissenschaftliche Analyse, nicht in ein
+technisches Gate.
+
+| # | Limitation |
+|---|---|
+| L-41 (**neu**) | Das in den Abschnitten F bis L berichtete `move_recovery_unresolved = 0` beruhte auf einem Zähler ohne Erzeuger und war damit tautologisch. Für die 15 Kalibrationsläufe lässt sich der reale Marker nicht nachträglich auswerten, ohne sie neu zu rechnen — das ist ausdrücklich ausgeschlossen. Ab der finalen Kampagne ist das Signal korrekt verdrahtet. `task_deadlock` war in der Kalibration dagegen korrekt gezählt und dort durchgehend 0. |
+| L-42 (**neu**) | Die Health-Signale werden aus dem Lauflog gelesen, nicht aus einem Zähler im Simulationskern. Das ist eine bewusste Entscheidung dieser Phase: ein Zähler im Kern wäre eine Änderung an der Simulationslogik gewesen. Zwei Tests koppeln die Marker an den Produktionscode, damit ein Umbenennen auffällt. |
+| L-39 (**erweitert**) | Auch ein `health_failed`-Lauf wird bewusst nicht exportiert. Seine Daten liegen in `logs/<run_id>.failed-<n>.log` und `campaign_status.json`. |
+| L-31, L-35, L-36, L-37, L-38, L-30, L-27, L-28, L-14 bis L-26 | unverändert. |
+
+---
+
+## M.13 Absolut letztes Freeze-Gate
+
+| Kriterium | Status |
+|---|---|
+| `move_recovery_unresolved > 0` kann nie `completed` werden | **erfüllt** |
+| `task_deadlock > 0` kann nie `completed` werden | **erfüllt** |
+| gesunder Lauf weiterhin `completed` | **erfüllt** |
+| `not_converged` allein bleibt gültig | **erfüllt** |
+| niedriger Durchsatz allein bleibt gültig | **erfüllt** |
+| erfolgreiche Recoveries allein bleiben gültig | **erfüllt** |
+| Health-Resume: kein Truncate, keine Dublette, `completed` unverändert | **erfüllt** |
+| Final Integrity Check erkennt Health-Failures | **erfüllt** |
+| volle Testsuite | **564 passed, 0 failed** |
+| Smoke | **PASS** |
+| Failure-Resume | **PASS** |
+| Health-Failure-Resume | **PASS** |
+| Dry-Run | **PASS** |
+| CRN unverändert | **erfüllt** |
+| keine Simulationslogik geändert | **erfüllt** |
+
+### Urteil
+
+```text
+SIMULATION_VALIDATED        = JA
+EXPERIMENT_HORIZON_FROZEN   = JA
+EXPORT_PIPELINE_VALIDATED   = JA
+CAMPAIGN_DRIVER_VALIDATED   = JA
+FINAL_EXPERIMENT_FROZEN     = JA
+
+AUDIT_PHASE_CLOSED          = JA
+```
+
+Die finale Kampagne ist freigegeben. Der nächste Schritt ist ausschliesslich
+Commit/Push und danach der Start der 50 finalen Runs:
+
+```bash
+python3 -m experiments.run_final_campaign --output-dir results/final
+```
+
+Er wurde **nicht** ausgeführt. Es wurden **keine Git-Commits oder Pushes**
+gemacht.
+
+Ab hier wird nur noch untersucht, was während der realen Kampagne konkret
+auftritt.
