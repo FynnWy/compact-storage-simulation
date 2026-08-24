@@ -39,6 +39,7 @@ Exitcode 0 nur, wenn jeder gerechnete Run fehlerfrei war.
 
 import argparse
 import contextlib
+import csv
 import io
 import json
 import sys
@@ -58,6 +59,13 @@ from experiments.campaign_matrix import (  # noqa: E402
 from experiments.run_export import (  # noqa: E402
     RUN_SCOPED_CSVS, ExperimentWriter, purge_runs,
 )
+from experiments.run_health import (  # noqa: E402
+    HARTE_SIGNALE, evaluate_run_health, zaehle_health_signale,
+)
+from experiments.runtime_preflight import (  # noqa: E402
+    benchmarke_alle, dauer_lesbar, hardware_inventar, historische_walltimes,
+    laufende_schaetzung, pruefe_platz, schaetze_kampagne, zeige_preflight,
+)
 from metrics.rq4_plateau import analyse_engine  # noqa: E402
 from simulation.simulation_engine import SimulationEngine  # noqa: E402
 
@@ -69,6 +77,19 @@ SMOKE_T_MEASURE_START = 300
 SMOKE_SEEDS = (42,)
 
 STATUS_DATEI = "campaign_status.json"
+
+#: Nur dieser Zustand gilt als wissenschaftlich abgeschlossen.
+FERTIG = "completed"
+
+#: Zustaende eines gescheiterten Versuchs. Alle drei gelten beim `--resume`
+#: als offen, behalten ihr Log als `<run_id>.failed-<n>.log` und loesen
+#: KEINEN Seed-Austausch aus.
+#:
+#:   failed          die Simulation warf eine Ausnahme
+#:   export_failed   der Lauf lief durch, der Export scheiterte
+#:   health_failed   der Lauf lief durch, verletzte aber ein hartes
+#:                   Correctness-/Liveness-Signal
+GESCHEITERT = ("failed", "export_failed", "health_failed")
 
 
 # ====================================================================== #
@@ -179,8 +200,7 @@ def fahre_lauf(eintrag, log_ordner: Path, bisher=None):
     """
     log_ordner.mkdir(parents=True, exist_ok=True)
     hauptlog = log_ordner / f"{eintrag['run_id']}.log"
-    if bisher and bisher.get("state") in ("failed", "export_failed") \
-            and hauptlog.exists():
+    if bisher and bisher.get("state") in GESCHEITERT and hauptlog.exists():
         nummer = bisher.get("versuche", 1)
         hauptlog.replace(
             log_ordner / f"{eintrag['run_id']}.failed-{nummer}.log")
@@ -202,8 +222,51 @@ def fahre_lauf(eintrag, log_ordner: Path, bisher=None):
     return engine, fehler, round(time.time() - begonnen, 1), puffer.getvalue()
 
 
-def zaehle(log: str, marke: str) -> int:
-    return log.count(marke)
+def fortschritt(nummer, gesamt, dauern, offen, preflight):
+    """Laufende ETA aus den tatsaechlichen Wanduhrzeiten."""
+    rest_policies = [e["policy"] for e in offen[nummer:]]
+    s = laufende_schaetzung(dauern, rest_policies, preflight)
+    if s.get("remaining_seconds") is None:
+        return
+    print(f"         elapsed {dauer_lesbar(s['elapsed_seconds'])} | "
+          f"{nummer}/{gesamt} | avg {dauer_lesbar(s['mean_seconds'])}/run | "
+          f"rest {dauer_lesbar(s['remaining_seconds'])} | "
+          f"fertig ~{s['finish_estimate']}", flush=True)
+
+
+# ====================================================================== #
+# Preflight
+# ====================================================================== #
+
+def preflight(ordner: Path, anzahl_runs: int, mit_benchmark: bool,
+              policies=None):
+    """
+    Hardware zeigen, Platz pruefen, Laufzeit schaetzen.
+
+    Returns:
+        `(schaetzung | None, ok)` — `ok=False` heisst: nicht genug Platz.
+    """
+    hardware = hardware_inventar(ordner)
+    platz = pruefe_platz(ordner, anzahl_runs)
+
+    schaetzung = None
+    dauer = None
+    if mit_benchmark:
+        begonnen = time.time()
+        benchmarks = benchmarke_alle(policies)
+        dauer = time.time() - begonnen
+        seeds_je_policy = max(1, anzahl_runs // max(1, len(benchmarks)))
+        schaetzung = schaetze_kampagne(
+            benchmarks, seeds_je_policy, FINAL_SIMULATION_TIME,
+            historisch=historische_walltimes())
+
+    zeige_preflight(hardware, platz, schaetzung, dauer)
+
+    if not platz["ok"]:
+        print(f"\nFEHLER: {platz['warnung']}")
+        print("Die Kampagne wird nicht gestartet.")
+        return schaetzung, False
+    return schaetzung, True
 
 
 # ====================================================================== #
@@ -285,17 +348,49 @@ def fahre_kampagne(eintraege, ordner: Path, resume: bool, smoke: bool,
                       flush=True)
                 continue
 
+            # ---------------------------------------------------------- #
+            # RUN-HEALTH-GATE
+            #
+            # Der Lauf ist technisch bis zum Ende gekommen. Bevor er als
+            # wissenschaftliche Replikation gilt, muessen die beiden
+            # eingefrorenen harten Signale null sein. Ein Lauf, der eine
+            # Verletzung hatte und sich danach wieder gefangen hat, waere
+            # sonst formal vollstaendig und inhaltlich ungueltig.
+            #
+            # Das ist ausdruecklich KEIN Performancefilter: niedriger
+            # Durchsatz, `not_converged` oder viele ERFOLGREICHE Recoveries
+            # fuehren nicht hierher.
+            # ---------------------------------------------------------- #
+            health = evaluate_run_health(zaehle_health_signale(log))
+            if not health["healthy"]:
+                status[kennung] = {
+                    **grunddaten, "state": "health_failed",
+                    "rq4_status": None,
+                    "error": None,
+                    "health_violations": health["violations"],
+                    "move_stall_recoveries": health["move_stall_recoveries"],
+                    "move_recovery_unresolved":
+                        health["move_recovery_unresolved"],
+                    "task_deadlock": health["task_deadlock"],
+                }
+                schreibe_status(ordner, status)
+                fehlerhaft.append(kennung)
+                print(f"[HEALTH] {kennung}: harte Verletzung "
+                      f"{health['violations']}", flush=True)
+                print(f"         Lauf gilt NICHT als wissenschaftlich "
+                      f"abgeschlossen und wird nicht exportiert.", flush=True)
+                print(f"         Log unter logs/{kennung}"
+                      f".failed-{grunddaten['versuche']}.log", flush=True)
+                continue
+
             rq4 = analyse_engine(engine)
-            recoveries = zaehle(log, "[MOVE_RECOVERY]")
-            unresolved = zaehle(log, "MOVE_RECOVERY_UNRESOLVED")
 
             # Erst exportieren, dann als `completed` markieren. Schlaegt der
             # Export fehl, bleibt der Lauf offen und wird beim naechsten
             # `--resume` wiederholt — nie als fertig gemeldet.
             try:
                 writer.add_run(kennung, eintrag["policy"], eintrag["seed"],
-                               engine, rq4=rq4, error=None,
-                               recoveries=recoveries, unresolved=unresolved)
+                               engine, rq4=rq4, error=None, health=health)
             except Exception as exc:
                 status[kennung] = {**grunddaten, "state": "export_failed",
                                    "rq4_status": rq4["status"],
@@ -307,8 +402,14 @@ def fahre_kampagne(eintraege, ordner: Path, resume: bool, smoke: bool,
                       flush=True)
                 return 1
 
-            status[kennung] = {**grunddaten, "state": "completed",
-                               "rq4_status": rq4["status"], "error": None}
+            status[kennung] = {
+                **grunddaten, "state": "completed",
+                "rq4_status": rq4["status"], "error": None,
+                "move_stall_recoveries": health["move_stall_recoveries"],
+                "move_recovery_unresolved":
+                    health["move_recovery_unresolved"],
+                "task_deadlock": health["task_deadlock"],
+            }
             schreibe_status(ordner, status)
             dauern.append((eintrag["policy"], dauer))
 
@@ -318,10 +419,17 @@ def fahre_kampagne(eintraege, ordner: Path, resume: bool, smoke: bool,
             fortschritt(nummer, len(offen), dauern, offen, preflight)
 
     if fehlerhaft:
-        print(f"\n[FAIL] {len(fehlerhaft)} Run(s) fehlgeschlagen: "
+        print(f"\n[FAIL] {len(fehlerhaft)} Run(s) nicht abgeschlossen: "
               f"{fehlerhaft}")
+        for kennung in fehlerhaft:
+            eintrag = status.get(kennung, {})
+            grund = (eintrag.get("health_violations")
+                     or eintrag.get("error") or "?")
+            print(f"       {kennung}: {eintrag.get('state')} — {grund}")
         print("Seeds werden NICHT ersetzt und Kombinationen NICHT "
               "uebersprungen. Ursache klaeren, dann --resume.")
+        print("Ein wiederholt scheiternder Lauf wird NICHT automatisch "
+              "erneut versucht.")
         return 1
 
     print(f"\n[OK] {len(offen)} Run(s) gerechnet -> {ordner}")
@@ -345,8 +453,14 @@ def pruefe_integritaet(ordner: Path, eintraege, status, smoke=False):
         Liste der Befunde. Leer heisst: alles in Ordnung.
     """
     befunde = []
-    erwartet = {e["run_id"] for e in eintraege}
-    voll = not smoke and len(eintraege) == len(FINAL_POLICIES) * len(FINAL_SEEDS)
+    # Geprueft wird immer gegen den VOLLEN Versuchsplan, nicht gegen die
+    # gerade aufgerufene Teilmenge. Sonst haette ein gezielter Retry
+    # (`--policy X --seed Y`) die uebrigen 49 Laeufe als „unerwartet"
+    # gemeldet — und ein Lauf ueber eine Teilmenge haette „PASS" gesagt,
+    # obwohl 45 Kombinationen fehlen.
+    erwartet = ({e["run_id"] for e in eintraege} if smoke
+                else {k for k, _, _ in final_matrix()})
+    voll = not smoke
 
     # --- runs.csv ---------------------------------------------------- #
     runs_datei = ordner / "runs.csv"
@@ -378,9 +492,14 @@ def pruefe_integritaet(ordner: Path, eintraege, status, smoke=False):
 
     # --- Statusdatei --------------------------------------------------- #
     nicht_fertig = sorted(k for k in erwartet
-                          if status.get(k, {}).get("state") != "completed")
+                          if status.get(k, {}).get("state") != FERTIG)
     if nicht_fertig:
         befunde.append(f"nicht abgeschlossene Laeufe: {nicht_fertig}")
+    ungesund = sorted(k for k in erwartet
+                      if status.get(k, {}).get("state") == "health_failed")
+    if ungesund:
+        befunde.append(
+            f"Laeufe mit harter Correctness-/Liveness-Verletzung: {ungesund}")
 
     # --- Fenster, RQ4, Fehlerspalte ------------------------------------ #
     soll_start = str(SMOKE_T_MEASURE_START if smoke else FINAL_T_MEASURE_START)
@@ -401,6 +520,14 @@ def pruefe_integritaet(ordner: Path, eintraege, status, smoke=False):
             befunde.append(f"{kennung}: rq4_status leer")
         if r.get("error"):
             befunde.append(f"{kennung}: error={r['error']!r}")
+        # Harte Correctness-/Liveness-Signale. Ein verletzender Lauf wird
+        # gar nicht erst exportiert; diese Pruefung stellt sicher, dass
+        # das auch wirklich so ist — etwa nach einem von Hand
+        # zusammengefuehrten Bestand.
+        for signal in HARTE_SIGNALE:
+            wert = r.get(signal)
+            if wert not in ("", "0", 0, None):
+                befunde.append(f"{kennung}: {signal}={wert!r}")
 
     # --- Fensterkonsistenz je Lauf ------------------------------------- #
     markiert = {}
@@ -459,7 +586,26 @@ def pruefe_integritaet(ordner: Path, eintraege, status, smoke=False):
 
 
 def abschlusspruefung(ordner: Path, eintraege, status, smoke=False) -> int:
-    """Fuehrt den Integritaetscheck aus und bestimmt den Exitcode."""
+    """
+    Fuehrt den Integritaetscheck aus und bestimmt den Exitcode.
+
+    Solange noch Kombinationen des Versuchsplans fehlen, ist das kein
+    Fehler — jemand hat bewusst eine Teilmenge gerechnet. Dann wird der
+    Stand berichtet und ausdruecklich KEIN „PASS" gemeldet. Erst wenn alle
+    50 Laeufe vorliegen, entscheidet die vollstaendige Pruefung.
+    """
+    voll = not smoke
+    if voll:
+        fertig = {k for k, _, _ in final_matrix()
+                  if status.get(k, {}).get("state") == "completed"}
+        offen = len(final_matrix()) - len(fertig)
+        if offen:
+            print(f"\n[TEILMENGE] {len(fertig)}/{len(final_matrix())} Laeufe "
+                  f"abgeschlossen, {offen} fehlen noch.")
+            print("Der FINAL CAMPAIGN INTEGRITY CHECK laeuft erst, wenn die "
+                  "Matrix vollstaendig ist.")
+            return 0
+
     print("\n" + "=" * 68)
     print("FINAL CAMPAIGN INTEGRITY CHECK"
           + ("  (SMOKE)" if smoke else ""))
@@ -473,8 +619,11 @@ def abschlusspruefung(ordner: Path, eintraege, status, smoke=False) -> int:
         print("Die Kampagne wird NICHT als erfolgreich gemeldet.")
         return 1
 
-    print(f"  {len(eintraege)} Laeufe, je genau ein Datensatz")
+    anzahl = len(eintraege) if smoke else len(final_matrix())
+    print(f"  {anzahl} Laeufe, je genau ein Datensatz")
     print("  Fenster, RQ4-Status und Querverweise konsistent")
+    print(f"  harte Correctness-/Liveness-Signale null: "
+          f"{', '.join(HARTE_SIGNALE)}")
     print("\nFINAL CAMPAIGN INTEGRITY CHECK: PASS")
     return 0
 
@@ -590,14 +739,32 @@ def main(argv=None):
     p.add_argument("--policy", action="append", default=None,
                    choices=list(FINAL_POLICIES),
                    help="Teilmenge; mehrfach angebbar.")
+    # Seeds gegen die eingefrorene Menge pruefen. Ohne diese Schranke haette
+    # `--seed 5` klaglos einen Lauf geplant, den es im Versuchsplan nicht
+    # gibt — und der Integritaetscheck haette ihn erst am Ende bemerkt.
     p.add_argument("--seed", action="append", type=int, default=None,
+                   choices=list(FINAL_SEEDS),
                    help="Teilmenge; mehrfach angebbar.")
     p.add_argument("--resume", action="store_true",
                    help="Bereits abgeschlossene Runs ueberspringen.")
+    p.add_argument("--estimate-runtime", action="store_true",
+                   help="Nur Hardware, Platz und Laufzeitschaetzung "
+                        "ausgeben. Rechnet keine finalen Runs und schreibt "
+                        "nichts.")
+    p.add_argument("--skip-runtime-estimate", action="store_true",
+                   help="Den Benchmark vor dem Start ueberspringen.")
     args = p.parse_args(argv)
 
     ordner = Path(args.output_dir).resolve()
     eintraege = plan(args.policy, args.seed, smoke=args.smoke)
+
+    if args.estimate_runtime:
+        # Reiner Schaetzmodus: keine finalen Runs, kein Schreiben, keine
+        # Beruehrung von `campaign_status.json`.
+        _, ok = preflight(ordner, len(eintraege), mit_benchmark=True,
+                          policies=args.policy)
+        print("\nEs wurde kein finaler Run gerechnet und nichts geschrieben.")
+        return 0 if ok else 2
 
     if args.dry_run:
         return dry_run(eintraege, ordner, args.smoke)
@@ -609,8 +776,13 @@ def main(argv=None):
               f"benutzen. Ein stilles Ueberschreiben findet nicht statt.")
         return 2
 
-    if args.smoke:
+    try:
         status = lade_status(ordner)
+    except StatusKaputt as exc:
+        print(f"FEHLER: {exc}")
+        return 2
+
+    if args.smoke:
         if any(not v.get("smoke") for v in status.values()):
             print(f"FEHLER: {ordner} enthaelt finale Laeufe. Der Rauchtest "
                   f"schreibt nicht in ein finales Ergebnisverzeichnis.")
@@ -619,7 +791,20 @@ def main(argv=None):
               f"[{SMOKE_T_MEASURE_START}, {SMOKE_SIM_TIME}] — "
               f"NICHT die finalen Parameter")
 
-    return fahre_kampagne(eintraege, ordner, args.resume, args.smoke)
+    # Betriebsprognose vor dem ersten finalen Run. Nicht interaktiv, damit
+    # ein unbeaufsichtigter Start moeglich bleibt.
+    schaetzung = None
+    if not args.smoke:
+        schaetzung, ok = preflight(
+            ordner, len(eintraege),
+            mit_benchmark=not args.skip_runtime_estimate,
+            policies=args.policy)
+        if not ok:
+            return 2
+        print()
+
+    return fahre_kampagne(eintraege, ordner, args.resume, args.smoke,
+                          preflight=schaetzung)
 
 
 if __name__ == "__main__":

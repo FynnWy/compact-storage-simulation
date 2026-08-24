@@ -766,13 +766,25 @@ wissenschaftlicher Schlüssel.
 ### Betriebsregeln
 
 - **Kein stilles Überschreiben.** Ein nicht leeres Ausgabeverzeichnis ohne
-  `--resume` bricht mit Exit 2 ab.
+  `--resume` bricht mit Exit 2 ab. Der Schreibmodus hängt am **Bestand** des
+  Ordners, nicht an der Größe der aufgerufenen Teilmenge — ein gezielter
+  Retry kann die übrigen Läufe nicht abschneiden.
 - **Kein Diagnoseziel.** Pfade mit `closeout`, `pilot`, `calib` oder `debug`
   werden abgelehnt. Finale Daten liegen getrennt von Pilot- und Debugmaterial.
 - **Kein Seed-Tausch.** Ein fehlgeschlagener Lauf wird als `failed` vermerkt,
   bleibt in der Matrix, und die Kampagne endet mit Exit 1.
-- **Fortsetzen statt neu rechnen.** `--resume` überspringt abgeschlossene
-  Läufe und hängt an die bestehenden CSVs an, ohne Kopfzeilen zu wiederholen.
+- **Genau ein Datensatz je `run_id`.** Ein fehlgeschlagener Lauf wird **nicht**
+  exportiert — sein Horizont ist unvollständig und damit kein gültiger
+  Messwert. Vor einem Retry werden etwaige frühere Zeilen des Laufs aus allen
+  Ausgabedateien entfernt (`purge_runs`). Der Fehlversuch bleibt als
+  Betriebshistorie erhalten: in `campaign_status.json` und unter
+  `logs/<run_id>.failed-<n>.log`.
+- **Export vor Status.** Ein Lauf gilt erst als `completed`, wenn seine Daten
+  geschrieben sind. Schlägt der Export fehl, wird er als `export_failed`
+  vermerkt, die Kampagne bricht ab, und der Lauf bleibt offen.
+- **Beschädigte Statusdatei: Fail-Fast.** Eine unlesbare
+  `campaign_status.json` führt zu Exit 2, nicht zu „keine Läufe vorhanden".
+  Von der jeweils vorherigen Fassung liegt eine `.bak`-Kopie daneben.
 - **Sequentiell.** `ExperimentWriter` schreibt gemeinsame CSV-Dateien und ist
   nicht nebenläufigkeitssicher. Wer parallelisieren will, fährt Teilmengen
   über `--policy` / `--seed` in **getrennte** `--output-dir` und führt die
@@ -781,8 +793,73 @@ wissenschaftlicher Schlüssel.
   [300, 600]) und weigert sich, in ein Verzeichnis mit finalen Läufen zu
   schreiben.
 
-Rechenzeitabschätzung aus den Kalibrationsläufen: 1.500–2.800 s je Lauf
-einkernig, also rund 30 CPU-Stunden für 50 Runs.
+### Run-Health-Gate
+
+Ein Lauf, der technisch bis `T_final` durchläuft, ist noch kein gültiger
+Datensatz. Vor dem Export prüft der Treiber die beiden eingefrorenen harten
+Correctness-/Liveness-Signale (`experiments/run_health.py`):
+
+| Größe | Rolle |
+|---|---|
+| `move_recovery_unresolved` | **hart** — eine Bewegungs-Recovery scheiterte |
+| `task_deadlock` | **hart** — ein Task-Deadlock wurde erkannt |
+| `move_stall_recoveries` | reine Diagnose, darf > 0 sein |
+
+Ist eines der harten Signale > 0, erhält der Lauf `state = health_failed`,
+wird **nicht** exportiert, behält sein Log als `<run_id>.failed-<n>.log` und
+lässt die Kampagne mit Exit ≠ 0 enden. Beim `--resume` gilt er als offen —
+ohne Seed-Austausch, ohne Duplikat.
+
+**Das ist ein Correctness-Gate, kein Performancefilter.** Nicht beanstandet
+werden: niedriger Durchsatz, wenige Retrievals, große aber endliche
+Retrieval-Lücken, `not_converged`, `converged_then_rediverged`, hohe
+Deadline-Miss-Rate, viele normale `[DEADLOCK]`-Detektionen und viele
+**erfolgreiche** Move Recoveries. Eine korrekt implementierte Policy darf
+schlecht abschneiden.
+
+### Abschlussprüfung
+
+Nach dem letzten Lauf prüft der Treiber den Bestand automatisch gegen den
+vollen Versuchsplan: 50 eindeutige Läufe, jede Kombination genau einmal,
+Fenstermodus und Horizonte überall gleich, `measurement_retrievals` je Lauf
+identisch mit der Zahl markierter Zeilen in `retrievals.csv`, `rq4_status`
+nie leer, keine fremden oder fehlenden `run_id` in den Kindtabellen — und
+für alle 50 Läufe `state = completed` mit
+`move_recovery_unresolved = task_deadlock = 0`.
+
+```text
+FINAL CAMPAIGN INTEGRITY CHECK: PASS
+```
+
+Erst danach Exit 0. Schlägt eine Prüfung fehl, endet die Kampagne mit Exit 1
+und wird nicht als erfolgreich gemeldet. Solange noch Kombinationen fehlen,
+meldet der Treiber den Stand und ausdrücklich kein „PASS".
+
+Der Check prüft Struktur, Konsistenz und die harten Signale — **nicht**
+inhaltliche Plausibilität. Eine auffällige Policy-Rangfolge oder ein
+unerwartet niedriger Durchsatz sind Gegenstand der wissenschaftlichen
+Analyse, nicht eines technischen Gates.
+
+### Laufzeitprognose
+
+```bash
+python3 -m experiments.run_final_campaign --estimate-runtime \
+        --output-dir results/final
+```
+
+Misst Hardware, freien Speicher und die tatsächliche Rechengeschwindigkeit
+**je Policy** auf dieser Maschine (600 ZE je Policy, Seed 999001 — außerhalb
+der finalen Seedmenge), rechnet je Policy getrennt hoch und nennt eine
+Bandbreite. Beim normalen Start läuft dieselbe Prüfung automatisch und nicht
+interaktiv; `--skip-runtime-estimate` überspringt den Benchmark.
+
+Gemessen am 2026-08-24 (Intel i5-8257U, 4 Kerne, sequentiell): zentral rund
+**24 Stunden**, plausible Spanne 19–33 Stunden.
+
+Die Prognose ist eine **Betriebsgröße**. Sie verändert weder Horizonte noch
+Seeds, Policies, Messfenster, RQ4-Regel oder KPIs, und sie gehört nicht als
+Ergebnis in die Arbeit. Sagt sie 35 Stunden, wird deshalb nicht der Horizont
+gekürzt.
 
 ### RQ4 im Export
 

@@ -262,18 +262,72 @@ def test_smoke_refuses_to_write_into_a_final_output_directory(tmp_path,
     assert "finale Laeufe" in capsys.readouterr().out
 
 
-def test_resume_skips_completed_runs(tmp_path, capsys):
+def test_resume_recomputes_nothing_when_everything_is_done(tmp_path, capsys):
+    """
+    Sind alle Laeufe fertig, wird nichts erneut gerechnet.
+
+    Seit dem Runner-Audit prueft der Treiber danach zusaetzlich den
+    Bestand. Der Test legt deshalb echte Dateien an — eine Statusdatei
+    allein ist kein Nachweis, dass die Ergebnisse existieren.
+    """
+    import csv
+
+    from experiments.run_export import RUN_FIELDS
     from experiments.run_final_campaign import STATUS_DATEI, main
 
     ziel = tmp_path / "final"
     ziel.mkdir()
-    status = {k: {"state": "completed", "smoke": True}
-              for k, _, _ in final_matrix()}
+    smoke_plan = [("baseline_reference", 42), ("RR+RR", 42), ("LR+NR", 42),
+                  ("ABC+ABC", 42), ("POPULARITY+POPULARITY", 42)]
+    status = {}
+    with open(ziel / "runs.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=RUN_FIELDS)
+        w.writeheader()
+        for policy, seed in smoke_plan:
+            kennung = f"{policy}__seed{seed}"
+            w.writerow({**{f: "" for f in RUN_FIELDS}, "run_id": kennung,
+                        "policy": policy, "seed": seed,
+                        "measurement_mode": "time_window",
+                        "t_measure_start": 300, "t_final": 600,
+                        "measurement_retrievals": 0,
+                        "rq4_status": "not_converged"})
+            status[kennung] = {"state": "completed", "smoke": True}
+    for name in ("retrievals.csv", "requests.csv", "distribution.csv"):
+        with open(ziel / name, "w", encoding="utf-8") as fh:
+            fh.write("run_id,dummy\n")
+            for policy, seed in smoke_plan:
+                fh.write(f"{policy}__seed{seed},1\n")
+    (ziel / "run_meta.json").write_text(json.dumps(
+        [{"run_id": f"{p}__seed{s}"} for p, s in smoke_plan]))
     (ziel / STATUS_DATEI).write_text(json.dumps(status))
+    vorher = (ziel / "runs.csv").read_text()
 
     code = main(["--smoke", "--output-dir", str(ziel), "--resume"])
     ausgabe = capsys.readouterr().out
 
     assert code == 0
     assert "alle Runs sind abgeschlossen" in ausgabe
-    assert not (ziel / "runs.csv").exists(), "Es wurde doch gerechnet."
+    assert "FINAL CAMPAIGN INTEGRITY CHECK: PASS" in ausgabe
+    assert (ziel / "runs.csv").read_text() == vorher, "Es wurde gerechnet."
+
+
+def test_a_status_claiming_success_without_data_is_not_accepted(tmp_path,
+                                                                capsys):
+    """
+    Eine Statusdatei ist kein Ergebnis.
+
+    Behauptet sie, alles sei fertig, waehrend die Ausgabedateien fehlen,
+    darf der Treiber die Kampagne nicht als erfolgreich melden.
+    """
+    from experiments.run_final_campaign import STATUS_DATEI, main
+
+    ziel = tmp_path / "final"
+    ziel.mkdir()
+    (ziel / STATUS_DATEI).write_text(json.dumps(
+        {f"{p}__seed42": {"state": "completed", "smoke": True}
+         for p in FINAL_POLICIES}))
+
+    code = main(["--smoke", "--output-dir", str(ziel), "--resume"])
+
+    assert code == 1
+    assert "INTEGRITY CHECK: FAIL" in capsys.readouterr().out

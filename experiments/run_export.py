@@ -124,7 +124,19 @@ RUN_FIELDS = [
     "rq4_status", "rq4_convergence_time_ZE", "rq4_convergence_retrievals",
     "rq4_plateau_level", "rq4_redivergence", "rq4_blocks",
     # Diagnose / Laufgesundheit
-    "move_stall_recoveries", "move_recovery_unresolved", "error",
+    #
+    # `move_stall_recoveries` ist reine Diagnose: ein erfolgreich
+    # aufgeloester Stall ist kein Fehler und darf > 0 sein.
+    #
+    # `move_recovery_unresolved` und `task_deadlock` sind die beiden HARTEN
+    # Signale des Run-Health-Gates (`experiments/run_health.py`). In den
+    # finalen Daten sind sie immer 0 — nicht, weil sie nichts messen
+    # koennten, sondern weil ein Lauf mit einer Verletzung gar nicht erst
+    # exportiert wird. Der Abschlusscheck prueft genau das nach; damit ist
+    # die Spalte eine maschinell nachpruefbare Zusicherung, kein leeres
+    # Versprechen. Dasselbe gilt fuer `error`.
+    "move_stall_recoveries", "move_recovery_unresolved", "task_deadlock",
+    "error",
 ]
 
 REQUEST_FIELDS = [
@@ -156,7 +168,7 @@ def _mittel(werte):
 
 
 def summarise_run(run_id, policy, seed, engine, rq4=None, error=None,
-                  recoveries=0, unresolved=0):
+                  health=None):
     """
     Baut die Zeile für `runs.csv`.
 
@@ -194,6 +206,10 @@ def summarise_run(run_id, policy, seed, engine, rq4=None, error=None,
 
     if rq4 is None:
         rq4 = analyse_engine(engine)
+    # Ohne uebergebene Health-Zahlen (Tests, Diagnoselaeufe) bleiben die
+    # Diagnosespalten auf 0. Der Kampagnentreiber uebergibt sie immer; er
+    # hat als Einziger das Lauflog.
+    _health = health or {}
 
     def anteil_oben(zeilen):
         if not zeilen:
@@ -307,8 +323,9 @@ def summarise_run(run_id, policy, seed, engine, rq4=None, error=None,
         "rq4_plateau_level": rq4.get("plateau_level"),
         "rq4_redivergence": rq4.get("redivergence"),
         "rq4_blocks": rq4.get("blocks"),
-        "move_stall_recoveries": recoveries,
-        "move_recovery_unresolved": unresolved,
+        "move_stall_recoveries": _health.get("move_stall_recoveries", 0),
+        "move_recovery_unresolved": _health.get("move_recovery_unresolved", 0),
+        "task_deadlock": _health.get("task_deadlock", 0),
         "error": error,
     }
 
@@ -512,12 +529,11 @@ class ExperimentWriter:
                 self._meta = []
 
     def add_run(self, run_id, policy, seed, engine, rq4=None, error=None,
-                recoveries=0, unresolved=0):
+                health=None):
         if rq4 is None:
             rq4 = analyse_engine(engine)
         self._run_writer.writerow(
-            summarise_run(run_id, policy, seed, engine, rq4, error,
-                          recoveries, unresolved))
+            summarise_run(run_id, policy, seed, engine, rq4, error, health))
         self._runs.flush()
 
         for zeile in retrieval_rows(run_id, policy, seed, engine):
