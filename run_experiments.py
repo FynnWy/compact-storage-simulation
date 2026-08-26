@@ -16,15 +16,29 @@ RR+RR: `baseline` legt Blocking-Bins geordnet zurück und benutzt deshalb
 weder die zufällige Blocker-Relocation noch den Verzicht auf den Ordered
 Return. Beide unterscheiden sich in zwei Dimensionen gleichzeitig.
 
-Ergebnisse werden im results/ Ordner gespeichert.
+LEGACY. Fuer reproduzierbare/finale Experimente ist ausschliesslich
+`experiments/run_final_campaign.py` zu verwenden. Dieses Skript kennt weder
+die eingefrorene Run-Matrix noch den Integritaetscheck.
+
+Ergebnisse werden im Ordner results/legacy/ gespeichert. Frueher schrieb
+dieses Skript timestamped Ordner direkt nach results/ — also in denselben
+Bereich, in dem seit dem Data Freeze der eingefrorene Rohdatenbestand
+(`results/final/`, `results/final_raw/`, `results/FINAL_DATA_*`) liegt. Der
+Unterordner haelt Legacy-Ausgaben davon getrennt.
 """
 
+from pathlib import Path
 from typing import List
 
 from config.simulation_config import SimulationConfig
 from experiments.experiment_config import ExperimentConfig
 from experiments.runner import ExperimentRunner
 from experiments.exporter import ResultExporter
+
+#: Ablageort der Legacy-Ausgaben. Bewusst ein Unterordner und NICHT
+#: `results/` selbst: dort liegen der eingefrorene Rohdatenbestand und die
+#: Freeze-/Audit-Dokumente, die nicht veraendert werden duerfen.
+LEGACY_OUTPUT_DIR = Path("results") / "legacy"
 
 
 def create_base_config() -> SimulationConfig:
@@ -157,7 +171,11 @@ def main():
     print("Exporting Results...")
     print("=" * 60)
 
-    exporter = ResultExporter()
+    # `ResultExporter.__init__` legt seinen Ordner nur mit `mkdir(exist_ok=True)`
+    # an, also ohne Elternverzeichnisse. Deshalb hier mit `parents=True`.
+    LEGACY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    exporter = ResultExporter(str(LEGACY_OUTPUT_DIR))
     exporter.export_all(runner, "strategy_comparison")
 
     print(f"Results exported to: {exporter.output_dir}")

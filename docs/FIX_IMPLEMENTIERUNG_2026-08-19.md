@@ -1,6 +1,6 @@
 # Fix-Implementierung – 2026-08-19
 
-Technischer Handoff. Basis: `ARCHITEKTUR_KARTE.md`, insbesondere Abschnitt 9
+Technischer Handoff. Basis: `../ARCHITECTURE_MAP.md`, insbesondere Abschnitt 9
 (Re-Baseline vom 2026-08-19).
 
 ## Baseline

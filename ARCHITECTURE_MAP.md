@@ -1,4 +1,4 @@
-# Architektur-Karte: Compact Storage Simulation
+# Architecture Map
 
 Stand: 2026-08-15. Reine Analyse — es wurde kein Code verändert.
 Basis: Vollständige Lektüre von `simulation/`, `traffic/`, `state/`, `strategies/`, `requests_/`, `metrics/`, `utils/web_visualizer.py`, Config und Test-Übersicht.
@@ -261,8 +261,8 @@ Siehe Abschnitt 5.3, insbesondere Punkte 1, 2 und 5. Messbarkeit von „echtem F
 | `requests_/active_queue.py` | Request-/Task-Verwaltung, Batching, Blocker-Ownership | zentrale „Wahrheit" für reservierte Bins |
 | `metrics/`, `simulation/metrics.py` | Metrik 1 (Arrival→PS), Metrik 3 (Arrival→Complete), WP5-Konvergenz | Erfassungslücke s. P2 |
 | `utils/web_visualizer.py` | Flask + deepcopy-History (200 Snapshots) | Summary nur bei `is_finished` |
-| `Pickstation_Logik.md` | verbindliche Fachregeln Port/Pufferzone | Ports liegen IM Grid am Rand |
-| `Testfehler_Zusammenfassung.md` | Historie gelöster Fehlergruppen 1–6 | |
+| `docs/Pickstation_Logik.md` | verbindliche Fachregeln Port/Pufferzone | Ports liegen IM Grid am Rand |
+| `docs/Testfehler_Zusammenfassung.md` | Historie gelöster Fehlergruppen 1–6 | |
 
 ---
 
@@ -345,7 +345,7 @@ Task-Alter: wird nirgends berücksichtigt; Verdrängung von Returns durch neue R
 ## 10a. Delta nach Hardening (Stand Commit `58c5ef2` + Hardening-Block)
 
 Nur Aussagen, die sich gegenüber den Abschnitten 4 und 5 **tatsächlich geändert
-haben**. Details und Belege in `FIX_IMPLEMENTIERUNG_2026-08-19.md`,
+haben**. Details und Belege in `docs/FIX_IMPLEMENTIERUNG_2026-08-19.md`,
 Abschnitt „Hardening + Seed-1".
 
 ### Änderungen an Abschnitt 4.2 (Prüfkaskade `_handle_robot_move`)
@@ -394,7 +394,7 @@ abgefangen.
 ## 10b. Multi-Pickstation-Semantik (Phase 2B)
 
 Neue verbindliche Architekturaussage. Details und Belege in
-`SIMULATION_CONSISTENCY_AUDIT_2026-08-20.md`, Abschnitt „Phase 2B".
+`docs/SIMULATION_CONSISTENCY_AUDIT_2026-08-20.md`, Abschnitt „Phase 2B".
 
 **Vorher:** Drei aktive Pfade verwendeten hart `state.pickstations[0]`.
 Bei `num_pickstations = 2` erhielt die zweite Station faktisch nie Arbeit.
@@ -434,7 +434,7 @@ Die Legacy-Semantik „Ports außerhalb des Grids" ist entfallen.
 `Pathfinder._is_valid_position` und `ReservationTable._is_valid_position`
 akzeptieren nur noch Grid-Positionen; der Zweig `x < 0` in
 `_handle_robot_move` wurde entfernt. Damit gilt durchgängig
-`Pickstation_Logik.md`: Die Port-Säule liegt vollständig im Grid.
+`docs/Pickstation_Logik.md`: Die Port-Säule liegt vollständig im Grid.
 
 ### Änderung an Blocker-Ownership (Abschnitt 3)
 
@@ -529,7 +529,7 @@ schlagen 10 davon fehl.
 ## 10d. Strategy-Schicht: tatsächliche Verdrahtung (Phase 3)
 
 Ergänzt Abschnitt 7 (Modul-Spickzettel). Die Strategy-Schicht war dort bisher
-gar nicht abgebildet. Grundlage: `STRATEGY_CORRECTNESS_AUDIT_2026-08-21.md`.
+gar nicht abgebildet. Grundlage: `docs/STRATEGY_CORRECTNESS_AUDIT_2026-08-21.md`.
 
 ### Aufbau
 
@@ -876,7 +876,7 @@ Requests – davor wäre `batch_size` konstant 1.
   `traffic_manager.state` wird in `SimulationEngine._initialize_state`
   gesetzt. Die Regel folgt aus der Geometrie, ist deterministisch,
   verbraucht keinen Zufall und ändert keine Pickstation-Zuordnung.
-  Details: FINAL_EXPERIMENT_FREEZE_2026-08-21.md, Abschnitt E.
+  Details: docs/FINAL_EXPERIMENT_FREEZE_2026-08-21.md, Abschnitt E.
 - **Stationslast ist nicht ausgeglichen (bewusst).** Die Zuordnung bleibt
   distanzbasiert; eine policyinduzierte Asymmetrie ist ein zulässiges
   Ergebnis. Sichtbar über `retrievals_ps0/ps1` und
@@ -910,7 +910,7 @@ Requests – davor wäre `batch_size` konstant 1.
   Retrievals je 5.000 ZE, größte Lücke 3.323 ZE) und liefert im Messfenster
   [30.000, 42.000] nur 39 statt ~174 Retrievals. Kein Abbruch, kein
   dauerhafter Stillstand, alle Invarianten erfüllt. Ursache ungeklärt.
-  Details: FINAL_EXPERIMENT_FREEZE_2026-08-21.md, Abschnitt G.6.
+  Details: docs/FINAL_EXPERIMENT_FREEZE_2026-08-21.md, Abschnitt G.6.
 - Steady-State-Regel: real durchlaufen und in der bisherigen Parametrierung
   widerlegt. β je Retrieval hat CV ≈ 1; bei Blöcken à 50 Retrievals liegt
   die erwartete relative Änderung bei 0,197, also doppelt so hoch wie die
