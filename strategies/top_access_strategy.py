@@ -13,6 +13,7 @@ class TopAccessStrategy(BaseStrategy):
         placement_strategy="ORIGINAL",
         placement_selector=None,
         reordering_selector=None,
+        active_queue=None,
     ):
         """
         Top-Access-Strategie mit Next-Step-Planning.
@@ -34,6 +35,12 @@ class TopAccessStrategy(BaseStrategy):
                 (sollte in der Praxis aber immer über SimulationEngine injiziert werden).
             reordering_selector:
                 Optionale Instanz von ReorderingSelector für Blocking-Bin-Reordering.
+            active_queue:
+                Optionale ActiveQueue-Instanz. Wird ausschließlich benötigt,
+                um beim Verwerfen der Blocker-Restore-Verpflichtung
+                (`return_blocking_bins=False`) die globale Blocker-Ownership
+                freizugeben (Phase 3B, Befund P3-02). Analog zur bereits
+                vorhandenen Injektion in `RelocationSelection`.
         """
         super().__init__()
         self._relocation_selector = relocation_selector or RelocationSelection()
@@ -41,6 +48,7 @@ class TopAccessStrategy(BaseStrategy):
         self.placement_strategy = placement_strategy
         self._placement_selector = placement_selector
         self._reordering_selector = reordering_selector
+        self._active_queue = active_queue
         # Fallback, falls jemand TopAccessStrategy direkt ohne Selector konstruiert.
         # In der regulären Simulation wird eine korrekt konfigurierte Instanz injiziert.
         if self._placement_selector is None:
@@ -84,14 +92,53 @@ class TopAccessStrategy(BaseStrategy):
             target_bin = state.get_bin_by_id(target_bin_id)
 
             if target_bin is not None and target_bin.get_status() == "at_pickstation":
-                task.target_at_pickstation = True
+                # LIFECYCLE (2026-08-22): beide Flags setzen, nicht nur eines.
+                #
+                # Vorher wurde hier ausschliesslich `target_at_pickstation`
+                # gesetzt. `target_removed` blieb False - obwohl die Bin
+                # nachweislich nicht mehr im Lager liegt, sondern an der
+                # Pickstation. Ein Task, der diesen Zweig nimmt und spaeter
+                # abschliesst, scheitert deshalb an der eigenen
+                # Abschlussinvariante (`can_complete_consistently`:
+                # "target was not removed").
+                #
+                # `mark_target_at_pickstation()` setzt beide Flags und ist
+                # genau dafuer da. Der Zustand "Bin ist an der Pickstation"
+                # impliziert "Bin wurde aus dem Lager entnommen" - unabhaengig
+                # davon, welcher Vorgang sie entnommen hat.
+                task.mark_target_at_pickstation()
                 task.phase = RobotTask.PHASE_RESTORE_BLOCKERS
                 return self.next_action(state, task)
 
-            raise RuntimeError(f"Target bin {target_bin_id} not found in storage or pickstation")
+            if target_bin is not None and getattr(target_bin, "in_transit", False):
+                # Bin ist temporär zwischen Pickup und Drop unterwegs.
+                # Kein Fehlerzustand: Task kurz warten lassen und später neu versuchen.
+                return None
+
+            status = target_bin.get_status() if target_bin is not None else None
+            in_transit = getattr(target_bin, "in_transit", None) if target_bin is not None else None
+            raise RuntimeError(
+                f"Target bin {target_bin_id} not found in storage or pickstation "
+                f"(status={status}, in_transit={in_transit})"
+            )
 
         if task.target_stack_id is None:
             task.target_stack_id = target_stack.stack_id
+
+            # PHASE 5 (RQ3): Ausgangslage der Target-Bin EINMALIG festhalten,
+            # bevor gegraben wird.
+            #
+            # Meller fragt, ob im dynamischen System tatsächlich ~80 % der
+            # Retrievals aus den obersten 20 % der Ebenen kommen. Das lässt
+            # sich nur beantworten, wenn je Retrieval bekannt ist, auf welchem
+            # Level die Bin lag und wie hoch der Stack war. Nachträglich ist
+            # das nicht rekonstruierbar – der Stack verändert sich sofort.
+            #
+            # Bewusst hier und nicht im EventHandler: Dies ist der einzige
+            # Punkt, an dem der Stack garantiert noch unberührt ist.
+            task.retrieval_level = target_level
+            task.retrieval_stack_height = target_stack.height()
+            task.retrieval_start_time = state.t
 
         top_bin = target_stack.peek()
 
@@ -102,8 +149,6 @@ class TopAccessStrategy(BaseStrategy):
             )
 
         if top_bin.bin_id == target_bin_id:
-            task.target_removed = True
-
             return {
                 "type": "remove_target",
                 "from_stack": target_stack.stack_id,
@@ -125,8 +170,11 @@ class TopAccessStrategy(BaseStrategy):
     def _next_restore_blockers_action(self, state, task):
         # NEU: Prüfen, ob Blocking-Bins überhaupt zurückgelegt werden sollen
         if not self._should_return_blocking_bins(state):
-            # Alle Relocation-Einträge verwerfen (Bins bleiben wo sie sind)
-            task.clear_all_relocations()
+            # Alle Relocation-Einträge verwerfen (Bins bleiben wo sie sind).
+            # PHASE 3B (P3-02): Zusammen mit der Task-lokalen Verpflichtung
+            # muss auch die globale Blocker-Ownership fallen, sonst bleibt die
+            # Bin dauerhaft reserviert, obwohl niemand sie mehr zurücklegt.
+            task.clear_all_relocations(active_queue=self._active_queue)
 
             # Weiter zur nächsten Phase
             if not task.pickstation_completed:
@@ -151,6 +199,34 @@ class TopAccessStrategy(BaseStrategy):
         relocation = task.peek_last_relocation()
 
         if relocation is not None:
+            # LIVENESS (2026-08-22): Ist die eigene Blocker-Bin verschüttet,
+            # zuerst freiräumen statt den Pickup endlos zu wiederholen.
+            #
+            # Der Rücklagerungsplan holt jede Blocker-Bin genau dort ab, wo sie
+            # geparkt wurde. Liegt inzwischen eine fremde Bin darauf, scheiterte
+            # der Pickup bisher dauerhaft mit `expected bin X not on top`;
+            # Retry und Requeue änderten daran nichts, weil kein Schritt
+            # existierte, der die fremde Bin entfernt. Der Lauf machte ab da
+            # keinen Fortschritt mehr (ABC+ABC/Seed 42, POP/Seed 1).
+            #
+            # Prävention (Park-Seite und Ablage-Umleitung) macht diesen Fall
+            # selten; er bleibt aber möglich, solange Planungs- und
+            # Ausführungszeitpunkt auseinanderfallen. Deshalb hier der
+            # zusätzliche, fachlich korrekte Schritt: die aufliegende Bin wird
+            # umgelagert – dieselbe Arbeit, die auch ein Retrieval leisten
+            # müsste.
+            #
+            # Policyneutral: Die Rücklagerung selbst bleibt unverändert
+            # (Ordered Return auf den Ursprungsstack, Reihenfolge weiter durch
+            # `reordering_strategy`). Es wird keine Verpflichtung verworfen.
+            #
+            # Kein Einfluss auf RQ1: `blocking_bins` wird beim Eintreffen der
+            # Target-Bin an der Pickstation festgeschrieben, also VOR dieser
+            # Phase.
+            freigabe = self._next_unbury_action(state, task, relocation)
+            if freigabe is not None:
+                return freigabe
+
             to_stack_id = relocation["from_stack"]
 
             # R-D2: Ziel-Stack für Rücklagerung validieren – ist er zugänglich?
@@ -182,6 +258,46 @@ class TopAccessStrategy(BaseStrategy):
 
         task.phase = RobotTask.PHASE_RETURN_TARGET
         return self.next_action(state, task)
+
+    def _next_unbury_action(self, state, task, relocation):
+        """
+        Liefert eine Relocate-Aktion, wenn die naechste zurueckzulegende
+        Blocker-Bin unter fremden Bins liegt.
+
+        Returns:
+            dict | None: `relocate`-Aktion fuer die oberste aufliegende Bin,
+            oder None, wenn die Blocker-Bin bereits zugaenglich ist.
+        """
+        buffer_stack = self._get_stack_by_id(state, relocation.get("buffer_stack"))
+        if buffer_stack is None:
+            return None
+
+        bin_id = relocation.get("bin_id")
+        top_bin = buffer_stack.peek()
+        if top_bin is None or top_bin.bin_id == bin_id:
+            return None
+
+        # Nur eingreifen, wenn die eigene Bin wirklich in DIESEM Stack liegt.
+        if not any(b.bin_id == bin_id for b in buffer_stack.bins):
+            return None
+
+        ziel = self._select_relocation_stack(state=state, exclude_stack=buffer_stack)
+        if ziel is None or ziel.stack_id == buffer_stack.stack_id:
+            return None
+
+        print(
+            f"[UNBURY] t={getattr(state, 't', None)} task={task.request_id} "
+            f"blocker={bin_id} liegt unter {top_bin.bin_id} auf "
+            f"{buffer_stack.stack_id} -> {ziel.stack_id}"
+        )
+
+        return {
+            "type": "relocate",
+            "from_stack": buffer_stack.stack_id,
+            "to_stack": ziel.stack_id,
+            "bin_id": top_bin.bin_id,
+            "unbury": True,
+        }
 
     def _next_wait_for_pickstation_action(self, task):
         """

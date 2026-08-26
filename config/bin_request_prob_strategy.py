@@ -1,9 +1,17 @@
 # config/bin_request_prob_strategy.py
+"""
+Ziehung der angefragten Bin.
+
+PHASE 4: Alle Funktionen nehmen optional einen `rng` entgegen. Die
+Simulation übergibt hier den `requests`-Strom aus `RngStreams`, damit der
+Request-Strom nicht mehr vom globalen NumPy-Zustand abhängt. Ohne `rng`
+bleibt das alte Verhalten (globaler Zustand) erhalten.
+"""
 
 import numpy as np
 
 
-def uniform_bin_sampling(bin_num):
+def uniform_bin_sampling(bin_num, rng=None):
     """
     Gleichverteilung: Jede Kiste hat die gleiche Wahrscheinlichkeit angefragt zu werden.
     
@@ -13,10 +21,12 @@ def uniform_bin_sampling(bin_num):
     Returns:
         bin_id: Zufällig ausgewählte Kisten-ID
     """
-    return np.random.randint(0, bin_num)
+    rng = rng if rng is not None else np.random
+    return int(rng.integers(0, bin_num)) if hasattr(rng, "integers") \
+        else int(rng.randint(0, bin_num))
 
 
-def zipf_bin_sampling(bin_num, zipf_parameter=1.2):
+def zipf_bin_sampling(bin_num, zipf_parameter=1.2, rng=None):
     """
     Zipf-Verteilung: Hot Items (wenige Kisten werden sehr häufig angefragt).
     Typisch für E-Commerce und Lagersysteme.
@@ -33,10 +43,11 @@ def zipf_bin_sampling(bin_num, zipf_parameter=1.2):
     probabilities = 1.0 / np.power(ranks, zipf_parameter)
     probabilities /= probabilities.sum()  # Normalisieren
     
-    return np.random.choice(bin_num, p=probabilities)
+    rng = rng if rng is not None else np.random
+    return int(rng.choice(bin_num, p=probabilities))
 
 
-def abc_bin_sampling(bin_num):
+def abc_bin_sampling(bin_num, rng=None):
     """
     ABC-Verteilung: Kisten werden in A/B/C-Klassen eingeteilt mit
     - 20% der Kisten in Klasse A tragen 80% der Requests
@@ -90,6 +101,8 @@ def abc_bin_sampling(bin_num):
 
     # Zuerst Klasse nach Request-Anteilen ziehen,
     # dann innerhalb der Klasse gleichverteilt eine Kiste wählen.
-    class_index = np.random.choice(len(class_ranges), p=class_probs)
+    rng = rng if rng is not None else np.random
+    class_index = int(rng.choice(len(class_ranges), p=class_probs))
     start, end = class_ranges[class_index]
-    return np.random.randint(start, end)
+    return int(rng.integers(start, end)) if hasattr(rng, "integers") \
+        else int(rng.randint(start, end))

@@ -132,7 +132,15 @@ class RelocationSelection:
             # Basis-Kosten: geschätzte Relocation-Kosten (Zeit)
             base_cost = self._estimate_relocation_cost(state, source_stack, stack, source_pos)
 
-            # Kritische Stacks mit Aufschlag versehen
+            # BEFUND P3-06 (Phase 3, dokumentiert, bewusst NICHT geändert):
+            # `critical_stack_penalty` ist unerreichbar. Kritische Stacks
+            # werden oben bereits per `continue` aussortiert, `is_critical`
+            # ist hier also immer False und `critical_term` immer 0.
+            #
+            # Der Aufschlag stammt aus einer früheren, weicheren Fassung
+            # („kritische Stacks bestrafen" statt „ausschließen"). Da er keine
+            # Correctness-Wirkung hat und ein Entfernen die Signatur ändern
+            # würde, bleibt er als dokumentierte tote Last stehen.
             is_critical = stack.stack_id in critical_stack_ids
             critical_term = self.critical_stack_penalty if is_critical else 0
 
@@ -157,7 +165,6 @@ class RelocationSelection:
         # ------------------------------------------------------------------ #
         # Default: Kostenbasierte Auswahl (Local Relocation)
         # ------------------------------------------------------------------ #
-        print("[DEBUG] selecting relocation for source", source_stack.stack_id)
         candidate_scores.sort(key=lambda item: item[0])
         return candidate_scores[0][1]
 
@@ -174,6 +181,19 @@ class RelocationSelection:
            anbietet, wird dieses verwendet.
         2. Fallback: Manhattan-Distanz im Grid * move_cost_per_grid_step,
            plus optionaler Nachbar-Bonus.
+
+        BEFUND P3-07 (Phase 3, dokumentiert, bewusst NICHT geändert):
+        Zweig 1 ist in der Praxis unerreichbar. `ActionCostModel` besitzt
+        keine Methode `estimate_relocate_cost`; das injizierte Kostenmodell
+        wird also nie befragt. Faktisch gilt immer Zweig 2.
+
+        Konsequenz für die Interpretation: „Local Relocation" bedeutet hier
+        FAHRWEGMINIMAL (Manhattan-Distanz zum Quellstack, Bonus 1 für direkte
+        Nachbarn) – NICHT kostenminimal. Stapeltiefe, Armwege und Greifkosten
+        gehen nicht ein, obwohl das Kostenmodell sie kennt.
+
+        Eine Kostenanbindung wäre eine Strategieänderung und gehört nicht in
+        eine Remediationsphase.
         """
         # 1) Kostenmodell nutzen, falls vorhanden und kompatibel
         if self.cost_model is not None:
@@ -230,6 +250,17 @@ class RelocationSelection:
         Dazu gehören u.a.:
         - Target-Bins zugewiesener/wartender/Pickstation-Tasks.
         - Alle Blocker-Bins mit aktiver Ownership.
+
+        LIVENESS (2026-08-22), zweites Kriterium:
+        - Stacks, auf die ein anderer Task seine ausgelagerten Blocker noch
+          zurücklegen wird (`ActiveQueue.get_pending_restore_stack_ids()`).
+
+        Der Ordered Return legt Blocker auf ihren Ursprungsstack zurück; dieses
+        Ziel gehört zur untersuchten Strategie und darf nicht umgelenkt
+        werden. Wird dort in der Zwischenzeit fremd geparkt, verschüttet der
+        Return die fremde Bin und deren Eigentümer kommt nie mehr an sie
+        heran. Die Einschränkung greift deshalb auf der Park-Seite und gilt
+        für alle Policies gleich.
         """
         if self.active_queue is None:
             return set()
@@ -240,10 +271,18 @@ class RelocationSelection:
         except Exception:
             return set()
 
-        if not reserved_bin_ids:
-            return set()
-
         critical_stack_ids = set()
+
+        # Offene Rücklagerungsziele fremder Tasks (siehe Docstring).
+        try:
+            critical_stack_ids.update(
+                self.active_queue.get_pending_restore_stack_ids()
+            )
+        except AttributeError:
+            pass
+
+        if not reserved_bin_ids:
+            return critical_stack_ids
 
         for bin_id in reserved_bin_ids:
             bin_obj = state.get_bin_by_id(bin_id)
@@ -265,10 +304,6 @@ class RelocationSelection:
                 stack_id = stack_pos
 
             critical_stack_ids.add(stack_id)
-
-        # Gesamtübersicht nach dem Aufbau der Menge
-        print("[DEBUG] reserved_bin_ids:", reserved_bin_ids)
-        print("[DEBUG] critical_stack_ids:", critical_stack_ids)
 
         return critical_stack_ids
 

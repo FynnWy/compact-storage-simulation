@@ -38,6 +38,12 @@ class RobotTask:
 
         # NEU: Tracking für Validierung
         self.initial_blocker_count = None  # Wird bei Planung gesetzt
+
+        # PHASE 5 (RQ3): Ausgangslage der Target-Bin, einmalig festgehalten
+        # bevor gegraben wird. Nachträglich nicht rekonstruierbar.
+        self.retrieval_level = None          # 0 = unterste Ebene
+        self.retrieval_stack_height = None   # Stackhöhe vor dem Digging
+        self.retrieval_start_time = None     # ZE, zu der das Digging begann
         self.last_validated_time = None     # Zeitpunkt der letzten Validierung
 
     @property
@@ -76,16 +82,51 @@ class RobotTask:
             "buffer_stack": buffer_stack,
         })
 
-    def clear_all_relocations(self):
+    def clear_all_relocations(self, active_queue=None):
         """
         Entfernt alle temporären Relocation-Einträge.
 
         Wird verwendet, wenn Blocking-Bins NICHT zurückgelegt werden sollen
         (Strategien RR+RR, LR+NR).
+
+        PHASE 3B (Befund P3-02):
+        Das Verwerfen der Restore-Verpflichtung muss die globale Sperre in
+        `ActiveQueue._blocker_ownership` mit auflösen. Sonst bleibt die Bin
+        reserviert, obwohl sie niemand mehr zurücklegt:
+          * ihr Stack ist als Relocation-Ziel gesperrt
+            (`RelocationSelection._get_critical_stack_ids`),
+          * sie kann nicht mehr regulär Target werden
+            (`get_all_reserved_bin_ids`),
+          * und der opportunistische Ownership-Transfer läuft in
+            `RuntimeError: ... bin not found in temp_storage`.
+
+        `active_queue` ist optional, damit Aufrufer ohne Queue-Kontext
+        (z.B. isolierte Task-Tests) unverändert funktionieren.
+
+        Args:
+            active_queue: ActiveQueue-Instanz zur Freigabe der globalen
+                Blocker-Ownership. None -> nur der Task-lokale Zustand wird
+                zurückgesetzt.
+
+        Returns:
+            list: die verworfenen Relocation-Einträge.
         """
+        discarded = list(self.temp_storage)
+
+        if active_queue is not None:
+            for relocation in discarded:
+                bin_id = relocation["bin_id"]
+                # Nur die eigene Ownership auflösen. Wurde die Bin zwischen-
+                # zeitlich an einen anderen Task übertragen, gehört sie nicht
+                # mehr uns und bleibt unangetastet.
+                if active_queue.get_blocker_owner(bin_id) is self:
+                    active_queue.release_blocker_ownership(bin_id)
+
         self.temp_storage.clear()
         # Verhindert, dass später noch ein Reordering-Versuch angestoßen wird
         self.blockers_reordered = True
+
+        return discarded
 
     def peek_last_relocation(self):
         """
@@ -213,6 +254,38 @@ class RobotTask:
             self.phase = self.PHASE_RESTORE_BLOCKERS
 
     def mark_target_returned(self):
+        """
+        Die Target-Bin ist endgültig zurückgelagert.
+
+        LIFECYCLE-VORBEDINGUNG (2026-08-22): Eine Bin kann nur zurückgelegt
+        werden, wenn sie zuvor aus dem Lager entnommen wurde. `target_removed`
+        muss deshalb bereits gesetzt sein.
+
+        Warum als Fail-Fast und nicht als stille Korrektur: Genau diese
+        Invariante wurde verletzt, ohne dass es auffiel. Ein fremder
+        Target-Return schrieb `mark_target_returned()` auf einen Task, der nie
+        etwas ausgelagert hatte (zwei Requests auf dieselbe Bin, Guard prüfte
+        die Bin statt den Request). Sichtbar wurde das erst rund 21.000 ZE
+        später beim Abschluss des Requests — mit einer Meldung, die auf den
+        Abschluss zeigte statt auf die eigentliche Ursache:
+
+            RuntimeError: Cannot complete request 394: target was not removed
+
+        Die Prüfung hier ersetzt NICHT den Fix der Ursache; sie sorgt dafür,
+        dass ein künftiger falscher Lebenszyklus an der ersten ungültigen
+        Transition auffällt und nicht erst am Ende.
+        """
+        if not self.target_removed:
+            raise RuntimeError(
+                f"Invalid task lifecycle for request {self.request_id}: "
+                f"target bin {self.target_bin_id} marked as returned, but it "
+                f"was never removed from storage "
+                f"(phase={self.phase}, at_pickstation={self.target_at_pickstation}, "
+                f"pickstation_completed={self.pickstation_completed}). "
+                f"Ein Target-Return wurde vermutlich einem fremden Task "
+                f"zugeschrieben."
+            )
+
         self.target_returned = True
         self.phase = self.PHASE_COMPLETE
 
@@ -250,9 +323,35 @@ class RobotTask:
         # Mapping Bin-ID -> Zielindex in der Rücklagerungsreihenfolge
         order_index = {bin_obj.bin_id: idx for idx, bin_obj in enumerate(ordered_blockers)}
 
-        # temp_storage entsprechend der neuen Reihenfolge sortieren
+        # temp_storage entsprechend der neuen Reihenfolge sortieren — ABSTEIGEND.
+        #
+        # BEFUND 2026-08-22: Hier lag eine Richtungsumkehr.
+        #
+        # `ReorderingSelector.reorder_blockers` liefert die RÜCKLAGERUNGS-
+        # reihenfolge: erstes Element wird zuerst zurückgelegt und landet damit
+        # UNTEN. Die Rücklagerung konsumiert `temp_storage` aber vom Ende her
+        # (`peek_last_relocation` gibt `temp_storage[-1]` zurück). Wer zuerst
+        # zurückgelegt werden soll, muss deshalb am ENDE der Liste stehen.
+        #
+        # Die frühere aufsteigende Sortierung drehte die Ordnung exakt um:
+        #   ABC        Soll  C unten, B, A oben   ->  Ist  A unten, B, C oben
+        #   POPULARITY Soll  kalt unten, heiß oben ->  Ist  heiß unten, kalt oben
+        #   LOFI       Soll  Originalstapel        ->  Ist  invertiert
+        #
+        # Beide Policies legten die häufig nachgefragten Bins also systematisch
+        # NACH UNTEN — das Gegenteil ihrer Definition. Bei jedem Ordered Return
+        # wurde die Grabtiefe für genau die Bins erhöht, die am häufigsten
+        # gebraucht werden.
+        #
+        # Kontrollrechnung für die Richtung: Ohne Reordering ist `temp_storage`
+        # in Auslagerungsreihenfolge [oberste, ..., unterste]; die unterste muss
+        # zuerst zurück, steht also am Ende — die Konsumreihenfolge stimmt. LOFI
+        # liefert genau diese Reihenfolge und muss deshalb ein No-Op sein. Mit
+        # absteigender Sortierung ist es das (testgesichert), mit aufsteigender
+        # war es das nicht.
         try:
-            self.temp_storage.sort(key=lambda reloc: order_index[reloc["bin_id"]])
+            self.temp_storage.sort(
+                key=lambda reloc: order_index[reloc["bin_id"]], reverse=True)
         except KeyError as exc:
             raise RuntimeError(
                 f"Cannot reorder blockers for task {self.request_id}: "

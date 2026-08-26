@@ -67,15 +67,30 @@ class TestBinConsistency:
             bins_in_stacks = sum(
                 stack.height() for stack in engine.state.grid.all_stacks()
             )
+            stack_bin_ids = {
+                b.bin_id
+                for stack in engine.state.grid.all_stacks()
+                for b in stack.bins
+            }
+
             bins_at_pickstation = sum(
                 1 for b in engine.state.bins if b.get_status() == "at_pickstation"
             )
 
-            total_visible = bins_in_stacks + bins_at_pickstation
+            bins_in_transit = sum(
+                1
+                for b in engine.state.bins
+                if getattr(b, "in_transit", False)
+                and b.get_status() != "at_pickstation"
+                and b.bin_id not in stack_bin_ids
+            )
+
+            total_visible = bins_in_stacks + bins_at_pickstation + bins_in_transit
 
             assert total_visible == initial_bin_count, (
                 f"Bins lost! Expected {initial_bin_count}, found {total_visible} "
-                f"(stacks: {bins_in_stacks}, pickstation: {bins_at_pickstation})"
+                f"(stacks: {bins_in_stacks}, pickstation: {bins_at_pickstation}, "
+                f"in_transit: {bins_in_transit})"
             )
 
     def test_no_duplicate_bins(self, medium_config):
@@ -94,8 +109,18 @@ class TestBinConsistency:
                 for bin_obj in stack.bins:
                     bin_ids.append(bin_obj.bin_id)
 
+            stack_bin_ids = set(bin_ids)
+
             for bin_obj in engine.state.bins:
                 if bin_obj.get_status() == "at_pickstation":
+                    bin_ids.append(bin_obj.bin_id)
+
+            for bin_obj in engine.state.bins:
+                if (
+                    getattr(bin_obj, "in_transit", False)
+                    and bin_obj.get_status() != "at_pickstation"
+                    and bin_obj.bin_id not in stack_bin_ids
+                ):
                     bin_ids.append(bin_obj.bin_id)
 
             # Keine Duplikate

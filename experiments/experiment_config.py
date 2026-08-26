@@ -11,10 +11,31 @@ class ExperimentConfig:
     description: str = ""
 
     # Strategie-Einstellungen
-    reordering_strategy: str = "LOFI"      # "LOFI", "ABC", "POPULARITY"
-    placement_strategy: str = "RANDOM"    # "ORIGINAL", "RANDOM", "ABC", "POPULARITY"
+    #
+    # reordering_strategy: Reihenfolge, in der ausgelagerte Blocking-Bins in
+    #   ihren Originalstack zurückgelegt werden.
+    #     "LOFI"        umgekehrte Auslagerungsreihenfolge (Baseline)
+    #     "ABC"         C zuerst, dann B, dann A -> A liegt oben
+    #     "POPULARITY"  access_count aufsteigend -> häufige Bins liegen oben
+    #   Ohne Wirkung, wenn return_blocking_bins = False.
+    reordering_strategy: str = "LOFI"
 
-    # NEU: Ob Blocking-Bins zurückgelegt werden
+    # placement_strategy: Zielstack für die Rücklagerung der TARGET-Bin nach
+    #   der Pickstation.
+    #     "ORIGINAL"    zurück auf den Originalstack
+    #     "RANDOM"      zufälliger Stack mit Kapazität (ohne Pufferzonenfilter)
+    #     "NEAREST"     nächster zulässiger Stack RELATIV ZUM ORIGINALSTACK,
+    #                   Tie-Break y dann x; der Originalstack gewinnt mit
+    #                   Distanz 0 (verbindlich seit Phase 3B, Befund P3-04)
+    #     "ABC"         Greedy-Score je ABC-Klasse
+    #     "POPULARITY"  Score aus Distanz und erwarteter Grabtiefe, Hot/Cold
+    placement_strategy: str = "RANDOM"
+
+    # return_blocking_bins: Ob ausgelagerte Blocking-Bins nach dem Retrieval
+    #   in ihren Originalstack zurückgelegt werden (Ordered Return).
+    #     True   Blocker werden zurückgelegt (ABC+ABC, POPULARITY+POPULARITY)
+    #     False  Blocker bleiben liegen, wo sie abgelegt wurden (RR+RR, LR+NR).
+    #            reordering_strategy ist dann wirkungslos.
     return_blocking_bins: bool = True
 
     # Reproduzierbarkeit
