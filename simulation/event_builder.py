@@ -3,7 +3,7 @@ from events.event_types import EventType
 
 
 class EventBuilder:
-    def __init__(self, cost_model=None, delay_time=1, max_retries=100, config=None):
+    def __init__(self, cost_model=None, delay_time=1, max_retries=20, config=None):
         self.cost_model = cost_model
         self.delay_time = delay_time
         self.max_retries = max_retries
@@ -185,14 +185,43 @@ class EventBuilder:
 
         return 0
 
-    def calculate_pickstation_service_duration(self, batch_count=1):
+    def calculate_pickstation_service_duration(self, batch_count=1, requests=None):
         """
         Berechnet die Servicezeit an der Pickstation.
 
-        batch_count: Anzahl der Requests, die an dieser Pickstation gemeinsam
-                     bedient werden (primärer Request + gebatchte Requests).
-                     Die Servicezeit steigt linear mit der Batch-Größe.
+        PHASE 4 (Common Random Numbers):
+        Werden die bedienten Requests übergeben, ist die Servicezeit die SUMME
+        ihrer vorab gezogenen `service_time`-Werte. Jeder Request trägt damit
+        immer denselben exogenen Beitrag bei, unabhängig davon, mit welchen
+        anderen Requests er zusammen bedient wird und in welcher Reihenfolge
+        die Servicejobs starten.
+
+        Fachlich: Gebatcht werden mehrere Requests auf DIESELBE Bin. Die
+        Bedienperson entnimmt dann mehrere Artikel aus einer Bin, ein Request
+        ist ein Griff. `pickstation_service_time_min/max` beschreibt die Dauer
+        eines Griffs, die Gesamtdauer ist deren Summe.
+
+        Vorher: EINE Ziehung mal `batch_count`. Das erzwang für alle Requests
+        eines Batches denselben Wert und war zur Laufzeit von der
+        policyabhängigen Aufrufreihenfolge abhängig.
+
+        Fallback:
+        Ohne `requests` (oder wenn ein Request keine vorab gezogene
+        `service_time` hat) wird wie bisher zur Laufzeit gezogen. Das betrifft
+        nur direkt konstruierte Requests, etwa in Tests.
+
+        Args:
+            batch_count: Anzahl gemeinsam bedienter Requests (Fallbackpfad).
+            requests: Iterable der bedienten Request-Objekte.
         """
+        if requests is not None:
+            werte = [
+                r.service_time for r in requests
+                if getattr(r, "service_time", None) is not None
+            ]
+            if len(werte) == len(list(requests)):
+                return sum(werte)
+
         if self.cost_model is None:
             return max(1, batch_count)
 
@@ -251,12 +280,21 @@ class EventBuilder:
         return EventType.ROBOT_ACTION
 
     """Hier neuer Code"""
-    def build_robot_pickup_event(self, robot, action, request, time):
+    def build_robot_pickup_event(self, robot, action, request, time, retry_count=0):
         """
         Baut ein ROBOT_PICKUP Event - Roboter nimmt Bin auf.
 
         Dies ist Phase 1 einer Zwei-Phasen-Aktion.
         Nach dem Pickup muss der Roboter zum Ziel fahren.
+
+        Args:
+            retry_count:
+                Übernommener Retry-Fortschritt. Nur setzen, wenn es sich
+                fachlich um DENSELBEN fehlgeschlagenen Versuch handelt
+                (gleiche Aktion, gleiche Bin, gleiches Ziel, kein
+                Zustandsfortschritt). Bei einer tatsächlich neuen Aktion
+                muss der Zähler bei 0 beginnen.
+                Siehe `EventHandler._is_same_attempt`.
         """
         return Event(
             time=time,
@@ -266,6 +304,7 @@ class EventBuilder:
                 "action": action,
                 "request": request,
             },
+            retry_count=retry_count,
             priority=self._resolve_priority(EventType.ROBOT_PICKUP),
         )
 

@@ -42,7 +42,15 @@ class ActiveQueue:
         """
         Merkt einen aktiven Task, der aktuell keinem Roboter zugewiesen ist,
         aber fachlich fortsetzbar ist.
+
+        Invariante (FIX 2, 2026-08-19): Gegenstück zu `mark_task_assigned`.
+        Ein Task, der wieder wartend wird, darf nicht weiterhin als zugewiesen
+        gelten – sonst zeigt `assigned` auf einen Roboter, der den Task gar
+        nicht mehr bearbeitet (u.a. nach Deadlock-Requeue und
+        `[REQUEUE][PICKUP_POS]`).
         """
+        self.assigned.pop(task.request_id, None)
+
         if task not in self.waiting_tasks:
             self.waiting_tasks.append(task)
 
@@ -81,13 +89,43 @@ class ActiveQueue:
     def mark_task_assigned(self, task, robot):
         """
         Markiert einen bereits existierenden Task wieder als einem Roboter zugewiesen.
+
+        Invariante (FIX 2, 2026-08-19):
+        Ein Task darf nicht gleichzeitig als wartend (`waiting_tasks`) und als
+        zugewiesen (`assigned`) gelten. Sonst bietet der nächste Scheduler-Lauf
+        über `pop_waiting_task()` denselben Task einem zweiten Roboter an.
+
+        `mark_task_assigned` ist der zentrale Zuweisungspfad für bereits
+        existierende Tasks (Scheduler `_try_schedule_waiting_task` und
+        EventHandler `_handle_pickstation_complete` über
+        `assign_task_to_robot`). Die Bereinigung gehört daher hierher und
+        nicht in die einzelnen Aufrufer.
         """
         self.pickstation_tasks.pop(task.request_id, None)
+
+        # Task ist ab jetzt zugewiesen → darf nicht mehr wartend sein.
+        self.remove_waiting_task(task)
 
         self.assigned[task.request_id] = {
             "request": task.request,
             "robot": robot,
         }
+
+    def remove_waiting_task(self, task):
+        """
+        Entfernt einen Task aus `waiting_tasks` (idempotent).
+
+        Vergleicht über `request_id`, damit auch ein logisch identischer, aber
+        mehrfach eingetragener Task zuverlässig verschwindet.
+        """
+        if not self.waiting_tasks:
+            return
+
+        self.waiting_tasks = deque(
+            waiting
+            for waiting in self.waiting_tasks
+            if waiting.request_id != task.request_id
+        )
 
     def mark_completed(self, request):
         """
@@ -174,6 +212,52 @@ class ActiveQueue:
 
     def is_bin_blocker_owned(self, bin_id):
         return bin_id in self._blocker_ownership
+
+    def get_blocker_owned_bin_ids(self):
+        """
+        Nur die Bins mit AKTIVER Blocker-Ownership – ohne Target-Bins.
+
+        Abgrenzung zu `get_all_reserved_bin_ids()`: dort geht es um die Frage
+        „auf welche Bin darf kein NEUER Task starten", hier um die engere
+        Frage „welche Bin muss ein laufender Task noch genau dort abholen, wo
+        sie liegt". Nur diese Bins dürfen nicht verschüttet werden; eine
+        Target-Bin wird beim Retrieval ohnehin freigegraben.
+
+        Lesender Zugriff auf dieselbe Struktur, keine zweite Ownership-Quelle.
+        """
+        return frozenset(self._blocker_ownership.keys())
+
+    def get_pending_restore_stack_ids(self):
+        """
+        Stacks, auf die ein laufender Task seine ausgelagerten Blocker noch
+        zurücklegen wird (`from_stack` der offenen `temp_storage`-Einträge).
+
+        Warum das gebraucht wird: Der Ordered Return legt Blocker per
+        Definition auf ihren URSPRUNGSSTACK zurück – dieses Ziel ist Teil der
+        untersuchten Strategie und darf nicht umgelenkt werden. Parkt ein
+        FREMDER Task in der Zwischenzeit eine Bin auf genau diesem Stack, so
+        verschüttet der spätere Ordered Return sie, und der fremde Task
+        scheitert dauerhaft mit `expected bin X not on top`.
+
+        Belegt im 7x7-Arbeitsfall: Roboter 3 parkt Blocker 124 bei t=1001 auf
+        S_1_4; Roboter 0 legt bei t=1007..1078 vier eigene Blocker auf S_1_4
+        zurück – das ist sein Originalstack. Danach kommt Roboter 3 nie mehr
+        an seine Bin.
+
+        Die Lösung liegt deshalb auf der PARK-Seite: nicht dort parken, wo ein
+        anderer Task noch zurücklegen muss.
+
+        Lesender Zugriff auf `_blocker_ownership`, keine zweite Struktur.
+        """
+        stacks = set()
+        for task in set(self._blocker_ownership.values()):
+            for eintrag in (getattr(task, "temp_storage", None) or []):
+                if not isinstance(eintrag, dict):
+                    continue
+                ziel = eintrag.get("from_stack")
+                if ziel is not None:
+                    stacks.add(ziel)
+        return frozenset(stacks)
 
     # ------------------------------------------------------------------
     # Hilfsmethode für EventHandler (Pickstation-Pickup)

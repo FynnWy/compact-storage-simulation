@@ -4,6 +4,7 @@ import math
 import numpy as np
 
 from config.init_strategy import initialize_bins
+from config.rng_streams import RngStreams
 from requests_.active_queue import ActiveQueue
 from requests_.request_generator import RequestGenerator
 from simulation.action_cost_model import ActionCostModel
@@ -30,12 +31,48 @@ from state.pickstation import Pickstation
 from traffic.reservation_table import ReservationTable
 from traffic.traffic_manager import TrafficManager
 from traffic.highway_rules import HighwayRules
+from utils.port_buffer_zone import calculate_buffer_zone
+from collections import Counter
 
 
 class SimulationEngine:
     def __init__(self, config):
         self.config = config
-        self.rng = np.random.default_rng(self.config.random_seed)
+
+        # PHASE 4: Alle Zufallsströme stammen aus einem Master-Seed und sind
+        # voneinander unabhängig (siehe `config/rng_streams.py`).
+        #
+        # Vorher versorgte ein einziger Generator drei fachlich unabhängige
+        # Größen: Roboter-Startpositionen, Pickstation-Servicezeiten und die
+        # Placement-Entscheidungen der Strategie. Da die Policies
+        # unterschiedlich oft aus dem Placement ziehen, verschob sich die
+        # Servicezeit-Folge zwischen ihnen – ein Vergleich „bei gleichem
+        # Seed" war keiner.
+        #
+        # Die Ad-hoc-Ableitung `default_rng([seed, 1])` aus Phase 3B für die
+        # Relocation ist in diese Struktur aufgegangen und entfallen.
+        self.rng_streams = RngStreams(self.config.random_seed)
+
+        # Der frühere Sammelstrom `self.rng` versorgt jetzt ausschließlich die
+        # initiale Bin-Verteilung. Der Name bleibt erhalten, damit bestehende
+        # Aufrufstellen lesbar bleiben.
+        #
+        # PHASE 5: Roboter-Startpositionen haben einen EIGENEN Strom. Sonst
+        # verschiebt jede Änderung von `num_robots` auch das Binlayout, und
+        # eine Parameterstudie über die Roboterzahl wäre konfundiert.
+        self.rng = self.rng_streams.get("initialization")
+        self.robot_rng = self.rng_streams.get("robots")
+        self.service_rng = self.rng_streams.get("service")
+        self.relocation_rng = self.rng_streams.get("relocation")
+        self.placement_rng = self.rng_streams.get("placement")
+
+        # Das Kostenmodell wird bereits hier gebaut: Die Servicezeiten werden
+        # zusammen mit dem Request-Strom gezogen, also noch vor dem Aufbau der
+        # übrigen Simulationskomponenten. Es hält keinen State.
+        self.cost_model = ActionCostModel(
+            config=self.config,
+            rng=self.service_rng,
+        )
 
         self.state = None
         self.hot_bin_ids = []
@@ -86,12 +123,34 @@ class SimulationEngine:
 
         self.hot_bin_ids = self._determine_hot_bin_ids()
 
+        # FINAL FREEZE CLOSEOUT: Initialverteilung und Laufzeit-Placement
+        # nutzen DIESELBE Storage-Eligibility.
+        #
+        # Zur Laufzeit prüft `State.is_valid_storage_position` gegen
+        # `State.buffer_zone`, die aus derselben Funktion stammt. Der Aufruf
+        # steht hier vorne, weil `initialize_port_zones` erst nach dem Bau des
+        # State möglich ist – die Menge ist in beiden Fällen identisch, weil
+        # sie aus denselben Port-Positionen und Grid-Maßen berechnet wird.
+        #
+        # Ohne diesen Ausschluss würde der Startzustand Bins in Zellen legen,
+        # die nach t=0 nie wieder belegt werden dürfen. RQ4 misst dann
+        # zusätzlich deren erzwungenes Ausströmen statt reiner Reorganisation.
+        storage_exclusions = calculate_buffer_zone(
+            port_positions=[ps.position for ps in pickstations],
+            grid_width=grid.width,
+            grid_depth=grid.depth,
+        )
+
         initialize_bins(
             grid=grid,
             bins=bins,
             init_strategy=self._resolve_init_strategy(),
             hot_bin_ids=self.hot_bin_ids,
-            random_seed=self.config.random_seed,
+            excluded_positions=storage_exclusions,
+            # PHASE 4/5: Eigener Initialisierungs-Strom, ausschließlich für die
+            # Bin-Verteilung. Dadurch hängt das Startlayout allein am
+            # Master-Seed – weder an der Policy noch an der Roboterzahl.
+            rng=self.rng,
             max_stack_height=self.config.max_stack_height,
             # ABC-Thresholds aus Config an Initialisierung übergeben
             abc_threshold_a=self.config.abc_threshold_a,
@@ -109,6 +168,10 @@ class SimulationEngine:
             traffic_manager=traffic_manager
         )
         self.state.config = self.config
+        # Klasse C (2026-08-22): Der TrafficManager wird vor dem State gebaut,
+        # braucht für die Ausfahrtgarantie aber die physische Wahrheit über
+        # Roboterpositionen und Portbelegung. Rückverweis deshalb hier setzen.
+        traffic_manager.state = self.state
         # Port-Pufferzonen initialisieren (einmalig beim Start)
         self.state.initialize_port_zones(pickstations)
         self.state.mark_initialized()
@@ -119,10 +182,9 @@ class SimulationEngine:
         """
         self.active_queue = ActiveQueue()
 
-        self.cost_model = ActionCostModel(
-            config=self.config,
-            rng=self.rng,
-        )
+        # `self.cost_model` existiert bereits aus `__init__` (siehe dort):
+        # Die exogenen Servicezeiten werden schon beim Erzeugen des
+        # Request-Stroms gezogen.
 
         self.event_builder = EventBuilder(
             cost_model=self.cost_model,
@@ -153,6 +215,7 @@ class SimulationEngine:
         relocation_selector = RelocationSelection(
             cost_model=self.cost_model,
             active_queue=self.active_queue,
+            rng=self.relocation_rng,
         )
 
         # NEU: Strategie-Konfiguration aus SimulationConfig auslesen
@@ -160,9 +223,17 @@ class SimulationEngine:
         placement_strategy = getattr(self.config, "placement_strategy", "ORIGINAL")
 
         # NEU: PlacementSelector für Target-Bin-Rücklagerung (CIRS / Baseline / Erweiterungen)
+        # PHASE 4: Placement-Entscheidungen sind endogene Strategie-Zufälligkeit
+        # und bekommen einen eigenen Strom. Zusätzliche Ziehungen einer Policy
+        # verschieben damit keine exogene Größe mehr.
         placement_selector = PlacementSelector(
             config=self.config,
-            rng=self.rng,
+            rng=self.placement_rng,
+            # LIVENESS (2026-08-22): Die Rücklagerung darf keine Bin
+            # verschütten, die ein anderer Task noch aus ihrem Pufferstack
+            # abholen muss. Quelle ist ausschließlich die vorhandene
+            # Blocker-Ownership der ActiveQueue.
+            active_queue=self.active_queue,
         )
 
         # NEU: ReorderingSelector für Blocking-Bin-Reordering (LOFI / ABC)
@@ -176,6 +247,7 @@ class SimulationEngine:
             placement_strategy=placement_strategy,
             placement_selector=placement_selector,
             reordering_selector=reordering_selector,
+            active_queue=self.active_queue,
         )
 
         self.scheduler = Scheduler(
@@ -254,6 +326,14 @@ class SimulationEngine:
                         for robot in self.state.robots:
                             if robot.robot_id == victim_id:
                                 self.state.traffic_manager.release_robot_reservations(robot)
+                                # HARDENING (2026-08-19): Trägt der Roboter
+                                # eine Bin, darf er NICHT von seinem Task
+                                # getrennt werden – die Bin wäre sonst weder
+                                # in einem Stack noch einem Task zugeordnet.
+                                # (Gleiche Invariante wie in
+                                # `EventHandler._resolve_move_deadlock`.)
+                                if robot.is_carrying_bin():
+                                    break
                                 # Task in Warteschlange
                                 if robot.current_task is not None:
                                     self.active_queue.add_waiting_task(robot.current_task)
@@ -305,57 +385,58 @@ class SimulationEngine:
                 }:
                     self.event_handler.schedule_available_robots(self.state.t)
 
-                # ------------------------------------------------------
-                # NEU: Debug-Logging nach jedem verarbeiteten Event
-                # ------------------------------------------------------
-                gw, gd = self.state.grid.width, self.state.grid.depth
+                if getattr(self.config, "enable_step_debug", False):
+                    # ------------------------------------------------------
+                    # NEU: Debug-Logging nach jedem verarbeiteten Event
+                    # ------------------------------------------------------
+                    gw, gd = self.state.grid.width, self.state.grid.depth
 
-                # Positionen und mögliche Kollisionen ermitteln
-                pos_to_robot = {}
-                collisions = []
-                illegal_positions = []
+                    # Positionen und mögliche Kollisionen ermitteln
+                    pos_to_robot = {}
+                    collisions = []
+                    illegal_positions = []
 
-                for r in self.state.robots:
-                    pos = r.get_position()
-                    if pos is None:
-                        continue
+                    for r in self.state.robots:
+                        pos = r.get_position()
+                        if pos is None:
+                            continue
 
-                    x, y = pos
-                    if not (0 <= x < gw and 0 <= y < gd):
-                        illegal_positions.append((r.robot_id, pos))
+                        x, y = pos
+                        if not (0 <= x < gw and 0 <= y < gd):
+                            illegal_positions.append((r.robot_id, pos))
 
-                    if pos in pos_to_robot:
-                        collisions.append((pos, pos_to_robot[pos], r.robot_id))
-                    else:
-                        pos_to_robot[pos] = r.robot_id
+                        if pos in pos_to_robot:
+                            collisions.append((pos, pos_to_robot[pos], r.robot_id))
+                        else:
+                            pos_to_robot[pos] = r.robot_id
 
-                # Basiszustand loggen
-                print(
-                    f"[STATE][STEP] t={self.state.t} "
-                    f"event_type={getattr(event.event_type, 'name', event.event_type)} "
-                    f"robots={{"
-                    + ", ".join(
-                        f"{r.robot_id}: {r.get_position()}"
-                        for r in self.state.robots
-                    )
-                    + "}"
-                )
-
-                # Kollisionen explizit markieren
-                for pos, r0, r1 in collisions:
+                    # Basiszustand loggen
                     print(
-                        f"[COLLISION][STEP] t={self.state.t} pos={pos} "
-                        f"robots={r0},{r1} "
-                        f"after_event={getattr(event.event_type, 'name', event.event_type)}"
+                        f"[STATE][STEP] t={self.state.t} "
+                        f"event_type={getattr(event.event_type, 'name', event.event_type)} "
+                        f"robots={{"
+                        + ", ".join(
+                            f"{r.robot_id}: {r.get_position()}"
+                            for r in self.state.robots
+                        )
+                        + "}"
                     )
 
-                # Out-of-bounds Positionen explizit markieren
-                for rid, pos in illegal_positions:
-                    print(
-                        f"[ILLEGAL_POS][STEP] t={self.state.t} robot={rid} "
-                        f"pos={pos} (grid={gw}x{gd}) "
-                        f"after_event={getattr(event.event_type, 'name', event.event_type)}"
-                    )
+                    # Kollisionen explizit markieren
+                    for pos, r0, r1 in collisions:
+                        print(
+                            f"[COLLISION][STEP] t={self.state.t} pos={pos} "
+                            f"robots={r0},{r1} "
+                            f"after_event={getattr(event.event_type, 'name', event.event_type)}"
+                        )
+
+                    # Out-of-bounds Positionen explizit markieren
+                    for rid, pos in illegal_positions:
+                        print(
+                            f"[ILLEGAL_POS][STEP] t={self.state.t} robot={rid} "
+                            f"pos={pos} (grid={gw}x{gd}) "
+                            f"after_event={getattr(event.event_type, 'name', event.event_type)}"
+                        )
 
             return event
 
@@ -375,10 +456,28 @@ class SimulationEngine:
         self._validate_stack_capacities()
 
     def _validate_bin_uniqueness(self):
+        """
+        Prüft die Massenerhaltung und Eindeutigkeit aller Bins.
+
+        AUDIT-007 (Phase 2B): Die Implementierung wurde von O(n²) auf O(n)
+        umgestellt – die Semantik ist unverändert.
+
+        Vorher dominierten zwei quadratische Operationen den Laufzeit-Pfad:
+          - `bin_obj not in bins_in_stacks` (Listen-Suche je Bin)
+          - `visible_bin_ids.count(bin_id)` (Listen-Zählung je ID)
+        Bei 4320 Bins entfielen dadurch ~97 % der gesamten Simulationszeit auf
+        diese Prüfung (346k `list.count`-Aufrufe bei 300 Events).
+
+        Ersetzt durch Mengen- bzw. Counter-Operationen. Die Prüfung läuft
+        unverändert nach jedem Event.
+        """
         bins_in_stacks = []
+        bins_in_stacks_identity = set()
 
         for stack in self.state.grid.all_stacks():
-            bins_in_stacks.extend(stack.bins)
+            for bin_obj in stack.bins:
+                bins_in_stacks.append(bin_obj)
+                bins_in_stacks_identity.add(id(bin_obj))
 
         bins_at_pickstation = [
             bin_obj
@@ -386,22 +485,21 @@ class SimulationEngine:
             if bin_obj.get_status() == "at_pickstation"
         ]
 
-        # NEU: Bins die gerade vom Roboter getragen werden (in_transit)
+        # Bins die gerade vom Roboter getragen werden (in_transit)
         bins_in_transit = [
             bin_obj
             for bin_obj in self.state.bins
             if getattr(bin_obj, "in_transit", False)
                and bin_obj.get_status() != "at_pickstation"  # Nicht doppelt zählen
-               and bin_obj not in bins_in_stacks  # Nicht doppelt zählen
+               and id(bin_obj) not in bins_in_stacks_identity  # Nicht doppelt zählen
         ]
 
         visible_bins = bins_in_stacks + bins_at_pickstation + bins_in_transit
         visible_bin_ids = [bin_obj.bin_id for bin_obj in visible_bins]
 
+        id_counts = Counter(visible_bin_ids)
         duplicate_bin_ids = [
-            bin_id
-            for bin_id in set(visible_bin_ids)
-            if visible_bin_ids.count(bin_id) > 1
+            bin_id for bin_id, count in id_counts.items() if count > 1
         ]
 
         if duplicate_bin_ids:
@@ -413,8 +511,7 @@ class SimulationEngine:
         if len(visible_bin_ids) != len(self.state.bins):
             # Debug-Info für fehlende Bins
             all_bin_ids = {b.bin_id for b in self.state.bins}
-            visible_ids = set(visible_bin_ids)
-            missing_ids = all_bin_ids - visible_ids
+            missing_ids = all_bin_ids - set(id_counts)
 
             raise RuntimeError(
                 f"Invalid state: expected {len(self.state.bins)} bins, "
@@ -558,8 +655,8 @@ class SimulationEngine:
             attempts = 0
 
             while attempts < max_attempts:
-                x = int(self.rng.integers(0, self.config.grid_width))
-                y = int(self.rng.integers(0, self.config.grid_depth))
+                x = int(self.robot_rng.integers(0, self.config.grid_width))
+                y = int(self.robot_rng.integers(0, self.config.grid_depth))
                 start_pos = (x, y)
 
                 if start_pos not in occupied_positions:
@@ -582,14 +679,66 @@ class SimulationEngine:
         """
         Generiert alle Requests vorab und speichert sie in der Future-Queue.
         """
-        request_generator = RequestGenerator(self.config)
+        request_generator = RequestGenerator(
+            self.config,
+            rng=self.rng_streams.get("requests"),
+        )
         requests = request_generator.generate_requests()
+
+        self._assign_exogenous_service_times(requests)
 
         future_queue = FutureRequestQueue()
         for request in requests:
             future_queue.push(request)
 
         return future_queue
+
+    def _assign_exogenous_service_times(self, requests):
+        """
+        Zieht die Pickstation-Bearbeitungszeit JE REQUEST einmalig vorab.
+
+        PHASE 4 – der eigentliche Common-Random-Numbers-Schritt.
+
+        Warum nicht zur Laufzeit ziehen?
+        --------------------------------
+        Ein eigener Zufallsstrom genügt nur, wenn auch die Ziehungsreihenfolge
+        policyunabhängig ist. Servicezeiten wurden bisher in der Reihenfolge
+        gezogen, in der Roboter an den Pickstations eintreffen – und die hängt
+        vom Verhalten der Policy ab. Zwei Policies mit identischem Seed
+        bekamen dadurch für denselben Request unterschiedliche Servicezeiten.
+
+        Warum die `request_id` der richtige Schlüssel ist
+        ------------------------------------------------
+        Gesucht ist eine Entität, deren Menge und Identität in allen Policies
+        gleich ist. Das trifft nur auf den Request zu: Der komplette
+        Request-Strom wird vor Simulationsbeginn erzeugt und ist bei gleichem
+        Master-Seed über alle Policies identisch.
+
+        Nicht geeignet wären:
+          * der Servicejob – welche Requests gemeinsam bedient werden, hängt
+            vom Timing und damit von der Policy ab,
+          * die Target-Bin – wie oft eine Bin physisch geholt wird, hängt
+            ebenfalls vom Batching und damit von der Policy ab.
+
+        Batching
+        --------
+        Gebatcht werden mehrere Requests auf DIESELBE Bin. Fachlich entnimmt
+        die Bedienperson dann mehrere Artikel aus einer Bin; jeder Request ist
+        ein Griff. Die Gesamtdauer eines Servicejobs ist deshalb die SUMME der
+        Bearbeitungszeiten seiner Requests (siehe
+        `EventBuilder.calculate_pickstation_service_duration`).
+
+        Damit ist die Realisierung unabhängig davon, wie die Requests auf
+        Servicejobs verteilt werden: Request 7 trägt immer seinen eigenen
+        Wert bei, ob allein bedient oder gemeinsam mit Request 9.
+        """
+        # Die Verteilung ist bewusst nur an EINER Stelle definiert
+        # (`ActionCostModel.pickstation_service_duration`), damit
+        # `pickstation_service_time_min/max` nicht doppelt interpretiert wird.
+        # Die Ziehungsreihenfolge ist die Request-Reihenfolge und damit
+        # policyunabhängig.
+        for request in requests:
+            request.service_time = self.cost_model.pickstation_service_duration()
 
     def _determine_hot_bin_ids(self):
         """

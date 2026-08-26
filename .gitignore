@@ -1,0 +1,21 @@
+# --- OS ---
+.idea/
+.ai/
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# --- Tooling / Caches ---
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- IDE (lokaler Zustand, nicht teilbar) ---
+.idea/shelf/
+.idea/workspace.xml
+
+# --- Finale Rohdaten ---
+# Eingefrorener Rohdatenbestand der 50-Run-Kampagne (~653 MiB je Ordner).
+# Git ist nicht der Backup-Mechanismus dafuer. Die Integritaet wird ueber
+# results/FINAL_DATA_SHA256.txt nachgewiesen, das versioniert bleibt.
+results/final/
+results/final_raw/

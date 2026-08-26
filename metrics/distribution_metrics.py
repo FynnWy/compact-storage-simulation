@@ -28,7 +28,7 @@ class DistributionMetrics:
         Returns:
             Dictionary mit allen Metriken zum aktuellen Zeitpunkt
         """
-        return {
+        snapshot = {
             "time": self.state.t,
             "average_digging_depth": self._calc_average_digging_depth(),
             "depth_by_abc_class": self._calc_depth_by_abc_class(),
@@ -39,6 +39,12 @@ class DistributionMetrics:
             "bin_distribution_entropy": self._calc_distribution_entropy(),
             "abc_zone_adherence": self._calc_abc_zone_adherence(),
         }
+        # RQ4 (2026-08-22): gemeinsame Verteilung über (ABC-Klasse, Tiefe unter
+        # der Stapeloberkante). Flach als Skalare, damit sie durch den
+        # bestehenden CSV-Export kommt – verschachtelte Felder werden dort
+        # verworfen.
+        snapshot.update(self._calc_abc_level_distribution())
+        return snapshot
 
     # Export-Helfer – nutze sie z.B. mit metrics.get_distribution_timeseries()
     def to_json(self, snapshots: List[dict]) -> str:
@@ -64,6 +70,56 @@ class DistributionMetrics:
     # ------------------------------------------------------------------ #
     # Interne Metrik-Berechnungen
     # ------------------------------------------------------------------ #
+
+    def _calc_abc_level_distribution(self) -> dict:
+        """
+        Gemeinsame Verteilung über (ABC-Klasse, Tiefe unter der Oberkante).
+
+        Wozu: Mellers vierte Forschungsfrage ist die Zeit bis zu einer
+        stabilen Bin-Verteilung, seine dritte die Behauptung, rund 80 % der
+        Retrievals kämen aus den obersten 20 % der Ebenen. Beides ist eine
+        Aussage über die räumliche Lage der SCHNELLDREHER. Genau das misst
+        diese Verteilung.
+
+        Warum die ABC-Klasse als Träger:
+          * sie ist statisch über die `bin_id` definiert und ändert sich
+            während des Laufs nicht,
+          * sie ist für alle Policies identisch berechenbar, auch für die,
+            die ABC gar nicht als Strategie verwenden,
+          * sie bildet unter Zipf die Nachfrageklassen ab.
+
+        Warum die Tiefe von OBEN statt des absoluten Levels: Stapel sind
+        unterschiedlich hoch. „Wie viele Bins liegen über mir" ist die Größe,
+        die den Zugriffsaufwand bestimmt, und genau die Größe, über die
+        Meller spricht.
+
+        Rückgabe absichtlich flach (`abc_level_A_0`, ...) und als Anteile:
+        der bestehende CSV-Export übernimmt nur skalare Felder, und Anteile
+        sind zwischen Snapshots direkt vergleichbar (Total Variation
+        Distance).
+        """
+        max_height = getattr(self.config, "max_stack_height", None) or 1
+        counts = {}
+        gesamt = 0
+
+        for stack in self.state.grid.all_stacks():
+            hoehe = stack.height()
+            for level, bin_obj in enumerate(stack.bins):
+                klasse = bin_obj.get_abc_class() or "C"
+                tiefe = hoehe - 1 - level
+                if tiefe >= max_height:
+                    tiefe = max_height - 1
+                counts[(klasse, tiefe)] = counts.get((klasse, tiefe), 0) + 1
+                gesamt += 1
+
+        gesamt = gesamt or 1
+        verteilung = {}
+        for klasse in ("A", "B", "C"):
+            for tiefe in range(max_height):
+                verteilung[f"abc_level_{klasse}_{tiefe}"] = (
+                    counts.get((klasse, tiefe), 0) / gesamt
+                )
+        return verteilung
 
     def _iter_bins_in_stacks(self):
         """
