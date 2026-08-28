@@ -201,7 +201,7 @@ class TestEventHandlerSmartSkip:
                 super().__init__(*args, **kwargs)
                 self.schedule_called = False
 
-            def _schedule_next_action_for_same_task(self, event):
+            def _schedule_next_action_for_same_task_new(self, event):
                 self.schedule_called = True
 
         handler = TestableEventHandler(
@@ -227,7 +227,7 @@ class TestEventHandlerSmartSkip:
         assert event_builder.delayed_events == [], "delay_event should not be called for smart-skip case"
 
         # 2) Stattdessen wurde direkt die Planung der nächsten Aktion angestoßen
-        assert handler.schedule_called is True, "_schedule_next_action_for_same_task should be called for smart-skip"
+        assert handler.schedule_called is True, "_schedule_next_action_for_same_task_new should be called for smart-skip"
 
     def test_replan_after_max_retries(self):
         """
@@ -298,3 +298,150 @@ class TestEventHandlerSmartSkip:
 
         # 4) EventQueue bleibt leer (kein weiteres ROBOT_ACTION-Event geplant)
         assert event_queue.items == [], "EventQueue should remain unchanged when replanning"
+
+
+class DummyMoveReservationTable:
+    def is_free(self, x, y, t, exclude_robot=None):
+        return True
+
+    def release(self, robot_id, x, y, t):
+        pass
+
+    def reserve_path(self, robot_id, path, start_time):
+        return True, None
+
+
+class DummyMoveRobot:
+    def __init__(self, robot_id, position, next_waypoint):
+        self.robot_id = robot_id
+        self._position = position
+        self._next_waypoint = next_waypoint
+        self.current_task = None
+        self.status = "busy"
+        self.planned_path = [next_waypoint]
+        self.path_target_action = None
+
+    def get_next_waypoint(self):
+        return self._next_waypoint
+
+    def get_position(self):
+        return self._position
+
+    def advance_to_next_waypoint(self):
+        self._position = self._next_waypoint
+        return self._position
+
+    def has_reached_destination(self):
+        return False
+
+    def set_status(self, status):
+        self.status = status
+
+
+class DummyMoveState:
+    def __init__(self, robots):
+        self.t = 10
+        self.grid = StorageGrid(width=3, depth=3)
+        self.robots = robots
+        self.pickstations = []
+        self.port_positions = set()
+        self.buffer_zone = set()
+        self.reservation_table = DummyMoveReservationTable()
+        self.traffic_manager = types.SimpleNamespace(
+            deadlock_detector=types.SimpleNamespace(
+                register_wait=lambda **kwargs: None,
+            ),
+            check_and_resolve_deadlock=lambda **kwargs: None,
+        )
+
+    def find_pickstation_at(self, position):
+        return None
+
+
+class DummyMoveEventBuilder(DummyEventBuilder):
+    def __init__(self):
+        super().__init__()
+        self.cost_model = types.SimpleNamespace(
+            config=types.SimpleNamespace(move_cost_per_grid_step=1)
+        )
+
+
+class TestEventHandlerMoveBlocking:
+    def _build_handler(self, state, event_queue, event_builder):
+        return EventHandler(
+            state=state,
+            active_queue=DummyActiveQueue(),
+            event_queue=event_queue,
+            request_handler=DummyRequestHandler(),
+            metrics=DummyMetrics(),
+            constraint_manager=DummyConstraintManager(),
+            scheduler=DummyScheduler(),
+            executor=DummyExecutor(),
+            event_builder=event_builder,
+        )
+
+    def test_move_replans_after_first_retry_when_waypoint_occupied(self):
+        mover = DummyMoveRobot(robot_id=0, position=(0, 0), next_waypoint=(0, 1))
+        blocker = DummyMoveRobot(robot_id=3, position=(0, 1), next_waypoint=(0, 1))
+        state = DummyMoveState([mover, blocker])
+        event_queue = DummyQueue()
+        event_builder = DummyMoveEventBuilder()
+
+        class TestableEventHandler(EventHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.replan_calls = []
+
+            def _replan_path_around_obstacle(self, robot, blocked_position, event):
+                self.replan_calls.append((robot.robot_id, blocked_position, event.retry_count))
+
+        handler = TestableEventHandler(
+            state=state,
+            active_queue=DummyActiveQueue(),
+            event_queue=event_queue,
+            request_handler=DummyRequestHandler(),
+            metrics=DummyMetrics(),
+            constraint_manager=DummyConstraintManager(),
+            scheduler=DummyScheduler(),
+            executor=DummyExecutor(),
+            event_builder=event_builder,
+        )
+
+        event = Event(
+            time=state.t,
+            event_type=EventType.ROBOT_MOVE,
+            payload={"robot": mover},
+            retry_count=1,
+        )
+
+        handler._handle_robot_move(event)
+
+        assert handler.replan_calls, "blocked move should trigger early replanning after first retry"
+        assert event_builder.delayed_events == [], "no additional delay retry expected before early replanning"
+
+    def test_duplicate_move_events_same_timestep_are_not_retried_multiple_times(self):
+        mover = DummyMoveRobot(robot_id=1, position=(1, 1), next_waypoint=(1, 2))
+        blocker = DummyMoveRobot(robot_id=2, position=(1, 2), next_waypoint=(1, 2))
+        state = DummyMoveState([mover, blocker])
+        event_queue = DummyQueue()
+        event_builder = DummyMoveEventBuilder()
+        handler = self._build_handler(state=state, event_queue=event_queue, event_builder=event_builder)
+
+        first_event = Event(
+            time=state.t,
+            event_type=EventType.ROBOT_MOVE,
+            payload={"robot": mover},
+            retry_count=0,
+        )
+        duplicate_event = Event(
+            time=state.t,
+            event_type=EventType.ROBOT_MOVE,
+            payload={"robot": mover},
+            retry_count=0,
+        )
+
+        handler._handle_robot_move(first_event)
+        handler._handle_robot_move(duplicate_event)
+
+        assert len(event_builder.delayed_events) == 1, "duplicate move events in same timestep should not create extra retries"
+        assert len(event_queue.items) == 1, "only one delayed move event should be queued per robot and timestep"

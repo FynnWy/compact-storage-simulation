@@ -4,6 +4,16 @@ class Robot:
         self.position = position
         self.status = "idle"
         self.current_task = None
+
+        # HARDENING (2026-08-19): Explizite Roboter→Bin-Verknüpfung.
+        # Bisher existierte keine Möglichkeit festzustellen, WELCHER Roboter
+        # eine `in_transit`-Bin trägt. Recovery-Pfade (Deadlock-Requeue)
+        # konnten dadurch einen tragenden Roboter von seinem Task trennen und
+        # die Bin im Nirgendwo zurücklassen.
+        # Wird beim erfolgreichen Pickup gesetzt und beim erfolgreichen Drop
+        # gelöscht – bewusst NICHT von `clear_task()` angefasst, weil die Bin
+        # physisch weiterhin am Roboter hängt.
+        self.carried_bin_id = None
         
         # NEU: Pfad-Verwaltung
         self.planned_path = []      # Liste von (x, y) Wegpunkten
@@ -29,6 +39,24 @@ class Robot:
 
     def get_status(self):
         return self.status
+
+    # ================================================================
+    # Getragene Bin (Transit-Verknüpfung)
+    # ================================================================
+
+    def set_carried_bin(self, bin_id):
+        """Merkt, welche Bin der Roboter physisch trägt."""
+        self.carried_bin_id = bin_id
+
+    def get_carried_bin(self):
+        return self.carried_bin_id
+
+    def clear_carried_bin(self):
+        self.carried_bin_id = None
+
+    def is_carrying_bin(self):
+        """True, solange der Roboter eine Bin physisch transportiert."""
+        return self.carried_bin_id is not None
 
     def set_status(self, status):
         self.status = status

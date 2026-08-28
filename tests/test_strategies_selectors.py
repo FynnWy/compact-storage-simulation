@@ -484,21 +484,38 @@ class TestReturnBlockingBinsFlag:
 
 
 class TestNearestPlacementStrategy:
-    """Tests für NEAREST Placement-Strategie (Nähe zur Pickstation)."""
+    """
+    Tests für die NEAREST Placement-Strategie.
+
+    MODELLKORREKTUR (Phase 3B, Befund P3-04):
+    Diese Klasse prüfte zuvor „Nähe zur Pickstation". Die verbindliche
+    fachliche Entscheidung lautet inzwischen anders:
+
+        NEAREST = nächstgelegener zulässiger Stack relativ zum ORIGINALSTACK
+                  der Target-Bin
+        Tie-Break: kleinere y-Koordinate, danach kleinere x-Koordinate
+        Ist der Originalstack selbst zulässig, gewinnt er mit Distanz 0.
+
+    Die alte Semantik war eine andere Policy („so nah wie möglich an den
+    Port") und führte dazu, dass sich die gesamte Rücklagerung auf 8–13
+    Stacks konzentrierte. Der Test wurde daher NICHT abgeschwächt, sondern
+    auf den heute gültigen Contract umgestellt.
+    """
 
     @staticmethod
     def _make_pickstation(pos):
         return type("PS", (), {"position": pos})()
 
-    def test_nearest_prefers_stack_closest_to_pickstation(self):
+    def test_nearest_prefers_stack_closest_to_original_stack(self):
         """
-        NEAREST wählt den zulässigen Stack mit geringster Distanz zur Pickstation.
+        NEAREST wählt den zulässigen Stack mit geringster Distanz zum
+        Originalstack – nicht zur Pickstation.
         """
-        # Pickstation bei (0, 0)
+        # Pickstation bei (0, 0), Originalstack bei (10, 10)
         stacks = [
-            DummyStack(stack_id=(0, 2), height_val=0, locked=False),  # Distanz 2
-            DummyStack(stack_id=(3, 0), height_val=0, locked=False),  # Distanz 3
-            DummyStack(stack_id=(5, 5), height_val=0, locked=False),  # Distanz 10
+            DummyStack(stack_id=(0, 2), height_val=0, locked=False),  # PS 2  | Origin 18
+            DummyStack(stack_id=(3, 0), height_val=0, locked=False),  # PS 3  | Origin 17
+            DummyStack(stack_id=(5, 5), height_val=0, locked=False),  # PS 10 | Origin 10
         ]
         grid = DummyGrid(stacks)
         state = DummyState(grid=grid, bins=[DummyBin(bin_id=0)], max_stack_height=5)
@@ -511,7 +528,54 @@ class TestNearestPlacementStrategy:
         stack = selector.select_return_stack(
             state=state,
             bin_obj=state.bins[0],
-            original_stack_id=(10, 10),  # wird für NEAREST nicht verwendet
+            original_stack_id=(10, 10),
+        )
+
+        # Nach altem Modell hätte (0, 2) gewonnen (Distanz 2 zur Pickstation).
+        assert stack.stack_id == (5, 5)
+
+    def test_nearest_returns_the_original_stack_when_admissible(self):
+        """Der Originalstack gewinnt mit Distanz 0, sofern zulässig."""
+        stacks = [
+            DummyStack(stack_id=(0, 1), height_val=0, locked=False),
+            DummyStack(stack_id=(4, 4), height_val=0, locked=False),
+        ]
+        grid = DummyGrid(stacks)
+        state = DummyState(grid=grid, bins=[DummyBin(bin_id=0)], max_stack_height=5)
+        state.pickstations = [self._make_pickstation((0, 0))]
+
+        config = DummyConfig()
+        config.placement_strategy = "NEAREST"
+        selector = PlacementSelector(config=config)
+
+        stack = selector.select_return_stack(
+            state=state,
+            bin_obj=state.bins[0],
+            original_stack_id=(4, 4),
+        )
+
+        assert stack.stack_id == (4, 4)
+
+    def test_nearest_tie_break_is_y_then_x(self):
+        """Bei gleicher Distanz gewinnt kleineres y, danach kleineres x."""
+        # Originalstack (2, 2); alle Kandidaten haben Distanz 2.
+        stacks = [
+            DummyStack(stack_id=(2, 4), height_val=0, locked=False),  # y=4
+            DummyStack(stack_id=(4, 2), height_val=0, locked=False),  # y=2, x=4
+            DummyStack(stack_id=(0, 2), height_val=0, locked=False),  # y=2, x=0
+        ]
+        grid = DummyGrid(stacks)
+        state = DummyState(grid=grid, bins=[DummyBin(bin_id=0)], max_stack_height=5)
+        state.pickstations = [self._make_pickstation((0, 0))]
+
+        config = DummyConfig()
+        config.placement_strategy = "NEAREST"
+        selector = PlacementSelector(config=config)
+
+        stack = selector.select_return_stack(
+            state=state,
+            bin_obj=state.bins[0],
+            original_stack_id=(2, 2),
         )
 
         assert stack.stack_id == (0, 2)

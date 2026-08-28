@@ -54,7 +54,19 @@ def print_final_state(engine):
 
 def run_without_visualization(engine):
     print("\n--- RUN SIMULATION ---")
-    summary = engine.run(debug=True, max_events=3000)
+
+    # Simulation Schritt für Schritt ausführen
+    max_events = 30000
+    event_count = 0
+
+    while event_count < max_events:
+        event = engine.step()
+        if event is None:
+            break
+        event_count += 1
+
+    # Metriken am Ende abrufen
+    summary = engine.metrics.summary()
 
     print_metrics_summary(summary)
     print_final_state(engine)
@@ -87,12 +99,12 @@ def main():
     # Erweiterter, aber noch übersichtlicher Smoke-Test
     config.random_seed = 42
 
-    config.grid_width = 5
-    config.grid_depth = 5
+    config.grid_width = 7
+    config.grid_depth = 7
     config.max_stack_height = 6
-    config.bin_num = 70
-    config.num_robots = 1
-    config.simulation_time = 100
+    config.bin_num = 200
+    config.num_robots = 4
+    config.simulation_time = 200
 
     config.init_strategy = "random_distribution"
 
